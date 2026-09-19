@@ -296,3 +296,42 @@ def test_committed_files_hold_no_secrets(path) -> None:
         m = re.match(r"^\s*(GEMINI_API_KEY|NVIDIA_API_KEY|ADMIN_TOKEN)\s*=\s*(\S*)", line)
         if m and not placeholder.search(m.group(2)):
             raise AssertionError(f"a real value is in {path}: {m.group(1)}")
+
+
+# ---- a dead model is caught the moment it is chosen ------------------------
+
+
+def test_choosing_a_model_verifies_it_immediately(monkeypatch, settings) -> None:
+    """A stale browser tab, or a mis-click, must not silently break the next run."""
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    async def fake_check(s, provider, model):
+        ok = model != "01-ai/yi-large"
+        return {"ok": ok, "status": 200 if ok else 404,
+                "detail": "Answered a test prompt" if ok else "No such model on this endpoint."}
+
+    monkeypatch.setattr("llm.check_model", fake_check)
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+
+    bad = client.patch("/api/config", json={"llm_provider": "nvidia",
+                                            "nvidia_model": "01-ai/yi-large"}).json()
+    assert bad["model_check"]["ok"] is False
+    assert "No such model" in bad["model_check"]["detail"]
+
+    good = client.patch("/api/config", json={"nvidia_model": "openai/gpt-oss-20b"}).json()
+    assert good["model_check"]["ok"] is True
+
+    # an unrelated setting is not worth an API round trip
+    assert "model_check" not in client.patch("/api/config", json={"match_threshold": 70}).json()
+
+
+def test_dashboard_surfaces_a_failed_model_check() -> None:
+    html = (ROOT / "static" / "index.html").read_text()
+    save = html[html.index("async function saveConfig("):]
+    save = save[:save.index("async function reloadConfig")]
+    assert "CONFIG.model_check" in save
+    assert "does not answer" in save
