@@ -508,6 +508,25 @@ python main.py retry --status failed --yes    # every failed attempt
 python main.py retry --status pending_human_review
 ```
 
+### Working without a window
+
+By default a browser window is on screen, because in assisted mode you are the one who
+presses Submit, and because only a person can clear a CAPTCHA.
+
+Two settings change that. **Hide the browser window** works with nothing on screen.
+**When a CAPTCHA or login wall blocks a posting** then decides what happens when one
+does appear, and applies while applying, not while scanning:
+
+| Choice | What happens |
+|---|---|
+| Stop and let me deal with it | The run pauses. Needs a window, so with none it skips instead and says so. |
+| Open a window and start that posting again | The browser restarts with a window. Your logins survive, because the profile does. |
+| Skip that posting and carry on | The application is recorded as skipped, with the challenge as the reason. |
+
+A scan over the board APIs opens no browser at all, whatever these are set to, because
+it is plain HTTP. Applying to a web form always needs one, hidden or not. Applying by
+email needs no form, so nothing is opened for it.
+
 ### Applying by email
 
 Plenty of roles never reach an applicant tracking system. The posting says "send your CV

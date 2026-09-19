@@ -280,3 +280,42 @@ def test_harmless_reformatting_is_not_treated_as_a_failure() -> None:
 
 def test_a_field_the_form_removed_counts_as_lost() -> None:
     assert FormFiller.holds("Joshua", None) is False
+
+
+# ---- working with no window on screen --------------------------------------
+
+def _browser(**over):
+    from browser_bot import HumanGate, StealthBrowser
+    from config import Settings
+
+    return StealthBrowser(Settings(_env_file=None, **over), HumanGate(mode="api"))
+
+
+def test_the_window_can_be_hidden_until_something_needs_you() -> None:
+    assert _browser().hidden is False, "a window by default"
+    assert _browser(hide_browser=True).hidden is True
+
+
+def test_a_challenge_can_open_a_window_or_be_skipped() -> None:
+    assert _browser(hide_browser=True, challenge_action="show").on_challenge() == "show"
+    assert _browser(hide_browser=True, challenge_action="skip").on_challenge() == "skip"
+    assert _browser(challenge_action="wait").on_challenge() == "wait"
+
+
+def test_waiting_with_nothing_on_screen_becomes_a_skip() -> None:
+    """Otherwise the run stops for a person who cannot see what it stopped for, which
+    looks exactly like a hang."""
+    assert _browser(hide_browser=True, challenge_action="wait").on_challenge() == "skip"
+
+
+def test_fully_headless_never_opens_a_window() -> None:
+    """`headless` means no window, whatever else is asked for."""
+    hidden = _browser(headless=True, challenge_action="show")
+
+    assert hidden.can_reveal is False
+    assert hidden.on_challenge() == "skip"
+
+
+@pytest.mark.asyncio
+async def test_revealing_is_a_no_op_when_a_window_is_already_up() -> None:
+    assert await _browser().reveal("test") is False

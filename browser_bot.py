@@ -417,14 +417,36 @@ class StealthBrowser:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         #: Whether there is no window on screen at the moment.
-        self.hidden = bool(settings.headless or settings.reveal_on_challenge)
+        self.hidden = bool(settings.headless or settings.hide_browser)
         #: Set once a window has been opened, so it is not hidden again mid-run.
         self.revealed = False
+        #: Why the last posting was given up on, when the setting gave up rather than
+        #: you. Recording "Skipped by you" for a decision you did not make turns the
+        #: history into something you cannot reason about later.
+        self.auto_skipped: str = ""
 
     @property
     def can_reveal(self) -> bool:
         """Whether a window can still be opened. `headless` means never."""
-        return bool(self.s.reveal_on_challenge and not self.s.headless)
+        return bool(self.s.challenge_action == "show" and not self.s.headless)
+
+    def on_challenge(self) -> str:
+        """What to do about a challenge right now.
+
+        Waiting for a person only makes sense if there is something for them to look at.
+        With no window on screen and no way to open one, waiting is a hang: the run
+        stops for someone who cannot see what it stopped for. That becomes a skip, and
+        says so.
+        """
+        action = self.s.challenge_action
+        if action == "show" and not self.can_reveal:
+            action = "skip"
+        if action == "wait" and self.hidden:
+            log.warning("A challenge needs a person, but there is no window to solve it "
+                        "in. Skipping this posting. Set the challenge action to 'show' "
+                        "to open a window instead.")
+            action = "skip"
+        return action
 
     async def __aenter__(self) -> "StealthBrowser":
         await self.start()
@@ -674,12 +696,18 @@ class StealthBrowser:
                 reason = captcha
             if not reason:
                 return HumanGate.CONTINUE
-            if self.hidden and self.can_reveal:
+            action = self.on_challenge()
+            if action == "skip":
+                log.info("Skipping this posting: %s", reason)
+                self.auto_skipped = reason
+                return HumanGate.SKIP
+            if action == "show" and self.hidden:
                 # There is nothing on screen for a person to solve. A window is opened,
                 # which means starting the browser again, so this page is gone and the
                 # caller has to begin the posting afresh in the new one.
                 await self.reveal(reason)
                 raise BrowserRevealed(reason)
+            self.auto_skipped = ""
             outcome = await self.gate.wait(reason)
             if outcome == HumanGate.SKIP:
                 return HumanGate.SKIP

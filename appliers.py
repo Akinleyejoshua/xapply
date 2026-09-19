@@ -383,6 +383,13 @@ class BaseApplier:
         return ("Nothing on this form could be filled. Fill it in the browser, then press "
                 "Submit yourself and continue.")
 
+    def skip_note(self, where: str) -> str:
+        """Who gave up on this posting, and why. Never guess that it was you."""
+        automatic = getattr(self.b, "auto_skipped", "")
+        if automatic:
+            return f"Skipped automatically {where}: {automatic}"
+        return f"Skipped by you {where}"
+
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:  # pragma: no cover
         raise NotImplementedError
@@ -568,6 +575,13 @@ class LinkedInEasyApplyApplier(BaseApplier):
                     "Submit yourself and continue.")
         return ("Nothing on this form could be filled. Fill it in the browser, then press "
                 "Submit yourself and continue.")
+
+    def skip_note(self, where: str) -> str:
+        """Who gave up on this posting, and why. Never guess that it was you."""
+        automatic = getattr(self.b, "auto_skipped", "")
+        if automatic:
+            return f"Skipped automatically {where}: {automatic}"
+        return f"Skipped by you {where}"
 
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:
@@ -884,6 +898,13 @@ class SinglePageApplier(BaseApplier):
         return ("Nothing on this form could be filled. Fill it in the browser, then press "
                 "Submit yourself and continue.")
 
+    def skip_note(self, where: str) -> str:
+        """Who gave up on this posting, and why. Never guess that it was you."""
+        automatic = getattr(self.b, "auto_skipped", "")
+        if automatic:
+            return f"Skipped automatically {where}: {automatic}"
+        return f"Skipped by you {where}"
+
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:
         url = self.apply_url(job)
@@ -937,7 +958,7 @@ class SinglePageApplier(BaseApplier):
                                         answers, shot, url)
             # The form is filled by now, so this is the right moment to deal with a CAPTCHA.
             if await self.b.guard(page) == HumanGate.SKIP:
-                return self._result(STATUS_SKIPPED, "Skipped by you at the challenge", answers, shot, url)
+                return self._result(STATUS_SKIPPED, self.skip_note("at the challenge"), answers, shot, url)
             shot = await self.b.screenshot(page, f"review_{self.ats}_{job.job_id}")
             submit = await self.find_submit(scope, page)
             if submit is None:
@@ -972,7 +993,7 @@ class SinglePageApplier(BaseApplier):
                 if await self.confirmed(page, timeout=15_000):
                     return self._result(STATUS_SUBMITTED, "Auto-submitted", answers, shot, url)
                 if await self.b.guard(page) == HumanGate.SKIP:   # a CAPTCHA may follow Submit
-                    return self._result(STATUS_SKIPPED, "Skipped by you after submitting",
+                    return self._result(STATUS_SKIPPED, self.skip_note("after submitting"),
                                         answers, shot, url)
                 if await self.confirmed(page, timeout=4000):
                     return self._result(STATUS_SUBMITTED, "Submitted after human solved challenge", answers, shot, url)
