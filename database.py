@@ -9,6 +9,7 @@ screenshot of the final review page.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from models import JobPosting
+
+log = logging.getLogger(__name__)
 
 STATUS_SKIPPED = "skipped"
 STATUS_PENDING = "pending_human_review"
@@ -111,6 +114,40 @@ class Database:
     def init(self) -> None:
         with self._conn() as c:
             c.executescript(SCHEMA)
+            self._repair_page_named_ids(c)
+
+    def _repair_page_named_ids(self, c: sqlite3.Connection) -> int:
+        """Re-key rows that were identified by the page rather than by the posting.
+
+        An Ashby link ending "/application" used to reduce to the id "ashby-application",
+        so every Ashby posting looked like the same one: the first was recorded, and the
+        next one you picked was refused as already applied, naming a job you had never
+        seen. Those rows are re-keyed here so the refusal stops.
+        """
+        from models import GENERIC_SEGMENTS, job_id_from_url
+
+        suspect = [f"%-{seg}" for seg in sorted(GENERIC_SEGMENTS)]
+        where = " OR ".join("job_id LIKE ?" for _ in suspect)
+        rows = c.execute(f"SELECT id, job_id, source, url FROM applications WHERE {where}",
+                         suspect).fetchall()
+        fixed = 0
+        for row in rows:
+            correct = job_id_from_url(row["url"] or "")
+            if not correct or correct == row["job_id"]:
+                continue
+            clash = c.execute(
+                "SELECT id FROM applications WHERE source=? AND job_id=? AND id<>?",
+                (row["source"], correct, row["id"])).fetchone()
+            if clash:
+                # Two rows for one posting. The older duplicate goes; the newest record
+                # is the one that describes what actually happened.
+                c.execute("DELETE FROM applications WHERE id=?", (min(clash["id"], row["id"]),))
+            c.execute("UPDATE applications SET job_id=? WHERE id=?", (correct, row["id"]))
+            fixed += 1
+        if fixed:
+            log.info("Re-keyed %d application(s) that were identified by the page rather "
+                     "than the posting", fixed)
+        return fixed
 
     # ---- writes -------------------------------------------------------
     def has_job(self, source: str, job_id: str) -> bool:
