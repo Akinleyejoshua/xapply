@@ -155,6 +155,21 @@ class BoardLookup(BaseModel):
     text: str
 
 
+class DiscoveredDelete(BaseModel):
+    """Exactly one of job_ids / all selects what to remove from the scan results."""
+
+    job_ids: Optional[list[str]] = None
+    all: bool = False
+
+
+class RetryRequest(BaseModel):
+    """Which applications to try again: specific ids, or everything with one status."""
+
+    ids: Optional[list[int]] = None
+    status: Optional[Literal["failed", "pending_human_review"]] = None
+    limit: Optional[int] = None
+
+
 class DeleteRequest(BaseModel):
     """Exactly one of ids / status / all selects what to remove."""
 
@@ -305,6 +320,41 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             n = database.delete_all()
         note(f"deleted {n} application(s)")
         return {"deleted": n}
+
+    @app.post("/api/applications/retry", dependencies=[Depends(auth)], tags=["apply"])
+    async def retry_applications(body: RetryRequest) -> dict[str, Any]:
+        """Try again on applications that failed, or that are still waiting on you.
+
+        The old rows are removed first. Discovery skips anything already in the table,
+        so leaving them would mean the retry quietly did nothing, and their outcome is
+        about to be replaced anyway. The audit files under logs/applications keep the
+        history of what happened the first time.
+        """
+        if body.ids:
+            rows = [r for r in (database.get(i) for i in body.ids) if r]
+        elif body.status:
+            rows = database.list(status=body.status, limit=body.limit or 100)
+        else:
+            raise HTTPException(400, "Pass ids, or a status of failed or pending_human_review")
+        if not rows:
+            raise HTTPException(404, "Nothing matched, so there is nothing to retry")
+
+        urls, skipped = [], []
+        for r in rows:
+            link = (r.get("apply_url") or r.get("url") or "").strip()
+            if link:
+                urls.append(link)
+            else:
+                skipped.append(r.get("id"))
+        if not urls:
+            raise HTTPException(400, "None of those applications recorded a link to retry")
+
+        database.delete_many([r["id"] for r in rows if r.get("id")])
+        database.delete_by_urls(urls)
+        note(f"retrying {len(urls)} application(s)"
+             + (f"; {len(skipped)} had no link and were left alone" if skipped else ""))
+        result = await trigger_run(RunRequest(urls=urls, limit=body.limit or len(urls)))
+        return {"retrying": len(urls), "skipped": len(skipped), **result}
 
     @app.get("/api/applications/{app_id}/resume", dependencies=[Depends(auth)], tags=["files"])
     def get_resume(app_id: int) -> FileResponse:
@@ -695,8 +745,39 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
     # ---- discover ---------------------------------------------------------
     @app.get("/api/discovered", dependencies=[Depends(auth)], tags=["discover"])
-    def get_discovered() -> list[dict[str, Any]]:
-        return app.state.discovered
+    def get_discovered(limit: int = Query(500, ge=1, le=5000),
+                       search: Optional[str] = None) -> list[dict[str, Any]]:
+        """Everything scans have turned up, newest and most relevant first.
+
+        Read from the database rather than from memory, so a ten-minute scan is not
+        lost to a restart and the terminal sees the same list as the dashboard.
+        """
+        return database.list_discovered(limit=limit, search=search)
+
+    @app.delete("/api/discovered/{job_id}", dependencies=[Depends(auth)], tags=["discover"])
+    def delete_discovered_one(job_id: str) -> dict[str, Any]:
+        n = database.delete_discovered([job_id])
+        if not n:
+            raise HTTPException(404, f"No scan result with job_id {job_id!r}")
+        app.state.discovered = [j for j in app.state.discovered if j.get("job_id") != job_id]
+        note(f"removed {job_id} from the scan results")
+        return {"deleted": n, "job_id": job_id}
+
+    @app.post("/api/discovered/delete", dependencies=[Depends(auth)], tags=["discover"])
+    def delete_discovered_many(body: DiscoveredDelete) -> dict[str, Any]:
+        """Bulk removal: a list of job ids, or the whole list."""
+        if body.all:
+            n = database.delete_discovered_all()
+            app.state.discovered = []
+        elif body.job_ids:
+            n = database.delete_discovered(body.job_ids)
+            gone = set(body.job_ids)
+            app.state.discovered = [j for j in app.state.discovered
+                                    if j.get("job_id") not in gone]
+        else:
+            raise HTTPException(400, "Pass job_ids, or all=true to clear the list")
+        note(f"removed {n} scan result(s)")
+        return {"deleted": n}
 
     @app.get("/api/scan-stats", dependencies=[Depends(auth)], tags=["discover"])
     def get_scan_stats() -> dict[str, Any]:
@@ -765,6 +846,12 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
             def on_batch(source_name: str, batch: list[Any]) -> None:
                 found.extend(batch)
+                # Saved per batch, so a scan you stop halfway still leaves its results
+                # behind, and a restart does not throw away ten minutes of scanning.
+                try:
+                    database.save_discovered(batch)
+                except Exception as exc:                 # never let storage stop a scan
+                    log.warning("could not save scan results: %s", exc)
                 publish()
 
             try:
@@ -806,12 +893,14 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                                  f"The board APIs need no search engine.")
                         publish()
             except asyncio.CancelledError:
+                database.save_discovered(found)
                 publish()
                 snapshot = live_totals()
                 note(f"scan stopped early; keeping the {len(found)} posting(s) found so far "
                      f"({snapshot.seen} examined before the stop)")
                 raise
 
+            database.save_discovered(found)
             app.state.discovered = [j.to_dict() for j in found]
             app.state.scan_stats = {
                 "seen": totals.seen, "kept": len(found),
@@ -855,12 +944,19 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     # ---- apply ------------------------------------------------------------
     @app.post("/admin/run", dependencies=[Depends(auth)], tags=["apply"])
     async def trigger_run(body: RunRequest) -> dict[str, Any]:
+        from llm import LLMError
         from pipeline import Pipeline  # lazy: needs an LLM key
 
         if body.auto_submit is not None:
             settings.fill_mode = "auto" if body.auto_submit else (
                 settings.fill_mode if settings.fill_mode != "auto" else "assisted")
-        pipeline = Pipeline(settings, database, app.state.gate)
+        try:
+            pipeline = Pipeline(settings, database, app.state.gate)
+        except LLMError as exc:
+            # A missing or rejected key is a setup problem with a clear remedy, not a
+            # crash. Returning 500 here showed the browser nothing it could act on.
+            note(str(exc))
+            raise HTTPException(400, str(exc)) from exc
         app.state.gate = pipeline.gate
         urls, limit = body.urls, body.limit
 

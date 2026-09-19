@@ -322,6 +322,7 @@ async def test_only_boards_that_answered_are_written_down(settings: Settings, db
             self.token = tokens[0]
             self.stats = type(src.stats)()
             self.on_batch = None
+            self.slow_boards: list[str] = []
 
         async def discover(self, page: Any = None) -> list[Any]:
             if self.token == "ghost":

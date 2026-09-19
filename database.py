@@ -49,6 +49,26 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
 CREATE INDEX IF NOT EXISTS idx_applications_created ON applications(created_at);
+
+-- Postings a scan turned up, kept separately from applications because finding a job
+-- is not the same as having applied to it. They live here rather than in the browser
+-- so that a restart does not lose a ten-minute scan, and so the terminal and the
+-- dashboard see the same list.
+CREATE TABLE IF NOT EXISTS discovered (
+    job_id      TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    ats         TEXT NOT NULL DEFAULT 'unknown',
+    company     TEXT,
+    title       TEXT,
+    location    TEXT,
+    url         TEXT,
+    apply_url   TEXT,
+    description TEXT,
+    relevance   REAL NOT NULL DEFAULT 0,
+    found_at    TEXT NOT NULL,
+    PRIMARY KEY (source, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_discovered_found ON discovered(found_at);
 """
 
 JSON_COLUMNS = ("analysis_json", "answers_json")
@@ -187,6 +207,90 @@ class Database:
     def delete_all(self) -> int:
         with self._conn() as c:
             return c.execute("DELETE FROM applications").rowcount
+
+    def delete_by_urls(self, urls: list[str]) -> int:
+        """Forget every application for these links, whatever source found them.
+
+        Used before a retry. Discovery skips anything already in the table, and the
+        board that first found a job is not always the source a retry goes through,
+        so matching on the link is the only reliable way to clear the path.
+        """
+        wanted = [u for u in (urls or []) if u]
+        if not wanted:
+            return 0
+        marks = ",".join("?" * len(wanted))
+        with self._conn() as c:
+            return c.execute(
+                f"DELETE FROM applications WHERE url IN ({marks}) OR apply_url IN ({marks})",
+                wanted + wanted,
+            ).rowcount
+
+    # ---- discovered postings ------------------------------------------
+    def save_discovered(self, jobs: list[Any]) -> int:
+        """Remember what a scan found. Re-finding a posting refreshes it rather than
+        duplicating it, so scanning twice does not double the list."""
+        if not jobs:
+            return 0
+        now = _now()
+        rows = []
+        for j in jobs:
+            d = j.to_dict() if hasattr(j, "to_dict") else dict(j)
+            rows.append((
+                d.get("job_id") or "", d.get("source") or "", d.get("ats") or "unknown",
+                d.get("company") or "", d.get("title") or "", d.get("location") or "",
+                d.get("url") or "", d.get("apply_url") or "", d.get("description") or "",
+                float(d.get("relevance") or 0), now,
+            ))
+        with self._conn() as c:
+            c.executemany(
+                """INSERT INTO discovered
+                       (job_id, source, ats, company, title, location, url, apply_url,
+                        description, relevance, found_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(source, job_id) DO UPDATE SET
+                       ats=excluded.ats, company=excluded.company, title=excluded.title,
+                       location=excluded.location, url=excluded.url,
+                       apply_url=excluded.apply_url,
+                       description=COALESCE(NULLIF(excluded.description, ''), discovered.description),
+                       relevance=excluded.relevance, found_at=excluded.found_at""",
+                rows,
+            )
+        return len(rows)
+
+    def list_discovered(self, limit: int = 500, offset: int = 0,
+                        search: Optional[str] = None,
+                        include_text: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM discovered"
+        params: list[Any] = []
+        if search:
+            sql += " WHERE (company LIKE ? OR title LIKE ? OR url LIKE ?)"
+            params.extend([f"%{search}%"] * 3)
+        sql += " ORDER BY relevance DESC, found_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        with self._conn() as c:
+            rows = c.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if not include_text:
+                d.pop("description", None)
+            out.append(d)
+        return out
+
+    def count_discovered(self) -> int:
+        with self._conn() as c:
+            return int(c.execute("SELECT COUNT(*) AS n FROM discovered").fetchone()["n"])
+
+    def delete_discovered(self, job_ids: list[str]) -> int:
+        if not job_ids:
+            return 0
+        marks = ",".join("?" * len(job_ids))
+        with self._conn() as c:
+            return c.execute(f"DELETE FROM discovered WHERE job_id IN ({marks})", job_ids).rowcount
+
+    def delete_discovered_all(self) -> int:
+        with self._conn() as c:
+            return c.execute("DELETE FROM discovered").rowcount
 
     # ---- reads --------------------------------------------------------
     def get(self, app_id: int) -> Optional[dict[str, Any]]:

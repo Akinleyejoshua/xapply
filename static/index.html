@@ -659,6 +659,8 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <button class="sm ghost" id="btnSelNone">Clear</button>
             <button class="primary" id="btnApplySel" disabled>Apply to selected</button>
             <button id="btnApplySelAuto" disabled>Apply with auto-submit</button>
+            <button class="sm ghost danger" id="btnDelFoundSel" disabled>Delete selected</button>
+            <button class="sm ghost danger" id="btnDelAllFound">Clear results</button>
           </div>
           <div id="scanDiag"></div>
           <div class="table-wrap">
@@ -692,6 +694,10 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <button class="sm ghost" id="btnAppRefresh">Refresh</button>
             <span class="sp"></span>
             <button class="sm ghost" id="btnExport">Export CSV</button>
+            <button class="sm" id="btnRetrySel" disabled
+                    title="Run these applications again from the start">Retry selected</button>
+            <button class="sm ghost" id="btnRetryStatus" disabled
+                    title="Filter by Failed or Awaiting you, then retry all of them">Retry all shown</button>
             <button class="sm danger" id="btnDelSel" disabled>Delete selected</button>
             <button class="sm danger ghost" id="btnDelStatus">Delete all shown</button>
           </div>
@@ -1366,12 +1372,42 @@ function updateSelUi(){
   const n = SELECTED.size;
   $('btnApplySel').disabled = $('btnApplySelAuto').disabled = !n;
   $('btnApplySel').textContent = n ? `Apply to ${n} selected` : 'Apply to selected';
+  const del = $('btnDelFoundSel');
+  if(del){ del.disabled = !n; del.textContent = n ? `Delete ${n} selected` : 'Delete selected'; }
+  const clear = $('btnDelAllFound');
+  if(clear) clear.disabled = !FOUND.length;
+}
+/** The rows are selected by link, but the server removes them by job id. */
+function selectedJobIds(){
+  return FOUND.filter(j => SELECTED.has(j.apply_url || j.url))
+              .map(j => j.job_id).filter(Boolean);
 }
 $('foundFilter').oninput = renderFound;
 $('btnSelAll').onclick = () => { FOUND.forEach(j => SELECTED.add(j.apply_url || j.url)); renderFound(); };
 $('btnSelNone').onclick = () => { SELECTED.clear(); renderFound(); };
 $('btnApplySel').onclick = () => applySelected(false);
 $('btnApplySelAuto').onclick = () => { if(confirm(`Auto-submit ${SELECTED.size} real application(s)?`)) applySelected(true); };
+$('btnDelFoundSel').onclick = async () => {
+  const ids = selectedJobIds();
+  if(!ids.length) return;
+  if(!confirm(`Remove ${ids.length} posting(s) from your scan results?`)) return;
+  try{
+    const out = await call('/api/discovered/delete', {method:'POST', body: JSON.stringify({job_ids: ids})});
+    SELECTED.clear();
+    toast(`Removed ${out.deleted} result(s)`);
+    loadFound();
+  } catch(e){ toast(e.message, true); }
+};
+$('btnDelAllFound').onclick = async () => {
+  if(!FOUND.length) return;
+  if(!confirm(`Clear all ${FOUND.length} scan result(s)? This does not touch your applications.`)) return;
+  try{
+    const out = await call('/api/discovered/delete', {method:'POST', body: JSON.stringify({all: true})});
+    SELECTED.clear();
+    toast(`Cleared ${out.deleted} result(s)`);
+    loadFound();
+  } catch(e){ toast(e.message, true); }
+};
 async function applySelected(auto){
   try{
     await call('/admin/apply-selected', {method:'POST',
@@ -1428,7 +1464,9 @@ async function loadApps(){
     <td class="click" onclick="detail(${r.id})">${esc(r.title)}</td>
     <td class="dim click" onclick="detail(${r.id})">${esc(r.ats)}</td>
     <td class="dim click" onclick="detail(${r.id})">${ago(r.updated_at)}</td>
-    <td><button class="sm ghost" title="Delete" onclick="delApp(${r.id})">×</button></td></tr>`).join('')
+    <td class="row-actions">${RETRYABLE.has(r.status)
+        ? `<button class="sm ghost" title="Try this application again" onclick="retryApp(${r.id})">&#8635;</button>`
+        : ''}<button class="sm ghost" title="Delete" onclick="delApp(${r.id})">×</button></td></tr>`).join('')
     || '<tr><td colspan="9" class="empty">No applications match this filter.</td></tr>';
   updateAppSel();
 }
@@ -1436,6 +1474,28 @@ function toggleApp(cb){ const id = +cb.dataset.id; cb.checked ? APP_SEL.add(id) 
 function updateAppSel(){
   $('btnDelSel').disabled = !APP_SEL.size;
   $('btnDelSel').textContent = APP_SEL.size ? `Delete ${APP_SEL.size} selected` : 'Delete selected';
+  const retry = $('btnRetrySel');
+  if(retry){
+    retry.disabled = !APP_SEL.size;
+    retry.textContent = APP_SEL.size ? `Retry ${APP_SEL.size} selected` : 'Retry selected';
+  }
+  const all = $('btnRetryStatus');
+  if(all) all.disabled = !RETRYABLE.has($('appStatus').value);
+}
+
+/** Only these are worth another go. Retrying a submitted one would apply twice. */
+const RETRYABLE = new Set(['failed', 'pending_human_review']);
+
+async function retry(body, what){
+  try{
+    const r = await call('/api/applications/retry', {method:'POST', body: JSON.stringify(body)});
+    toast(`Retrying ${r.retrying} application(s)`);
+    APP_SEL.clear(); loadApps(); loadStats(); show('dash');
+  } catch(e){ toast(e.message, true); }
+}
+async function retryApp(id){
+  if(!confirm(`Try application #${id} again? The old record is replaced by the new attempt.`)) return;
+  retry({ids: [id]});
 }
 $('appAll').onchange = e => {
   document.querySelectorAll('#appRows input[type=checkbox]').forEach(cb => {
@@ -1457,6 +1517,18 @@ $('btnDelSel').onclick = async () => {
     APP_SEL.clear(); toast(`Deleted ${r.deleted}`); loadApps(); loadStats();
   } catch(e){ toast(e.message, true); }
 };
+$('btnRetrySel').onclick = () => {
+  const ids = [...APP_SEL];
+  if(!ids.length) return;
+  if(!confirm(`Try ${ids.length} application(s) again? Their old records are replaced.`)) return;
+  retry({ids});
+};
+$('btnRetryStatus').onclick = () => {
+  const st = $('appStatus').value;
+  if(!RETRYABLE.has(st)) return toast('Filter by Failed or Awaiting you first', true);
+  if(!confirm(`Try every "${LBL[st] || st}" application again?`)) return;
+  retry({status: st});
+};
 $('btnDelStatus').onclick = async () => {
   const st = $('appStatus').value;
   const what = st ? `every application with status "${LBL[st] || st}"` : 'EVERY application in the database';
@@ -1468,7 +1540,7 @@ $('btnDelStatus').onclick = async () => {
   } catch(e){ toast(e.message, true); }
 };
 $('btnAppRefresh').onclick = loadApps;
-$('appStatus').onchange = loadApps;
+$('appStatus').onchange = () => { loadApps(); updateAppSel(); };
 $('appSearch').onkeyup = e => { if(e.key === 'Enter') loadApps(); };
 $('btnExport').onclick = () => location.href = api('/api/export.csv');
 

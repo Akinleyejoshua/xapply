@@ -82,8 +82,18 @@ analyze: dirs  ## Dry-run one posting: make analyze URL=https://www.linkedin.com
 	$(PY) main.py analyze --url "$(URL)"
 
 PORT ?= 8000
+HOST ?= 127.0.0.1
 serve: dirs  ## Start the web dashboard. Override the port with: make serve PORT=8001
 	$(PY) main.py serve --port $(PORT)
+
+dev: dirs  ## Dashboard with autoreload: restarts itself when you edit code or the UI
+	@echo "  XApply dev server on http://$(HOST):$(PORT)  (autoreload on .py/.html/.css)"
+	$(BIN)/uvicorn asgi:app --host $(HOST) --port $(PORT) --reload \
+		--reload-include "*.py" --reload-include "*.html" --reload-include "*.css" \
+		--reload-exclude ".browser_profile/*" --reload-exclude "logs/*" \
+		--reload-exclude "output_resumes/*" --reload-exclude "$(VENV)/*" \
+		--reload-exclude "*.db" --reload-exclude "*.pdf" --reload-exclude "*.png" \
+		--reload-exclude "settings.local.json" --reload-exclude "__pycache__/*"
 
 ui: serve  ## Alias for `make serve`
 
@@ -105,4 +115,4 @@ reset: clean  ## DANGER: remove venv, DB, generated resumes, logs and browser se
 	rm -rf $(VENV) applications.db output_resumes/*.pdf logs/*.log .browser_profile settings.local.json
 
 .PHONY: help venv deps browsers env dirs install login scan scan-save models settings settings-reset companies run run-auto \
-	analyze serve ui db-init check test clean reset
+	analyze serve dev ui db-init check test clean reset
