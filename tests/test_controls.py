@@ -8,6 +8,7 @@ because the form looks filled until somebody reads it.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 from pathlib import Path
@@ -319,3 +320,67 @@ def test_fully_headless_never_opens_a_window() -> None:
 @pytest.mark.asyncio
 async def test_revealing_is_a_no_op_when_a_window_is_already_up() -> None:
     assert await _browser().reveal("test") is False
+
+
+@pytest.mark.asyncio
+async def test_the_window_opens_before_the_form_is_filled_not_after() -> None:
+    """Opening one means restarting the browser. After a form is filled that would
+    throw away every answer, so it has to happen first."""
+    import inspect
+
+    import pipeline
+
+    source = inspect.getsource(pipeline.Pipeline._process)
+    before = source.index("ensure_visible")
+    after = source.index("resumes.build")
+
+    assert before < after, "the window must be opened before any answer is entered"
+
+
+@pytest.mark.asyncio
+async def test_a_pause_brings_the_window_forward() -> None:
+    """The thing that needs doing should be on screen, not behind another window."""
+    from browser_bot import HumanGate
+
+    gate = HumanGate("api")
+    asked: list[str] = []
+
+    async def on_pause(reason: str) -> None:
+        asked.append(reason)
+        gate.release()
+
+    gate.on_pause = on_pause
+    await asyncio.wait_for(gate.wait("Submit it yourself"), timeout=5)
+
+    assert asked == ["Submit it yourself"]
+
+
+@pytest.mark.asyncio
+async def test_a_pause_still_works_when_the_window_cannot_be_shown() -> None:
+    """A failure to raise the window must not stop you being asked."""
+    from browser_bot import HumanGate
+
+    gate = HumanGate("api")
+
+    async def broken(reason: str) -> None:
+        raise RuntimeError("no display")
+
+    gate.on_pause = broken
+
+    async def release() -> None:
+        await asyncio.sleep(0.2)
+        gate.release()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("Submit it yourself"), release()), timeout=5)
+    assert outcome == HumanGate.CONTINUE
+
+
+@pytest.mark.asyncio
+async def test_bringing_a_hidden_window_forward_does_not_open_one() -> None:
+    """Opening one here would restart the browser and lose the filled form."""
+    hidden = _browser(hide_browser=True)
+
+    await hidden.attention("needs you")
+
+    assert hidden.hidden is True

@@ -153,6 +153,12 @@ class Pipeline:
             log.info("SKIP: %s", note)
             return STATUS_SKIPPED
 
+        if applier is not None and not self.s.auto_submit:
+            # You press Submit in these modes, so there has to be a window to press it
+            # in. Opened now, before the form is filled: opening one afterwards means
+            # restarting the browser, which would discard every answer just entered.
+            await browser.ensure_visible("you submit this one yourself")
+
         resume_path = await self.resumes.build(self.profile, analysis, job)
         trimmed = self.resumes.last_trim
         cover_letter.cache["analysis"] = analysis

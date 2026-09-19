@@ -39,7 +39,8 @@ def client(settings: Settings, tmp_path: Path) -> TestClient:
 
 
 def feed(client: TestClient) -> list[dict]:
-    return client.get("/api/run").json()["log"]
+    """The structured feed. `log` is the plain-string copy kept for older tabs."""
+    return client.get("/api/run").json()["activity"]
 
 
 def test_what_the_run_does_reaches_the_feed(client: TestClient) -> None:

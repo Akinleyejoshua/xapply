@@ -264,6 +264,9 @@ class HumanGate:
         self.allow_skip = True
         self.paused_since: Optional[float] = None
         self.history: list[dict[str, Any]] = []
+        #: Called when a pause begins, so the browser can show itself. Set by
+        #: `StealthBrowser`, which is the only thing that has a window to show.
+        self.on_pause: Optional[Any] = None
 
     # ---- waiting ------------------------------------------------------
     async def wait(self, reason: str, allow_skip: bool = True) -> str:
@@ -279,6 +282,13 @@ class HumanGate:
         self._event.clear()
         self._print_banner(reason, allow_skip)
         log.warning("Paused for human: %s", reason)
+        if self.on_pause is not None:
+            # Put the window in front, so the thing that needs doing is on screen
+            # rather than behind whatever you were working in.
+            try:
+                await self.on_pause(reason)
+            except Exception as exc:
+                log.debug("could not draw attention to the window: %s", exc)
         waiters = [asyncio.create_task(self._event.wait(), name="gate-release"),
                    asyncio.create_task(self._wait_marker(), name="gate-marker")]
         stdin_task = self._stdin_task()
@@ -494,9 +504,49 @@ class StealthBrowser:
                 await self.page.goto(self.s.start_url, wait_until="domcontentloaded", timeout=15_000)
             except Exception as exc:
                 log.debug("start page %s did not load: %s", self.s.start_url, exc)
+        self.gate.on_pause = self.attention
         log.info("Browser started %s (profile: %s)",
                  "with no window" if self.hidden else "on screen", self.s.user_data_dir)
         return self
+
+    async def attention(self, reason: str = "") -> None:
+        """Put the window in front of you, because something needs doing in it.
+
+        Never opens a window on its own. Opening one means restarting the browser, and
+        by the time a form is waiting to be submitted it is full of answers that a
+        restart would throw away. The window is opened earlier instead, before any of
+        that work exists, by `ensure_visible`.
+        """
+        try:
+            if self.page and not self.hidden:
+                await self.page.bring_to_front()
+        except Exception as exc:
+            log.debug("could not bring the window forward: %s", exc)
+
+    async def ensure_visible(self, reason: str = "") -> bool:
+        """Open a window before doing work that only you can finish.
+
+        Called before a form is filled, not after. Filling and then opening a window
+        would mean restarting the browser and losing every answer already entered.
+        """
+        if not self.hidden or self.s.headless:
+            return False
+        log.info("This posting needs you at the end, so a window is opening first.")
+        self.hidden = False
+        self.revealed = True
+        url = ""
+        try:
+            url = self.page.url if self.page else ""
+        except Exception:
+            url = ""
+        await self.close()
+        await self.start()
+        if url and not url.startswith("about:"):
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded")
+            except Exception as exc:
+                log.debug("could not reopen %s: %s", url, exc)
+        return True
 
     async def reveal(self, reason: str = "") -> bool:
         """Open a window, for a page that needs a person rather than a bot.
