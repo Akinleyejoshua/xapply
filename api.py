@@ -724,26 +724,60 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
             found: list[Any] = []
             totals = ScanStats()
-            async with LazyBrowser(settings, gate) as lazy:
-                for src in build_sources(settings, lazy, database):
-                    page = await lazy.page_for(src.name)
-                    got = await src.discover(page)
-                    stats = getattr(src, "stats", None)
-                    note(f"{src.name}: {len(got)} posting(s)"
-                         + (f" ({stats.summary()})" if stats else ""))
-                    if stats:
-                        totals += stats
-                    found.extend(got)
+
+            def publish() -> None:
+                """Make what has been found so far visible straight away.
+
+                A scan over thirty company boards takes minutes, and stopping it used to
+                throw away everything it had gathered. Results are published as each
+                board finishes, so they survive a stop and appear while the scan runs.
+                """
+                app.state.discovered = [j.to_dict() for j in found]
+                app.state.scan_stats = {
+                    "seen": totals.seen, "kept": totals.kept,
+                    "reasons": dict(totals.reasons()),
+                    "tips": [], "partial": True,
+                }
+
+            def on_batch(source_name: str, batch: list[Any]) -> None:
+                found.extend(batch)
+                totals.kept = len(found)
+                publish()
+
+            try:
+                async with LazyBrowser(settings, gate) as lazy:
+                    for src in build_sources(settings, lazy, database):
+                        src.on_batch = on_batch
+                        page = await lazy.page_for(src.name)
+                        before = len(found)
+                        got = await src.discover(page)
+                        # Sources that do not report incrementally still contribute here.
+                        for job in got:
+                            if job not in found:
+                                found.append(job)
+                        stats = getattr(src, "stats", None)
+                        if stats:
+                            totals += stats
+                            totals.kept = len(found)
+                        note(f"{src.name}: {len(found) - before} posting(s)"
+                             + (f" ({stats.summary()})" if stats else ""))
+                        publish()
+            except asyncio.CancelledError:
+                publish()
+                note(f"scan stopped early; keeping the {len(found)} posting(s) found so far")
+                raise
+
             app.state.discovered = [j.to_dict() for j in found]
             app.state.scan_stats = {
-                "seen": totals.seen, "kept": totals.kept,
+                "seen": totals.seen, "kept": len(found),
                 "reasons": dict(totals.reasons()),
                 "tips": explain_empty_scan(totals, settings),
+                "partial": False,
             }
             note(f"scan finished: {len(found)} posting(s) ready to review "
                  f"({totals.seen} postings examined)")
             for tip in app.state.scan_stats["tips"]:
-                note("why nothing matched: " + tip)
+                note(tip)
 
         start("discover", _go)
         return {"started": True, "sources": settings.sources}

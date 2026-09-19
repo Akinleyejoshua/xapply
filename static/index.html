@@ -1132,7 +1132,8 @@ async function poll(){
   $('modeBadge').innerHTML = '<span class="dot"></span>' + (st.auto_submit ? 'auto-submit' : 'assisted');
   $('llmBadge').textContent = st.provider + ' / ' + st.model;
   $('ctlState').textContent = running ? st.kind + ' running' : 'idle';
-  $('scanState').textContent = st.kind === 'discover' ? 'scanning…' : '';
+  $('scanState').textContent = st.kind === 'discover'
+    ? `scanning… ${st.discovered || 0} found so far` : '';
   $('btnRun').disabled = $('btnRunAuto').disabled = $('btnScan').disabled = running;
   $('btnStop').disabled = $('btnScanStop').disabled = !running;
 
@@ -1166,10 +1167,11 @@ async function poll(){
       '</div>';
   } else bar.style.display = 'none';
 
-  // Refresh when a scan finishes, even if it found nothing: an empty result still carries
-  // the diagnostics explaining which filter dropped everything.
-  if(LAST_KIND === 'discover' && st.kind !== 'discover') loadFound();
-  else if(st.discovered && st.discovered !== FOUND.length && st.kind !== 'discover') loadFound();
+  // Results are published board by board, so refresh whenever the count moves, while the
+  // scan is still running. Also refresh when it ends, because an empty result still
+  // carries the diagnostics explaining which filter dropped everything.
+  if(st.discovered !== FOUND.length) loadFound();
+  else if(LAST_KIND === 'discover' && st.kind !== 'discover') loadFound();
   LAST_KIND = st.kind;
   // Another browser tab, or the CLI, may have changed settings underneath us.
   if(st.provider !== CONFIG.llm_provider || st.model !== CONFIG.active_model ||
@@ -1250,8 +1252,8 @@ $('btnScan').onclick = async () => {
         seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true)) return;
   try{
     await call('/admin/discover', {method:'POST', body: JSON.stringify({})});
-    toast('Scanning ' + sources.join(', '));
-    FOUND = []; SELECTED.clear(); renderFound();
+    toast('Scanning ' + sources.join(', ') + '. Results appear as each board finishes.');
+    FOUND = []; SELECTED.clear(); SCAN_STATS = null; renderFound();
   } catch(e){ toast(e.message, true); }
 };
 let SCAN_STATS = null, LAST_KIND = '';
@@ -1277,7 +1279,8 @@ function renderScanDiag(){
     'no description':'no description', 'no application link':'no apply link',
   };
   const counts = [`<span class="count">examined <b>${st.seen}</b></span>`,
-                  `<span class="count">kept <b>${st.kept}</b></span>`]
+                  `<span class="count">kept <b>${st.kept}</b></span>`,
+                  ...(st.partial ? ['<span class="count">still scanning…</span>'] : [])]
     .concat(Object.entries(st.reasons || {})
       .map(([k, v]) => `<span class="count">${esc(LABEL[k] || k)} <b>${v}</b></span>`));
   const tips = (st.tips || []).length

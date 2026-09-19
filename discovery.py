@@ -32,7 +32,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.parse import quote_plus, urlparse
 
 import httpx
@@ -261,6 +261,16 @@ class ApiJobSource:
         self.b = browser
         self.tokens = query_tokens(settings.search_queries)
         self.stats = ScanStats()
+        #: Called with each batch of postings as they are found, so a long scan shows
+        #: results while it runs and a stopped scan keeps what it already had.
+        self.on_batch: Optional[Callable[[str, list[JobPosting]], None]] = None
+
+    def _report(self, batch: list[JobPosting]) -> None:
+        if batch and self.on_batch:
+            try:
+                self.on_batch(self.name, batch)
+            except Exception as exc:          # a reporting failure must not stop a scan
+                log.debug("progress callback failed: %s", exc)
 
     async def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(headers=HEADERS, timeout=self.s.discovery_timeout_s,
@@ -379,6 +389,7 @@ class GreenhouseBoardSource(ApiJobSource):
                         kept += 1
                     await asyncio.sleep(self.s.discovery_delay_s)
                 log.info("greenhouse/%s: %d kept of %d", token, kept, len(listing["jobs"]))
+                self._report(found[-kept:] if kept else [])
         return found
 
 
@@ -434,6 +445,7 @@ class LeverBoardSource(ApiJobSource):
                     if kept >= self.s.max_jobs_per_company:
                         break
                 log.info("lever/%s: %d kept of %d", token, kept, len(postings))
+                self._report(found[-kept:] if kept else [])
                 await asyncio.sleep(self.s.discovery_delay_s)
         return found
 
@@ -493,6 +505,7 @@ class AshbyBoardSource(ApiJobSource):
                     if kept >= self.s.max_jobs_per_company:
                         break
                 log.info("ashby/%s: %d kept of %d", token, kept, len(data["jobs"]))
+                self._report(found[-kept:] if kept else [])
                 await asyncio.sleep(self.s.discovery_delay_s)
         return found
 
