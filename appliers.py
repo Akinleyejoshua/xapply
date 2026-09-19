@@ -450,15 +450,20 @@ class SinglePageApplier(BaseApplier):
         except Exception as exc:
             log.debug("form shape check failed: %s", exc)
             return False
+        total = counts.get("total", 0)
         if counts.get("password"):
-            return False                                    # a login form
+            return False                                    # a sign-in form
         if counts.get("file"):
             return True                                     # a resume upload settles it
-        if counts.get("search") and counts.get("total", 0) <= 2:
+        if counts.get("search") and total <= 3:
             return False                                    # a site search box
-        if counts.get("email") and counts.get("total", 0) >= 2:
+        if counts.get("email") and counts.get("name"):
+            return True                                     # asks who you are and how to reach you
+        if total >= 4 and (counts.get("email") or counts.get("name")):
             return True
-        return counts.get("total", 0) >= 4
+        # A lone email box is a newsletter signup, which is what a careers page usually
+        # offers next to the job description. Two fields are never an application.
+        return total >= 6
 
     async def find_form_container(self, page: Page) -> Optional[Locator]:
         """Tag the smallest element holding most of the page's inputs and return it."""
@@ -650,29 +655,33 @@ class GreenhouseApplier(SinglePageApplier):
                       "#app_body", "form")
 
     async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
-        """Reach the application form however the company has arranged its careers page.
+        """Reach the application form, whatever the company has done to its careers page.
 
-        Four routes, in order: the posting URL itself, an embedded Greenhouse iframe,
-        an Apply button or link on a company-hosted page, and finally the Greenhouse
-        embed form, which serves the real form even when everything else redirects.
+        The Greenhouse embed form is tried first when the board and job can be
+        identified, because it always renders the real form and never redirects.
+        Half of all Greenhouse boards bounce their own job URL to a company careers
+        page that shows only the description, and those pages often carry their own
+        marketing CAPTCHA, which would stop the run before the form is ever reached.
+
+        If the embed is unavailable, fall back to the posting itself, any embedded
+        ATS iframe, and finally an Apply button or link on the page.
         """
-        await self.b.goto(page, self.apply_url(job))
+        embed = greenhouse_embed_url(job)
+        if embed:
+            log.info("Opening the Greenhouse application form directly: %s", embed)
+            await self.b.goto(page, embed)
+            form = await self.find_form(page, timeout=15_000)
+            if form is not None:
+                return form
+            log.info("Embed form did not render; falling back to the posting page")
 
-        form = await self.find_in_frames_or_page(page, timeout=6000)
+        await self.b.goto(page, self.apply_url(job))
+        form = await self.find_in_frames_or_page(page, timeout=8000)
         if form is not None:
             return form
-
         form = await self.follow_apply_trigger(page)
         if form is not None:
             return form
-
-        embed = greenhouse_embed_url(job)
-        if embed:
-            log.info("No form on %s; using the Greenhouse embed form %s", page.url, embed)
-            await self.b.goto(page, embed)
-            form = await self.find_in_frames_or_page(page, timeout=15_000)
-            if form is not None:
-                return form
         log.warning("Could not reach an application form for %s", job.url)
         return None
 

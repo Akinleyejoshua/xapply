@@ -862,7 +862,14 @@ function addCountry(){
 function removeCountry(c){
   saveConfig({countries: (CONFIG.countries || []).filter(x => x !== c)}, true);
 }
-function setVal(id, v){ const el = $(id); if(el && v !== undefined && v !== null && el.value != v) el.value = v; }
+function setVal(id, v){
+  const el = $(id);
+  if(!el || v === undefined || v === null) return;
+  // Never overwrite a control the user is holding: the 2.5s poll re-renders from the
+  // store, which would otherwise snap a slider or a text box back mid-drag.
+  if(document.activeElement === el || el.dataset.editing === '1') return;
+  if(el.value != v) el.value = v;
+}
 function setChecked(id, v){ const el = $(id); if(el) el.checked = !!v; }
 
 /** Fill both model dropdowns for the provider each one is showing. */
@@ -1196,14 +1203,30 @@ function thresholdLabel(v){
   return `${v.toFixed(2)} \u2014 ${v <= 0.3 ? 'very wide' : v <= 0.5 ? 'balanced'
                                   : v <= 0.7 ? 'strict' : 'very strict'}`;
 }
+// A range input fires pointer events without taking focus in some browsers, so it is
+// flagged as "being edited" for the whole drag rather than relying on activeElement.
+$('scanThreshold').addEventListener('pointerdown', e => { e.target.dataset.editing = '1'; });
+$('scanThreshold').addEventListener('pointerup', e => { delete e.target.dataset.editing; });
+$('scanThreshold').addEventListener('pointercancel', e => { delete e.target.dataset.editing; });
+$('scanThreshold').addEventListener('keydown', e => { e.target.dataset.editing = '1'; });
+$('scanThreshold').addEventListener('blur', e => { delete e.target.dataset.editing; });
 $('scanThreshold').oninput = () => {
   $('thrLabel').textContent = thresholdLabel(parseFloat($('scanThreshold').value));
 };
-$('scanThreshold').onchange = () =>
+$('scanThreshold').onchange = e => {
+  delete e.target.dataset.editing;
   saveConfig({title_match_threshold: parseFloat($('scanThreshold').value)}, true);
+};
 $('btnAddCountry').onclick = addCountry;
 $('countryPick').ondblclick = addCountry;
 $('btnClearCountries').onclick = () => saveConfig({countries: []}, true);
+for(const id of ['scanQueries','scanLocation','runLimit','runThreshold',
+                 'cfgThreshold','cfgMaxApps','cfgMaxCompany','boardInput','newToken']){
+  const el = $(id);
+  if(!el) continue;
+  el.addEventListener('focus', e => { e.target.dataset.editing = '1'; });
+  el.addEventListener('blur', e => { delete e.target.dataset.editing; });
+}
 $('scanQueries').oninput = debounced(() => saveConfig(
   {search_queries: $('scanQueries').value.split(',').map(x => x.trim()).filter(Boolean)}, true));
 $('scanLocation').oninput = debounced(() => saveConfig({search_location: $('scanLocation').value}, true));
