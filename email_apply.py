@@ -207,6 +207,10 @@ class NotConfigured(RuntimeError):
     """No mail server is set up, so nothing can be sent."""
 
 
+class SendRefused(RuntimeError):
+    """The message was composed but not sent, so nothing should be recorded as sent."""
+
+
 class EmailApplier:
     """Compose and send one application email."""
 
@@ -384,12 +388,26 @@ class GmailTransport:
         return page
 
     async def send(self, draft: Draft) -> None:
+        """Compose and send, and do not return until Gmail says it went.
+
+        The previous version clicked Send and logged success without looking. Anything
+        that went wrong after the click, most often a recipient Gmail never accepted,
+        left the message sitting in Drafts while the application was recorded as sent.
+        A claim nobody checked is worse than a failure, because you stop watching.
+        """
         page = await self.open_mail()
         log.info("Composing in Gmail")
         await (await self._first(page, self.COMPOSE, "Compose button")).click()
         await asyncio.sleep(1.2)
 
-        await (await self._first(page, self.TO, "To field")).fill(draft.to)
+        to_field = await self._first(page, self.TO, "To field")
+        await to_field.click()
+        await to_field.fill(draft.to)
+        # Gmail only accepts a recipient once it has been committed to a chip. Filling
+        # the box leaves the text uncommitted, and Send then refuses the whole message.
+        await page.keyboard.press("Tab")
+        await asyncio.sleep(0.4)
+
         await (await self._first(page, self.SUBJECT, "Subject field")).fill(draft.subject)
         body = await self._first(page, self.BODY, "message body")
         await body.click()
@@ -403,8 +421,53 @@ class GmailTransport:
             await self._await_attachments(page, len(draft.attachments))
 
         await (await self._first(page, self.SEND, "Send button")).click()
-        await asyncio.sleep(2.0)
-        log.info("Gmail says the message to %s is sent", draft.to)
+        await self.confirm_sent(page, draft)
+
+    #: Gmail says so in a small bar at the bottom. Wording varies by language, so the
+    #: compose window closing is the signal that matters most.
+    SENT_TOAST = ('text="Message sent"', 'text="Sending..."', '[role="alert"]:has-text("sent")')
+    #: What it says when it will not send, usually because of the recipient.
+    ERROR_DIALOG = ('[role="alertdialog"]', '.Kj-JD', 'text="Please specify at least one recipient"')
+    #: How long to wait for Gmail to make up its mind.
+    CONFIRM_TIMEOUT = 25.0
+
+    async def confirm_sent(self, page: Any, draft: Draft) -> None:
+        """Wait for evidence that Gmail sent it, and raise when there is none."""
+        deadline = asyncio.get_running_loop().time() + self.CONFIRM_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
+            complaint = await self._text_of(page, self.ERROR_DIALOG)
+            if complaint:
+                raise SendRefused(f"Gmail would not send it: {complaint[:160]}")
+            if await self._gone(page, self.BODY):
+                log.info("Gmail sent the message to %s", draft.to)
+                return
+            if await self._text_of(page, self.SENT_TOAST):
+                log.info("Gmail sent the message to %s", draft.to)
+                return
+            await asyncio.sleep(0.8)
+        raise SendRefused(
+            f"Gmail did not confirm sending to {draft.to}. The message is most likely "
+            f"still in your Drafts. Nothing has been recorded as sent.")
+
+    async def _gone(self, page: Any, selectors: Iterable[str]) -> bool:
+        """Whether none of these is on the page any more, which is how compose closes."""
+        for selector in selectors:
+            try:
+                if await page.locator(selector).count():
+                    return False
+            except Exception:
+                return False
+        return True
+
+    async def _text_of(self, page: Any, selectors: Iterable[str]) -> str:
+        for selector in selectors:
+            try:
+                found = page.locator(selector).first
+                if await found.count() and await found.is_visible():
+                    return (await found.inner_text()).strip()
+            except Exception:
+                continue
+        return ""
 
     async def _await_attachments(self, page: Any, expected: int, timeout: float = 90.0) -> None:
         """Wait for the uploads to finish, because Send discards one still in progress."""
