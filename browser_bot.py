@@ -665,6 +665,13 @@ class FormField:
     #: False for a dropdown you can only click, such as a button that opens a list.
     #: Typing into one throws, which is why they were skipped rather than filled.
     typeable: bool = True
+    #: False when the control is built out of ordinary elements and only behaves like a
+    #: form control: a div with role="checkbox", a switch, a rich text box. Playwright's
+    #: check() and fill() do not work on those, so they are clicked and typed into.
+    native: bool = True
+    #: True for a real input the design has hidden behind something styled. The input is
+    #: still the thing to set, but it cannot be clicked, so its label is clicked instead.
+    hidden_control: bool = False
 
     @property
     def option_labels(self) -> list[str]:
@@ -724,6 +731,13 @@ DISCOVER_JS = r"""
     const up = walkUp(el, 'legend, [class*="label" i]:not(label):not(input), [class*="question" i]:not(label):not(input), h3, h4', 5);
     return up || clean(el.getAttribute('name') || '');
   };
+  const hasVisibleProxy = el => {
+    if (el.labels) { for (const l of el.labels) if (visible(l)) return true; }
+    const p = el.parentElement;
+    if (p && visible(p) && p.querySelector('span, i, svg, [class*="box" i], [class*="check" i], [class*="mark" i]')) return true;
+    return false;
+  };
+  const ariaChecked = el => el.getAttribute('aria-checked') === 'true';
   const errorOf = el => {
     if (el.getAttribute('aria-invalid') === 'true') {
       const d = el.getAttribute('aria-describedby'); const t = d ? textOfIds(d) : '';
@@ -760,11 +774,17 @@ DISCOVER_JS = r"""
     else if (!type) type = 'text';
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) return;
     let hiddenSelect = false;
+    let hiddenControl = false;
     if (type === 'select' && !visible(el)) {
       const p = el.parentElement;
       const widget = p && p.querySelector('.select2-container, [class*="select__control" i], [role="combobox"]');
       if (!widget || !visible(widget)) return;
       hiddenSelect = true;
+    } else if ((type === 'checkbox' || type === 'radio') && !visible(el)) {
+      // A design system that hides the real input and styles a span in its place. The
+      // input is still what has to be set, so it is kept and its label gets the click.
+      if (!hasVisibleProxy(el)) return;
+      hiddenControl = true;
     } else if (type !== 'file' && !visible(el)) return;
     if (el.disabled || el.readOnly) return;
     const id = 'x' + (idx++);
@@ -776,7 +796,8 @@ DISCOVER_JS = r"""
       if (!radioGroups.has(key)) {
         radioGroups.set(key, { kind: 'radio', label: groupLabelOf(el), idx: '', name: el.name || '', dom_id: '',
                                required: required, options: [], current_value: '', has_error: false, error_text: '',
-                               hidden_select: false, order: myOrder, typeable: false });
+                               hidden_select: false, order: myOrder, typeable: false,
+                               native: true, hidden_control: false });
       }
       const g = radioGroups.get(key);
       const optLabel = clean((el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.value);
@@ -788,7 +809,8 @@ DISCOVER_JS = r"""
     }
     const d = { kind: type, label: labelOf(el), idx: id, name: el.name || '', dom_id: el.id || '',
                 required: required, options: [], current_value: '', has_error: false, error_text: '',
-                hidden_select: hiddenSelect, order: myOrder, typeable: true };
+                hidden_select: hiddenSelect, order: myOrder, typeable: true,
+                native: true, hidden_control: hiddenControl };
     if (type === 'select') {
       d.options = [...el.options].map(o => ({ label: clean(o.text), value: o.value, idx: '', dom_id: '' }));
       const cur = el.selectedIndex >= 0 ? clean(el.options[el.selectedIndex].text) : '';
@@ -825,11 +847,62 @@ DISCOVER_JS = r"""
     const d = { kind: 'combobox', label: labelOf(el), idx: id, name: el.getAttribute('name') || '',
                 dom_id: el.id || '', required: el.getAttribute('aria-required') === 'true',
                 options: [], current_value: '', has_error: false, error_text: '',
-                hidden_select: false, order: order++, typeable: false };
+                hidden_select: false, order: order++, typeable: false,
+                native: true, hidden_control: false };
     const cur = activeText || shown;
     d.current_value = placeholderish(cur) ? '' : cur;
     const err = errorOf(el); if (err) { d.has_error = true; d.error_text = err; }
     out.push(d);
+  });
+
+  // Controls built out of ordinary elements that only behave like form controls: a div
+  // with role="checkbox", a switch, a group of divs acting as radios, a rich text box.
+  // Nothing above finds any of them, because none is an input, a textarea or a select,
+  // so on a form that uses them those questions were left blank without comment.
+  const claim = (el, kind, extra) => {
+    const id = 'x' + (idx++);
+    el.setAttribute('data-xapply-idx', id);
+    captured.add(el);
+    const d = Object.assign({
+      kind: kind, label: labelOf(el), idx: id, name: el.getAttribute('name') || '',
+      dom_id: el.id || '', required: el.getAttribute('aria-required') === 'true',
+      options: [], current_value: '', has_error: false, error_text: '',
+      hidden_select: false, order: order++, typeable: false,
+      native: false, hidden_control: false,
+    }, extra || {});
+    const err = errorOf(el); if (err) { d.has_error = true; d.error_text = err; }
+    return d;
+  };
+  const usable = el => visible(el) && !captured.has(el)
+      && el.getAttribute('aria-disabled') !== 'true' && !el.hasAttribute('disabled');
+
+  root.querySelectorAll('[role="checkbox"], [role="switch"]').forEach(el => {
+    if (!usable(el)) return;
+    out.push(claim(el, 'checkbox', { current_value: ariaChecked(el) ? 'checked' : '' }));
+  });
+
+  root.querySelectorAll('[role="radiogroup"]').forEach(group => {
+    const radios = [...group.querySelectorAll('[role="radio"]')].filter(usable);
+    if (!radios.length) return;
+    const d = claim(group, 'radio', { label: groupLabelOf(group) || labelOf(group) });
+    radios.forEach(r => {
+      const rid = 'x' + (idx++);
+      r.setAttribute('data-xapply-idx', rid);
+      captured.add(r);
+      const text = clean(r.innerText) || clean(r.getAttribute('aria-label') || '')
+                   || clean(r.getAttribute('data-v') || '');
+      d.options.push({ label: text, value: text, idx: rid, dom_id: r.id || '' });
+      if (ariaChecked(r)) d.current_value = text;
+      if (r.getAttribute('aria-required') === 'true') d.required = true;
+    });
+    out.push(d);
+  });
+
+  // A rich text box. It is a question with a long answer, so it is a textarea to us.
+  root.querySelectorAll('[contenteditable="true"], [contenteditable=""]').forEach(el => {
+    if (!usable(el)) return;
+    if (el.closest('[data-xapply-idx]') !== el && el.closest('[data-xapply-idx]')) return;
+    out.push(claim(el, 'textarea', { typeable: true, current_value: clean(el.innerText) }));
   });
 
   // Order by where things actually sit on the page. Counting as we go is wrong: the
@@ -1007,17 +1080,59 @@ class FormFiller:
                 log.info("No radio option matches %r for %r (options: %s)", value, f.label, f.option_labels)
                 return None
             opt = next(o for o in f.options if o["label"] == chosen)
+            option_loc = self._loc(scope, opt["idx"])
+            if not f.native:
+                # A div acting as a radio. check() only works on a real input.
+                await self.b.human_click(option_loc)
+                return chosen
             label_loc = scope.locator(f'label[for="{opt["dom_id"]}"]') if opt.get("dom_id") else None
             if label_loc is not None and await label_loc.count() and await label_loc.first.is_visible():
                 await self.b.human_click(label_loc.first)
             else:
-                await self._loc(scope, opt["idx"]).check(force=True)
+                await option_loc.check(force=True)
                 await self.b.sleep(0.4, 0.1)
             return chosen
         if f.kind == "combobox":
             return await self._fill_combobox(scope, f, value)
         log.debug("Unhandled field kind %r for %r", f.kind, f.label)
         return None
+
+    @staticmethod
+    async def _is_native_input(locator: Locator) -> bool:
+        try:
+            return bool(await locator.evaluate(
+                "el => ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)"))
+        except Exception:
+            return True
+
+    async def _set_checkbox(self, scope: Locator, f: FormField, loc: Locator,
+                            want: bool) -> None:
+        """Tick or untick, whatever the checkbox is actually made of.
+
+        Three shapes, in order of how often they turn up: a real input, a real input the
+        design has hidden behind a styled span, and a div that only behaves like a
+        checkbox. `set_checked` works on the first two and throws on the third, so the
+        third is clicked and the result checked rather than assumed.
+        """
+        if not f.native:
+            await self.b.human_click(loc)
+            state = await loc.get_attribute("aria-checked")
+            if (state == "true") != want:
+                # One click was a toggle in the wrong direction, or it did not register.
+                await self.b.human_click(loc)
+            return
+        label_loc = scope.locator(f'label[for="{f.dom_id}"]') if f.dom_id else None
+        if label_loc is not None and await label_loc.count() and await label_loc.first.is_visible():
+            await self.b.human_click(label_loc.first)
+            return
+        if f.hidden_control:
+            # The input cannot be clicked, so click whatever is standing in for it.
+            wrapper = loc.locator("xpath=ancestor::label[1]")
+            if await wrapper.count() and await wrapper.first.is_visible():
+                await self.b.human_click(wrapper.first)
+                return
+        await loc.set_checked(want, force=True)
+        await self.b.sleep(0.3, 0.1)
 
     async def _enter(self, locator: Locator, text: str) -> None:
         """Put text in a field, at a person's pace or in one go.
@@ -1026,6 +1141,15 @@ class FormFiller:
         right default. In all-at-once mode the whole form is filled in a single pass,
         so each field is set directly and the form is done in seconds.
         """
+        if not await self._is_native_input(locator):
+            # A rich text box holds its text as content, not as a value, so there is
+            # nothing for fill() to set. It is focused and typed into like a person would.
+            await self.b.bring_into_view(locator)
+            await locator.click()
+            await locator.evaluate("el => { el.textContent = ''; }")
+            await locator.type(text, delay=0 if self.s.fill_all_at_once else 12)
+            await locator.dispatch_event("input")
+            return
         if not self.s.fill_all_at_once:
             await self.b.human_type(locator, text)
             return
@@ -1061,12 +1185,7 @@ class FormFiller:
         if want is None:
             return None
         if want != checked:
-            label_loc = scope.locator(f'label[for="{f.dom_id}"]') if f.dom_id else None
-            if label_loc is not None and await label_loc.count() and await label_loc.first.is_visible():
-                await self.b.human_click(label_loc.first)
-            else:
-                await loc.set_checked(want, force=True)
-                await self.b.sleep(0.3, 0.1)
+            await self._set_checkbox(scope, f, loc, want)
         return {"label": f.label, "kind": "checkbox", "value": "checked" if want else "unchecked",
                 "source": source, "confidence": 1.0, "ok": True}
 
@@ -1206,21 +1325,44 @@ class FormFiller:
             return None
 
         await self.b.bring_into_view(loc)
-        await loc.click()
-        await loc.fill("")
-        await loc.press_sequentially(target[:60], delay=random.uniform(40, 100))
-        await asyncio.sleep(0.9)
-        try:
-            chosen = await self._pick_from_menu(page.locator(self.OPTION_SELECTOR), target)
-            if chosen:
-                return chosen
-        except PlaywrightTimeout:
-            pass
-        # keyboard fallback
-        await page.keyboard.press("ArrowDown")
-        await page.keyboard.press("Enter")
-        await self.b.sleep(0.4, 0.1)
+        options = page.locator(self.OPTION_SELECTOR)
+        for query in self.typeahead_queries(target):
+            await loc.click()
+            await loc.fill("")
+            await loc.press_sequentially(query, delay=random.uniform(40, 100))
+            await asyncio.sleep(0.9)
+            try:
+                if not await options.count():
+                    continue            # too specific for this list; try a shorter query
+                chosen = await self._pick_from_menu(options, query)
+                if chosen:
+                    return chosen
+            except PlaywrightTimeout:
+                continue
+        # Nothing was offered, so this is a plain text box wearing a dropdown's clothes.
+        # The typed value stands, which is better than an empty required field.
+        log.info("%r offered no suggestion for %r; leaving the typed value", f.label, target)
         return target
+
+    #: A profile holds a location as a person would write it, "Lagos, Nigeria (Remote,
+    #: Worldwide)". A typeahead matches on a prefix and offers nothing for that, so the
+    #: whole string was typed and left sitting in the box, unmatched.
+    TYPEAHEAD_TRIM = re.compile(r"\s*[(\u2013\u2014/|]|\s+-\s+")
+
+    @classmethod
+    def typeahead_queries(cls, value: str) -> list[str]:
+        """What to type into a suggestion box, from most specific to least."""
+        value = (value or "").strip()
+        if not value:
+            return []
+        out = [value[:60]]
+        trimmed = cls.TYPEAHEAD_TRIM.split(value)[0].strip(" ,")
+        if trimmed and trimmed not in out:
+            out.append(trimmed)
+        head = trimmed.split(",")[0].strip()
+        if head and head not in out:
+            out.append(head)
+        return out
 
 
 # --------------------------------------------------------------------------
