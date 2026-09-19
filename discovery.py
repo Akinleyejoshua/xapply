@@ -960,22 +960,70 @@ class GoogleSearchSource(ApiJobSource):
         """Hand each discovered board to the API source that understands it.
 
         The API returns the full description, which a search result never carries, so
-        every posting arrives ready to score without opening another page.
+        every posting arrives ready to score without opening another page. Boards are
+        read one at a time so a board that does not answer can be told apart from one
+        that answered with nothing you wanted, and only the former is forgotten.
         """
         found: list[JobPosting] = []
+        confirmed: dict[str, set[str]] = {}
         for ats, tokens in boards.items():
             source_cls = SOURCE_REGISTRY.get(ats)
             if source_cls is None or not tokens:
                 continue
-            source = source_cls(self.s, self.db, self.b, tokens=sorted(tokens))
-            source.on_batch = lambda _name, batch: self._report(batch)
-            try:
-                found.extend(await source.discover())
-            except Exception as exc:
-                log.warning("google: could not read the %s boards: %s", ats, exc)
-            finally:
-                self.stats += source.stats
+            for token in sorted(tokens):
+                source = source_cls(self.s, self.db, self.b, tokens=[token])
+                source.on_batch = lambda _name, batch: self._report(batch)
+                try:
+                    found.extend(await source.discover())
+                except Exception as exc:
+                    log.warning("google: could not read %s/%s: %s", ats, token, exc)
+                    continue
+                finally:
+                    self.stats += source.stats
+                if source.stats.seen:
+                    confirmed.setdefault(ats, set()).add(token)
+        self.found_boards = confirmed
+        self.remember_boards(confirmed)
         return found
+
+    def remember_boards(self, boards: dict[str, set[str]]) -> dict[str, list[str]]:
+        """Add confirmed boards to `companies.json` so the next scan needs no search.
+
+        This is the lasting value of the Google source. A search costs a page load and
+        can be refused; a company token costs nothing and keeps working, so a board is
+        worth finding once and keeping. Only boards that answered are written, nothing
+        is ever removed, and the file stays sorted so the diff is readable.
+        """
+        if not boards:
+            return {}
+        path = Path(self.s.company_file)
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning("google: leaving %s alone, it is not readable: %s", path.name, exc)
+            return {}
+
+        added: dict[str, list[str]] = {}
+        for ats, tokens in boards.items():
+            current = stored.get(ats)
+            if not isinstance(current, list):
+                current = []
+            fresh = sorted(t for t in tokens if t not in current)
+            if not fresh:
+                continue
+            stored[ats] = sorted(current + fresh)
+            added[ats] = fresh
+        if not added:
+            return {}
+        try:
+            path.write_text(json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError as exc:
+            log.warning("google: could not save the new boards: %s", exc)
+            return {}
+        for ats, fresh in added.items():
+            log.info("google: remembered %d new %s board(s): %s",
+                     len(fresh), ats, ", ".join(fresh))
+        return added
 
     def remaining_urls(self, urls: set[str], found: list[JobPosting]) -> list[JobPosting]:
         """Exact links the board APIs did not already cover, kept rather than discarded."""
