@@ -29,6 +29,28 @@ FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 SCALE_STEPS = (1.0, 0.95, 0.9, 0.85, 0.8)
 
 
+#: Profile skill groups are keys like `ai_ml`, and a naive title-case renders them
+#: "Ai Ml". Anything not listed falls back to title case with underscores removed.
+SKILL_GROUP_LABELS = {
+    "ai_ml": "AI/ML", "ai": "AI", "ml": "ML", "nlp": "NLP", "ui_ux": "UI/UX",
+    "data_analytics": "Data & Analytics", "languages_tools": "Languages & Tools",
+    "devops": "DevOps", "cloud_devops": "Cloud & DevOps", "web3": "Web3",
+    "frontend": "Frontend", "backend": "Backend", "database": "Databases",
+    "databases": "Databases", "mobile": "Mobile", "tools": "Tools",
+    "practices": "Practices", "languages": "Languages", "frameworks": "Frameworks",
+    "data": "Data", "qa": "QA", "apis": "APIs",
+}
+
+
+def skill_group_label(key: str) -> str:
+    """Human-readable heading for a skills group key."""
+    flat = (key or "").strip().lower()
+    if flat in SKILL_GROUP_LABELS:
+        return SKILL_GROUP_LABELS[flat]
+    words = re.split(r"[_\s]+", flat)
+    return " ".join(SKILL_GROUP_LABELS.get(w, w.title()) for w in words if w)
+
+
 def slugify(value: str, max_len: int = 48) -> str:
     value = re.sub(r"[^A-Za-z0-9]+", "_", value or "").strip("_")
     return (value or "Unknown")[:max_len].rstrip("_")
@@ -153,7 +175,7 @@ class ResumeBuilder:
                     used.add(k)
                     rest.append(item)
             if rest:
-                skill_groups.append({"label": label.replace("_", " ").title(), "items": rest})
+                skill_groups.append({"label": skill_group_label(label), "items": rest})
 
         links = []
         for key, label in (("linkedin", "LinkedIn"), ("github", "GitHub"), ("website", "Portfolio")):
