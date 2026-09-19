@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     discovery_timeout_s: float = 25.0
     discovery_delay_s: float = 0.35    # pause between API calls, to stay polite
     aggregator_page_size: int = 100
+    max_browser_resolutions: int = 8   # aggregator links resolved through the browser per run
     follow_external_apply: bool = True  # LinkedIn "Apply" -> Greenhouse/Lever/Ashby hand-off
 
     # ---- Browser ----

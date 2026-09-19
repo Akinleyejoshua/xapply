@@ -336,6 +336,8 @@ class AggregatorSource(ApiJobSource):
     title filter, not for the whole feed.
     """
 
+    _browser_resolutions = 0
+
     async def resolve_ats_url(self, client: httpx.AsyncClient, link: str, description: str = "",
                               page: Any = None) -> str:
         """Find the Greenhouse/Lever/Ashby URL behind an aggregator listing."""
@@ -362,6 +364,11 @@ class AggregatorSource(ApiJobSource):
             blocked = True
         if not blocked or page is None or self.b is None:
             return ""
+        if self._browser_resolutions >= self.s.max_browser_resolutions:
+            log.debug("browser-resolution budget spent (%d); skipping %s",
+                      self.s.max_browser_resolutions, link)
+            return ""
+        self._browser_resolutions += 1
         return await self._resolve_with_browser(page, link)
 
     async def _resolve_with_browser(self, page: Any, link: str) -> str:
