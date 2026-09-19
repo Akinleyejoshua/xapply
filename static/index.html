@@ -254,6 +254,8 @@ button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--err) 86%, 
 button.ghost{background:transparent; box-shadow:none}
 button.ghost:hover:not(:disabled){background:var(--surface-3)}
 button.danger.ghost{background:transparent; color:var(--err); border-color:color-mix(in srgb,var(--err) 40%, transparent)}
+tr.done td{opacity:.55}
+tr.done td:nth-child(5){opacity:1}
 button.danger.ghost:hover:not(:disabled){background:var(--err-soft); border-color:var(--err)}
 button.sm{padding:6px 11px; font-size:12.5px; border-radius:var(--r-xs)}
 button.icon{padding:5px 8px; line-height:1; color:var(--fg-3)}
@@ -667,7 +669,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
           <div id="scanDiag"></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>Match</th><th>ATS</th><th>JD</th></tr></thead>
+              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>Applied</th><th>Match</th><th>ATS</th><th>JD</th></tr></thead>
               <tbody id="foundRows"></tbody>
             </table>
           </div>
@@ -1357,16 +1359,24 @@ function renderFound(){
   $('foundCount').textContent = FOUND.length ? `- ${rows.length} of ${FOUND.length}` : '';
   $('foundRows').innerHTML = rows.map(j => {
     const u = j.apply_url || j.url;
-    return `<tr><td><input type="checkbox" data-url="${esc(u)}" ${SELECTED.has(u) ? 'checked' : ''}
+    const st = j.applied_status;
+    // An applied posting cannot be applied to again, so saying so here saves you
+    // selecting it and watching a browser open and close with nothing to do.
+    const applied = st
+      ? `<span class="pill ${st}" title="Application #${j.applied_id}. Use Retry on the Applications tab.">${LBL[st] || st}</span>`
+      : '<span class="dim">-</span>';
+    return `<tr class="${st ? 'done' : ''}"><td><input type="checkbox" data-url="${esc(u)}"
+        ${SELECTED.has(u) ? 'checked' : ''} ${st ? 'disabled title="Already applied"' : ''}
         onchange="toggleSel(this)"></td>
       <td>${esc(j.company)}</td>
       <td>${esc(j.title)}<br><a class="mono dim" href="${esc(u)}" target="_blank">${esc(u.slice(0,70))}</a></td>
       <td class="dim">${esc(j.location)}</td>
+      <td>${applied}</td>
       <td class="score" title="How closely the title matched your search terms">${
         j.relevance ? j.relevance.toFixed(2) : '-'}</td>
       <td class="dim">${esc(j.ats)}</td>
       <td class="dim mono">${j.description ? (j.description.length + 'c') : '-'}</td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
   updateSelUi();
 }
 function toggleSel(cb){ cb.checked ? SELECTED.add(cb.dataset.url) : SELECTED.delete(cb.dataset.url); updateSelUi(); }
@@ -1385,7 +1395,10 @@ function selectedJobIds(){
               .map(j => j.job_id).filter(Boolean);
 }
 $('foundFilter').oninput = renderFound;
-$('btnSelAll').onclick = () => { FOUND.forEach(j => SELECTED.add(j.apply_url || j.url)); renderFound(); };
+$('btnSelAll').onclick = () => {
+  FOUND.filter(j => !j.applied_status).forEach(j => SELECTED.add(j.apply_url || j.url));
+  renderFound();
+};
 $('btnSelNone').onclick = () => { SELECTED.clear(); renderFound(); };
 $('btnApplySel').onclick = () => applySelected(false);
 $('btnApplySelAuto').onclick = () => { if(confirm(`Auto-submit ${SELECTED.size} real application(s)?`)) applySelected(true); };

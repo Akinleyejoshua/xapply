@@ -1015,6 +1015,21 @@ class FormFiller:
                 out.append(re.sub(r"\s+", " ", text))
         return out
 
+    async def _click_option(self, options: Locator, text: str) -> Optional[str]:
+        """Click the option whose text is exactly `text`."""
+        for i in range(min(await options.count(), 200)):
+            o = options.nth(i)
+            try:
+                if not await o.is_visible():
+                    continue
+                if re.sub(r"\s+", " ", (await o.inner_text()).strip()) == text:
+                    await o.click()
+                    await self.b.sleep(0.4, 0.1)
+                    return text
+            except Exception:
+                continue
+        return None
+
     async def _pick_from_menu(self, options: Locator, target: str) -> Optional[str]:
         """Click the choice closest to `target`, or None when nothing is close enough."""
         best: Optional[Locator] = None
@@ -1069,11 +1084,16 @@ class FormFiller:
             # which is why these fields used to be left empty.
             try:
                 options = await self._open_menu(scope, f)
-                chosen = await self._pick_from_menu(options, target)
+                texts = await self._visible_option_texts(options)
+                # The whole list is on screen here, so the choice has to be a real match.
+                # The loose ratio used for a typeahead would pick "A friend" for "Carrier
+                # pigeon", which puts an untrue answer on someone's application.
+                chosen = choose_option(target, texts) if texts else None
                 if chosen:
-                    return chosen
-                log.info("No option in %r resembles %r (saw: %s)", f.label, target,
-                         (await self._visible_option_texts(options, 8)))
+                    picked = await self._click_option(options, chosen)
+                    if picked:
+                        return picked
+                log.info("No option in %r answers %r (offered: %s)", f.label, target, texts[:8])
                 await page.keyboard.press("Escape")
             except Exception as exc:
                 log.info("Could not work the dropdown %r: %s", f.label, exc)

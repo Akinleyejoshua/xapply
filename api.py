@@ -993,6 +993,36 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             urls.append(url)
         if not urls:
             raise HTTPException(400, "Provide the URLs to apply to")
+
+        # Applying twice to the same posting is not something the bot will do, so a link
+        # already in the database is dropped during discovery. Checking here means you
+        # are told why, instead of watching a browser open and close for no visible reason.
+        from models import job_id_from_url
+
+        fresh: list[str] = []
+        already: list[dict[str, Any]] = []
+        for url in urls:
+            row = database.find_job("urls", job_id_from_url(url))
+            if row:
+                already.append(row)
+            else:
+                fresh.append(url)
+        if not fresh:
+            # Naming them matters: "already applied" without saying which one sends you
+            # hunting through a filtered list for a row you cannot identify.
+            which = "; ".join(
+                f"#{r['id']} {r.get('company') or '?'} / {r.get('title') or '?'} ({r['status']})"
+                for r in already[:5])
+            raise HTTPException(
+                400,
+                f"Already applied: {which}"
+                + (f" and {len(already) - 5} more" if len(already) > 5 else "")
+                + ". Open the Applications tab, clear the status filter to All, and use "
+                  "Retry on that row to run it again.")
+        if already:
+            note(f"{len(already)} of {len(urls)} selected posting(s) are already applied to "
+                 f"and were left out; applying to the other {len(fresh)}")
+        urls = fresh
         return await trigger_run(RunRequest(urls=urls, limit=body.limit or len(urls),
                                             auto_submit=body.auto_submit))
 

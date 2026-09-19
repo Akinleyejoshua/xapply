@@ -208,6 +208,13 @@ class Database:
         with self._conn() as c:
             return c.execute("DELETE FROM applications").rowcount
 
+    def find_job(self, source: str, job_id: str) -> Optional[dict[str, Any]]:
+        """The application already recorded for this posting, if there is one."""
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM applications WHERE source=? AND job_id=?",
+                            (source, job_id)).fetchone()
+        return _row_to_dict(row, include_text=False) if row else None
+
     def delete_by_urls(self, urls: list[str]) -> int:
         """Forget every application for these links, whatever source found them.
 
@@ -257,15 +264,34 @@ class Database:
             )
         return len(rows)
 
+    #: A scan result and an application are the same posting when either link matches.
+    #: A subquery rather than a join, so two applications for one posting cannot turn
+    #: a single scan result into two rows.
+    _APPLIED = """(
+        SELECT a.{col} FROM applications a
+        WHERE (NULLIF(a.url,'')       = NULLIF(d.url,''))
+           OR (NULLIF(a.apply_url,'') = NULLIF(d.apply_url,''))
+           OR (NULLIF(a.url,'')       = NULLIF(d.apply_url,''))
+           OR (NULLIF(a.apply_url,'') = NULLIF(d.url,''))
+        ORDER BY a.updated_at DESC LIMIT 1
+    ) AS applied_{col}"""
+
     def list_discovered(self, limit: int = 500, offset: int = 0,
                         search: Optional[str] = None,
                         include_text: bool = False) -> list[dict[str, Any]]:
-        sql = "SELECT * FROM discovered"
+        """Scan results, each carrying the state of the application made from it.
+
+        Without this you cannot tell by looking which postings you have already applied
+        to, so you select one, the run finds nothing new to do, and the browser opens
+        and closes for no visible reason.
+        """
+        sql = ("SELECT d.*, " + self._APPLIED.format(col="status") + ", "
+               + self._APPLIED.format(col="id") + " FROM discovered d")
         params: list[Any] = []
         if search:
-            sql += " WHERE (company LIKE ? OR title LIKE ? OR url LIKE ?)"
+            sql += " WHERE (d.company LIKE ? OR d.title LIKE ? OR d.url LIKE ?)"
             params.extend([f"%{search}%"] * 3)
-        sql += " ORDER BY relevance DESC, found_at DESC LIMIT ? OFFSET ?"
+        sql += " ORDER BY d.relevance DESC, d.found_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._conn() as c:
             rows = c.execute(sql, params).fetchall()

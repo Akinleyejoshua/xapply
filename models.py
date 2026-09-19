@@ -5,7 +5,7 @@ import hashlib
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # ATS identifiers
 LINKEDIN = "linkedin"
@@ -65,16 +65,45 @@ def detect_ats(url: str) -> str:
     return UNKNOWN
 
 
+#: Path segments that name a page, not a posting. Taking the last segment as the id
+#: turned every Ashby link ending "/application" into the same posting, so the second
+#: one you picked was refused as already applied, naming a job you had never seen.
+GENERIC_SEGMENTS = {"application", "apply", "application_form", "job_app", "jobs", "job",
+                    "embed", "index", "posting", "postings", "openings", "form"}
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+_NUMERIC_ID_RE = re.compile(r"^\d{4,}$")
+#: Query parameters that carry the posting id on an embedded board.
+ID_PARAMS = ("gh_jid", "gh_src_token", "token")
+
+
 def job_id_from_url(url: str) -> str:
-    """Stable identifier for a posting: LinkedIn numeric id, otherwise a URL hash."""
+    """Stable identifier for a posting.
+
+    The identifier has to come from the posting itself, never from the page being
+    viewed, because one posting is reachable at several addresses: the board page, the
+    apply page and the embedded form all describe the same job.
+    """
     m = _LINKEDIN_JOB_RE.search(url)
     if m:
         return m.group(1)
     clean = url.split("#")[0].rstrip("/")
     ats = detect_ats(url)
-    tail = urlparse(clean).path.rstrip("/").split("/")[-1]
-    if ats in (LEVER, ASHBY, GREENHOUSE) and tail:
-        return f"{ats}-{tail}"
+    if ats in (LEVER, ASHBY, GREENHOUSE):
+        parsed = urlparse(clean)
+        found = _UUID_RE.search(parsed.path)          # Lever and Ashby use a UUID
+        if found:
+            return f"{ats}-{found.group(0).lower()}"
+        query = parse_qs(parsed.query)                # an embedded form carries it here
+        for key in ID_PARAMS:
+            value = (query.get(key) or [""])[0].strip()
+            if _NUMERIC_ID_RE.match(value):
+                return f"{ats}-{value}"
+        for segment in reversed([p for p in parsed.path.split("/") if p]):
+            if segment.lower() in GENERIC_SEGMENTS:
+                continue                              # a page name, keep looking
+            if _NUMERIC_ID_RE.match(segment) or len(segment) > 6:
+                return f"{ats}-{segment}"
+    # Nothing identifying in the address, so the address itself is the identity.
     return "url-" + hashlib.sha1(clean.encode()).hexdigest()[:16]
 
 

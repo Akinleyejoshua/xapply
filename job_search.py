@@ -277,12 +277,21 @@ class UrlListSource:
         return [l.strip() for l in path.read_text().splitlines() if l.strip() and not l.startswith("#")]
 
     async def discover(self, page: Page) -> list[JobPosting]:
-        jobs = []
+        jobs: list[JobPosting] = []
+        self.skipped: list[str] = []
         for url in self._read_urls():
             job = JobPosting.from_url(url, source=self.name)
             if self.db.has_job(self.name, job.job_id):
+                self.skipped.append(url)
                 continue
             jobs.append(job)
+        if self.skipped:
+            # Silence here meant the browser opened, found nothing to do and closed
+            # again, which looks like a crash rather than a decision.
+            log.warning("%d of %d link(s) are already in your applications and were "
+                        "skipped. Use retry to run them again: %s",
+                        len(self.skipped), len(self.skipped) + len(jobs),
+                        ", ".join(self.skipped[:3]))
         return jobs
 
     async def hydrate(self, page: Page, job: JobPosting) -> JobPosting:
