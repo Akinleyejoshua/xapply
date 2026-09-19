@@ -1524,6 +1524,14 @@ $('btnSaveHeaders').onclick = async () => {
   }
 };
 
+/** Take one of the suggested ids offered after a failed test. */
+async function useModel(m){
+  $('cfgModel').value = m;
+  MODEL_PICKERS['cfgModel'].dirty = true;
+  await saveCfgModel(m);
+  $('btnTestModel').click();
+}
+
 /** Probe every model once so the picker can label them. */
 $('btnVerifyModels').onclick = async () => {
   const b = $('btnVerifyModels'), note = $('modelNote');
@@ -1552,7 +1560,15 @@ $('btnTestModel').onclick = async () => {
     const r = await call('/api/models/test', {method:'POST',
       body: JSON.stringify({model, provider: $('cfgProvider').value})});
     note.className = 'model-note ' + (r.ok ? 'ok' : 'bad');
-    note.textContent = r.ok ? `${model} answered a test prompt.` : r.detail;
+    if(r.ok){ note.textContent = `${model} answered a test prompt.`; }
+    else {
+      // A provider's website can name a model differently from its API, so offer the
+      // closest real ids as one-click alternatives rather than just reporting a 404.
+      const alts = (r.suggestions || []).map(m =>
+        `<button class="sm ghost" style="margin:4px 4px 0 0"
+           onclick="useModel('${m.replace(/'/g, "\\'")}')">${esc(m)}</button>`).join('');
+      note.innerHTML = esc(r.detail) + (alts ? `<div style="margin-top:6px">${alts}</div>` : '');
+    }
   } catch(e){ note.className = 'model-note bad'; note.textContent = e.message; }
   $('btnTestModel').disabled = false;
 };

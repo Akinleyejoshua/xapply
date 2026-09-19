@@ -186,6 +186,12 @@ buttons, and under **Settings**. The model field is a search box: type any part 
 filter, use the arrow keys and Enter, or paste an id the list does not contain. A dropdown of
 eighty entries is unusable, and no list is ever guaranteed complete, so both are handled.
 
+**When a model is on the provider's website but not here.** A website name and an API id are not
+always the same string, and some models are never exposed through the API at all. A failed test
+now says which: it offers the closest real ids as one-click alternatives, and when nothing is
+close it says so outright, for example *"Nothing similar among the 82 models nvidia serves, so
+this one is not reachable through its API."*
+
 **Test this model** settles it by sending one tiny prompt and reporting what came back. That
 matters because a listed model can still be retired or overloaded:
 
@@ -634,7 +640,7 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | You submitted but it says *Awaiting human* | Fixed: the page is watched throughout, so a manual submit is recorded. You can also correct any row from its detail panel |
 | A challenge never clears | Use **Skip this job**, type `s` in the terminal, or create `logs/SKIP` |
 | The sensitivity slider snaps back | Fixed: controls you are editing are no longer overwritten by the refresh |
-| A model you want is not in the list | Type its id anyway and press **Test this model**. The answer is definitive |
+| A model you want is not in the list | Type its id and press **Test this model**. It offers close matches, or says nothing is close |
 | A run fails with a model error | Press **Find a model that works**, or run `python main.py models --verify` |
 | Every posting fails with a 404 | The model is listed but not deployed. Only nine of NVIDIA's 61 chat models answer |
 | The model changed by itself | Fixed: the picker saves only a deliberate choice, and the server refuses a model that cannot answer |

@@ -15,6 +15,7 @@ Add a provider by implementing `LLMProvider.generate` and registering it in
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import random
@@ -480,7 +481,9 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
         return {"ok": True, "model": model, "detail": "Answered a test prompt"}
     detail = r.text[:300]
     low = detail.lower()
-    if "free tier can only be used" in low or "freetiererror" in low:
+    if "modelerror" in low or "is not supported" in low:
+        hint = "This endpoint does not serve that model."
+    elif "free tier can only be used" in low or "freetiererror" in low:
         hint = ("This model is on the provider's free tier, which only works inside their own "
                 "client and refuses other applications. No header changes that.")
     elif "no payment method" in low or "creditserror" in low:
@@ -496,8 +499,67 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
             429: "Rate limited or out of quota.",
             503: "The model exists but is overloaded right now. Try again shortly.",
         }.get(r.status_code, "")
-    return {"ok": False, "model": model, "status": r.status_code,
-            "detail": f"{hint} {detail}".strip()}
+    out = {"ok": False, "model": model, "status": r.status_code,
+           "detail": f"{hint} {detail}".strip()}
+    if r.status_code == 404 or "not supported" in low or "no such model" in hint.lower():
+        near = await nearest_models(settings, provider, model)
+        if near:
+            out["suggestions"] = near
+            out["detail"] += " Closest ids it does serve: " + ", ".join(near) + "."
+        else:
+            total = len(await list_model_ids(settings, provider))
+            out["detail"] += (f" Nothing similar among the {total} models {provider} serves, so "
+                              f"this one is not reachable through its API.")
+    return out
+
+
+async def list_model_ids(settings: Settings, provider: str) -> list[str]:
+    """The model ids a provider's own endpoint reports."""
+    provider = (provider or "").lower()
+    try:
+        if provider == "nvidia":
+            url = settings.nvidia_base_url.rstrip("/") + "/models"
+            headers = {"Accept": "application/json"}
+        elif provider == "opencode":
+            url = settings.opencode_base_url.rstrip("/") + "/models"
+            headers = llm_headers(settings, settings.opencode_api_key)
+        else:
+            url = "https://generativelanguage.googleapis.com/v1beta/models"
+            headers = {}
+        async with httpx.AsyncClient(timeout=25) as client:
+            params = {"key": settings.gemini_api_key} if provider == "gemini" else None
+            r = await client.get(url, headers=headers, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as exc:
+        log.debug("could not list %s models: %s", provider, exc)
+        return []
+    if provider == "gemini":
+        return [m["name"].split("/")[-1] for m in data.get("models", [])]
+    return [m["id"] for m in data.get("data", [])]
+
+
+async def nearest_models(settings: Settings, provider: str, wanted: str, limit: int = 3) -> list[str]:
+    """Ids that look like the one asked for.
+
+    A provider's website can name a model differently from its API, so a 404 is often a
+    spelling difference rather than a missing model. Showing the closest real ids turns
+    "I can see it on their site" into an answerable question.
+    """
+    ids = await list_model_ids(settings, provider)
+    if not ids:
+        return []
+    target = re.sub(r"[^a-z0-9]", "", (wanted or "").lower())
+    scored = []
+    for candidate in ids:
+        flat = re.sub(r"[^a-z0-9]", "", candidate.lower())
+        ratio = difflib.SequenceMatcher(None, target, flat).ratio()
+        tail = wanted.split("/")[-1].lower()
+        if tail and tail in candidate.lower():
+            ratio = max(ratio, 0.9)
+        scored.append((ratio, candidate))
+    scored.sort(reverse=True)
+    return [c for score, c in scored[:limit] if score >= 0.45]
 
 
 #: Models known to answer, refreshed by `verify_models`. NVIDIA's catalogue lists many

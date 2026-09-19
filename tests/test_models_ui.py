@@ -343,3 +343,54 @@ def test_dashboard_surfaces_a_failed_model_check() -> None:
     save = save[:save.index("async function reloadConfig")]
     assert "CONFIG.model_check" in save
     assert "does not answer" in save
+
+
+# ---- a 404 should help, not just report ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_nearest_models_suggests_the_right_spelling(monkeypatch, settings) -> None:
+    """A provider's website can name a model differently from its API."""
+    from llm import nearest_models
+
+    async def fake_list(s, provider):
+        return ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b",
+                "google/gemma-4-31b-it", "z-ai/glm-5.3"]
+
+    monkeypatch.setattr("llm.list_model_ids", fake_list)
+    assert "nvidia/nemotron-3-super-120b-a12b" in await nearest_models(settings, "nvidia",
+                                                                       "nemotron-3-super")
+    assert "openai/gpt-oss-20b" in await nearest_models(settings, "nvidia", "openai/gpt-oss-20")
+    # nothing close means nothing offered, rather than a misleading guess
+    assert await nearest_models(settings, "nvidia", "stepfun-ai/step-3.7") == []
+
+
+@pytest.mark.asyncio
+async def test_a_404_says_whether_anything_is_close(monkeypatch, settings) -> None:
+    from llm import check_model
+
+    settings.nvidia_api_key = "nvapi-test"
+    real = httpx.AsyncClient
+
+    def fake(*a, **kw):
+        return real(transport=httpx.MockTransport(
+            lambda r: httpx.Response(404, text="404 page not found")), **kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake)
+
+    async def no_models(s, provider):
+        return ["openai/gpt-oss-20b", "z-ai/glm-5.3"]
+
+    monkeypatch.setattr("llm.list_model_ids", no_models)
+    out = await check_model(settings, "nvidia", "stepfun-ai/step-3.7")
+    assert out["ok"] is False
+    assert "Nothing similar among the 2 models" in out["detail"]
+    assert "suggestions" not in out
+
+    close = await check_model(settings, "nvidia", "openai/gpt-oss-20")
+    assert close["suggestions"] == ["openai/gpt-oss-20b"]
+
+
+def test_dashboard_offers_the_suggestions() -> None:
+    html = (ROOT / "static" / "index.html").read_text()
+    assert "r.suggestions" in html and "function useModel(" in html
