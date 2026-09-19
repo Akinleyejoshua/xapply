@@ -1253,11 +1253,14 @@ function renderBoardResult(r){
     el.innerHTML = `<div class="diag"><div class="tips">${esc(r.detail || 'Not recognised')}</div></div>`;
     return;
   }
-  el.innerHTML = `<div class="counts" style="display:flex; gap:8px; flex-wrap:wrap">
+  const empty = !r.open_roles
+    ? `<div class="tips" style="margin-top:9px">That board is live but has no open roles right now,
+        so it will not contribute to a scan until it does.</div>` : '';
+  el.innerHTML = `<div class="diag"><div class="counts">
     <span class="count">${esc(r.ats)}</span>
     <span class="count">token <b>${esc(r.token)}</b></span>
     <span class="count"><b>${r.open_roles}</b> open roles</span>
-    ${r.already_added ? '<span class="count">already added</span>' : ''}</div>`;
+    ${r.already_added ? '<span class="count">already added</span>' : ''}</div>${empty}</div>`;
 }
 async function checkBoard(){
   const text = $('boardInput').value.trim();

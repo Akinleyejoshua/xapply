@@ -92,18 +92,22 @@ WORD_TO_CONCEPT: dict[str, str] = {
 
 
 def tokenize(text: str) -> list[str]:
-    """Words worth comparing, with separators removed so 'back-end' reads as 'backend'."""
-    raw = _SPLIT.split((text or "").lower())
+    """Words worth comparing, with separators removed so 'back-end' reads as 'backend'.
+
+    Adjacent words are glued when the pair names a concept, so "machine learning" and
+    "full stack" resolve as single ideas. Gluing happens before stopwords are dropped,
+    because "full" is a stopword on its own but carries meaning in "full stack".
+    """
+    raw = [w for w in _SPLIT.split((text or "").lower()) if w]
     out: list[str] = []
     for i, word in enumerate(raw):
-        if not word or word in STOPWORDS:
-            continue
-        out.append(word)
-        # glue adjacent words so "machine learning" and "full stack" resolve as one idea
-        if i + 1 < len(raw) and raw[i + 1]:
+        if i + 1 < len(raw):
             joined = word + raw[i + 1]
             if joined in WORD_TO_CONCEPT:
                 out.append(joined)
+        if word in STOPWORDS:
+            continue
+        out.append(word)
     return out
 
 
