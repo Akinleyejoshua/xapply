@@ -330,8 +330,9 @@ def test_api_config_roundtrip(settings: Settings) -> None:
     assert cfg["llm_provider"] in ("gemini", "nvidia")
     assert "greenhouse" in cfg["known_sources"] and "linkedin" in cfg["known_sources"]
 
+    # `force` skips the live model check, which is what an offline test needs
     patched = client.patch("/api/config", json={
-        "llm_provider": "nvidia", "nvidia_model": "nvidia/test-model",
+        "llm_provider": "nvidia", "nvidia_model": "nvidia/test-model", "force": True,
         "match_threshold": 80, "auto_submit": True,
         "sources": ["greenhouse", "ashby"], "search_queries": ["Backend Engineer"],
     }).json()

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Annotated, Any, Iterable, Literal
+from typing import Annotated, Any, ClassVar, Iterable, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -31,6 +31,8 @@ PERSISTED_KEYS = (
     "llm_provider",
     "gemini_model",
     "nvidia_model",
+    "opencode_model",
+    "llm_extra_headers",
     "sources",
     "search_queries",
     "search_location",
@@ -64,7 +66,7 @@ class Settings(BaseSettings):
     )
 
     # ---- AI ----
-    llm_provider: str = "gemini"  # gemini | nvidia
+    llm_provider: str = "gemini"  # gemini | nvidia | opencode
 
     # Google Gemini (https://aistudio.google.com/apikey)
     gemini_api_key: str = ""
@@ -77,15 +79,29 @@ class Settings(BaseSettings):
     nvidia_model: str = "openai/gpt-oss-20b"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
 
+    # OpenCode Zen (https://opencode.ai): one key, many vendors' models
+    opencode_api_key: str = ""
+    opencode_model: str = "claude-haiku-4-5"
+    opencode_base_url: str = "https://opencode.ai/zen/v1"
+
+    #: Extra HTTP headers sent with every LLM request, as JSON in .env or set in the UI.
+    #: Some gateways want a User-Agent, a Referer or an app title to route a request.
+    llm_extra_headers: Annotated[dict[str, str], NoDecode] = {}
+
     llm_timeout_s: float = 180.0
     llm_max_output_tokens: int = 8192
     match_threshold: int = Field(65, ge=0, le=100)
     ai_max_retries: int = 4
     ai_min_confidence: float = 0.55  # below this a live AI form answer is escalated to a human
 
+    #: Which setting holds the model for each provider.
+    MODEL_SETTING: ClassVar[dict[str, str]] = {
+        "gemini": "gemini_model", "nvidia": "nvidia_model", "opencode": "opencode_model",
+    }
+
     @property
     def active_model(self) -> str:
-        return self.nvidia_model if self.llm_provider.lower() == "nvidia" else self.gemini_model
+        return getattr(self, self.MODEL_SETTING.get(self.llm_provider.lower(), "gemini_model"))
 
     # ---- Execution mode ----
     auto_submit: bool = False  # AUTO_SUBMIT=true -> bot clicks Submit itself
@@ -158,6 +174,23 @@ class Settings(BaseSettings):
     @classmethod
     def _csv(cls, value: Any) -> Any:
         return _split_csv(value)
+
+    @field_validator("llm_extra_headers", mode="before")
+    @classmethod
+    def _headers(cls, value: Any) -> Any:
+        """Accept a JSON object from .env, or a dict from the API."""
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"LLM_EXTRA_HEADERS must be a JSON object: {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM_EXTRA_HEADERS must be a JSON object")
+            return {str(k): str(v) for k, v in parsed.items()}
+        return value
 
     def ensure_dirs(self) -> None:
         for d in (self.output_dir, self.log_dir, self.audit_dir, self.user_data_dir):

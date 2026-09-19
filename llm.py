@@ -81,6 +81,17 @@ def extract_json(text: str) -> str:
     raise LLMError(f"unbalanced JSON in response: {text[:200]!r}")
 
 
+def llm_headers(settings: Settings, api_key: str) -> dict[str, str]:
+    """Standard headers plus whatever the user configured, which wins on a clash."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    headers.update(settings.llm_extra_headers or {})
+    return headers
+
+
 def schema_of(model: type[BaseModel]) -> dict[str, Any]:
     """JSON schema with $defs inlined, which strict decoders generally require."""
     schema = model.model_json_schema()
@@ -208,33 +219,32 @@ def _gemini_hard_failure(exc: Any) -> Optional[str]:
 # --------------------------------------------------------------------------
 
 
-class NvidiaProvider(LLMProvider):
-    """OpenAI-compatible chat completions against https://integrate.api.nvidia.com/v1.
+class OpenAICompatibleProvider(LLMProvider):
+    """Any service that speaks the OpenAI chat-completions API.
 
-    Get a free key at https://build.nvidia.com (it starts with `nvapi-`).
+    Providers differ in how they enforce a JSON shape, so `MODES` is walked in order
+    until one works and the winner is remembered for the rest of the session.
     """
 
-    name = "nvidia"
-    MODES = ("json_schema", "guided_json", "json_object")
+    name = "openai-compatible"
+    MODES = ("json_schema", "json_object")
+    key_setting = ""
+    model_setting = ""
+    base_url_setting = ""
+    key_help = ""
 
     def __init__(self, settings: Settings):
         super().__init__(settings)
-        if not settings.nvidia_api_key:
-            raise LLMError(
-                "NVIDIA_API_KEY is not set. Create a free key at https://build.nvidia.com "
-                "(it looks like nvapi-...) and put it in .env."
-            )
-        self.model = settings.nvidia_model
-        self.base_url = settings.nvidia_base_url.rstrip("/")
+        api_key = getattr(settings, self.key_setting, "")
+        if not api_key:
+            raise LLMError(f"{self.key_setting.upper()} is not set. {self.key_help}")
+        self.model = getattr(settings, self.model_setting)
+        self.base_url = getattr(settings, self.base_url_setting).rstrip("/")
         self._mode: Optional[str] = None  # remembered once a rung of the ladder works
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(settings.llm_timeout_s, connect=20.0),
-            headers={
-                "Authorization": f"Bearer {settings.nvidia_api_key}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            headers=llm_headers(settings, api_key),
         )
 
     async def aclose(self) -> None:
@@ -286,30 +296,21 @@ class NvidiaProvider(LLMProvider):
                         continue
                     break
                 if r.status_code in (401, 403):
-                    raise LLMError(
-                        "NVIDIA rejected the API key. Check NVIDIA_API_KEY in .env "
-                        f"(free key at https://build.nvidia.com). Raw error: {r.text[:200]}"
-                    )
-                if r.status_code in (404, 410):
-                    note_model_result("nvidia", self.model, False)
-                    verb = "has retired" if r.status_code == 410 else "has not deployed"
-                    raise ModelUnavailable(
-                        f"NVIDIA {verb} {self.model!r}, so no application can be scored.\n"
-                        f"  Its catalogue lists many models it does not actually serve.\n"
-                        f"  Open Settings, press 'Check which models work', and pick one that "
-                        f"passes, or run: python main.py models --verify"
-                    )
+                    raise LLMError(self.explain_auth_error(r.status_code, r.text))
+                if r.status_code in (400, 404, 410) and self.is_model_problem(r.text):
+                    note_model_result(self.name, self.model, False)
+                    raise ModelUnavailable(self.explain_model_error(r.status_code, r.text))
                 if r.status_code == 400:
                     # Usually this rung of the structured-output ladder is unsupported.
-                    log.info("NVIDIA rejected %s mode for %s: %s", mode, self.model, r.text[:160])
+                    log.info("%s rejected %s mode for %s: %s", self.name, mode, self.model, r.text[:160])
                     last = LLMError(r.text[:300])
                     break
                 if r.status_code in RETRYABLE_STATUS:
                     last = LLMError(f"HTTP {r.status_code}: {r.text[:200]}")
                     if attempt < self.max_retries:
                         wait = delay + random.uniform(0, 1)
-                        log.warning("NVIDIA %s (attempt %d/%d), retrying in %.1fs",
-                                    r.status_code, attempt, self.max_retries, wait)
+                        log.warning("%s %s (attempt %d/%d), retrying in %.1fs",
+                                    self.name, r.status_code, attempt, self.max_retries, wait)
                         await asyncio.sleep(wait)
                         delay *= 2
                         continue
@@ -337,12 +338,94 @@ class NvidiaProvider(LLMProvider):
                 if self._mode != mode:
                     log.info("NVIDIA structured-output mode for %s: %s", self.model, mode)
                     self._mode = mode
-                note_model_result("nvidia", self.model, True)
+                note_model_result(self.name, self.model, True)
                 return parsed
         raise LLMError(
-            f"NVIDIA model {self.model!r} could not produce valid structured output "
+            f"{self.name} model {self.model!r} could not produce valid structured output "
             f"(tried {', '.join(m for m in modes if m)}). Last error: {str(last)[:300]}"
         )
+
+    # ---- wording each provider can sharpen -----------------------------
+    @staticmethod
+    def is_model_problem(body: str) -> bool:
+        """Whether an error is about the model rather than the request."""
+        return True
+
+    def explain_auth_error(self, status: int, body: str) -> str:
+        return (f"{self.name} rejected the request ({status}). Check "
+                f"{self.key_setting.upper()} in .env. Raw error: {body[:220]}")
+
+    def explain_model_error(self, status: int, body: str) -> str:
+        verb = "has retired" if status == 410 else "does not serve"
+        return (f"{self.name} {verb} {self.model!r}, so nothing can be scored.\n"
+                f"  Open Settings, press 'Check which models work', and pick one that passes,\n"
+                f"  or run: python main.py models --verify\n  Raw error: {body[:200]}")
+
+
+class NvidiaProvider(OpenAICompatibleProvider):
+    """NVIDIA NIM. Free key at https://build.nvidia.com, starting with `nvapi-`."""
+
+    name = "nvidia"
+    MODES = ("json_schema", "guided_json", "json_object")
+    key_setting = "nvidia_api_key"
+    model_setting = "nvidia_model"
+    base_url_setting = "nvidia_base_url"
+    key_help = "Create a free key at https://build.nvidia.com and put it in .env."
+
+    def _payload(self, mode, schema, system, prompt, temperature):
+        body = super()._payload(mode, schema, system, prompt, temperature)
+        if mode == "guided_json":
+            body.pop("response_format", None)
+            body["nvext"] = {"guided_json": schema_of(schema)}
+        return body
+
+    def explain_auth_error(self, status: int, body: str) -> str:
+        return ("NVIDIA rejected the API key. Check NVIDIA_API_KEY in .env "
+                f"(free key at https://build.nvidia.com). Raw error: {body[:200]}")
+
+    def explain_model_error(self, status: int, body: str) -> str:
+        verb = "has retired" if status == 410 else "has not deployed"
+        return (f"NVIDIA {verb} {self.model!r}, so no application can be scored.\n"
+                f"  Its catalogue lists many models it does not actually serve.\n"
+                f"  Open Settings, press 'Check which models work', and pick one that passes,\n"
+                f"  or run: python main.py models --verify")
+
+
+class OpencodeProvider(OpenAICompatibleProvider):
+    """OpenCode Zen, a gateway to Claude, GPT, Gemini, DeepSeek, Qwen and others.
+
+    Two things to know about it. Models whose id ends in `-free` are reserved for
+    OpenCode's own client and answer 403 to anything else, and the rest need a payment
+    method on the workspace. Both are reported plainly rather than retried.
+    """
+
+    name = "opencode"
+    MODES = ("json_schema", "json_object")
+    key_setting = "opencode_api_key"
+    model_setting = "opencode_model"
+    base_url_setting = "opencode_base_url"
+    key_help = "Create one at https://opencode.ai and put it in .env as OPENCODE_API_KEY."
+
+    @staticmethod
+    def is_model_problem(body: str) -> bool:
+        return "unavailable" in body.lower() or "not found" in body.lower()
+
+    def explain_auth_error(self, status: int, body: str) -> str:
+        low = body.lower()
+        if "freetiererror" in low or "free tier can only be used" in low:
+            return (f"{self.model!r} is on OpenCode's free tier, which only works inside "
+                    f"OpenCode's own client and refuses other applications.\n"
+                    f"  Pick a model whose id does not end in -free.")
+        if "creditserror" in low or "no payment method" in low:
+            return (f"OpenCode has no payment method on this workspace, so {self.model!r} "
+                    f"cannot be used.\n  Add one at https://opencode.ai, or switch provider "
+                    f"to NVIDIA, which is free.")
+        return (f"OpenCode rejected the request ({status}). Check OPENCODE_API_KEY in .env. "
+                f"Raw error: {body[:200]}")
+
+    def explain_model_error(self, status: int, body: str) -> str:
+        return (f"OpenCode cannot serve {self.model!r} right now.\n"
+                f"  Raw error: {body[:200]}")
 
 
 # --------------------------------------------------------------------------
@@ -370,12 +453,14 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
     work, so the only reliable answer is to try it.
     """
     provider = (provider or settings.llm_provider).lower()
-    if provider == "nvidia":
-        if not settings.nvidia_api_key:
-            return {"ok": False, "detail": "NVIDIA_API_KEY is not set in .env"}
-        url = settings.nvidia_base_url.rstrip("/") + "/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.nvidia_api_key}",
-                   "Content-Type": "application/json"}
+    if provider in ("nvidia", "opencode"):
+        key_attr = f"{provider}_api_key"
+        api_key = getattr(settings, key_attr, "")
+        if not api_key:
+            return {"ok": False, "detail": f"{key_attr.upper()} is not set in .env"}
+        base = getattr(settings, f"{provider}_base_url").rstrip("/")
+        url = base + "/chat/completions"
+        headers = llm_headers(settings, api_key)
         body = {"model": model, "messages": [{"role": "user", "content": "Reply with OK."}],
                 "max_tokens": 8, "temperature": 0}
     else:
@@ -394,14 +479,23 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
     if r.status_code == 200:
         return {"ok": True, "model": model, "detail": "Answered a test prompt"}
     detail = r.text[:300]
-    hint = {
-        404: "No such model on this endpoint.",
-        410: "This model has been retired by the provider.",
-        401: "The API key was rejected.",
-        403: "The API key is not allowed to use this model.",
-        429: "Rate limited or out of quota.",
-        503: "The model exists but is overloaded right now. Try again shortly.",
-    }.get(r.status_code, "")
+    low = detail.lower()
+    if "free tier can only be used" in low or "freetiererror" in low:
+        hint = ("This model is on the provider's free tier, which only works inside their own "
+                "client and refuses other applications. No header changes that.")
+    elif "no payment method" in low or "creditserror" in low:
+        hint = "The account has no payment method, so this model cannot be billed."
+    elif "model is unavailable" in low:
+        hint = "The provider reports this model as unavailable right now."
+    else:
+        hint = {
+            404: "No such model on this endpoint.",
+            410: "This model has been retired by the provider.",
+            401: "The API key was rejected.",
+            403: "The API key is not allowed to use this model.",
+            429: "Rate limited or out of quota.",
+            503: "The model exists but is overloaded right now. Try again shortly.",
+        }.get(r.status_code, "")
     return {"ok": False, "model": model, "status": r.status_code,
             "detail": f"{hint} {detail}".strip()}
 
@@ -443,6 +537,7 @@ def note_model_result(provider: str, model: str, ok: bool) -> None:
 PROVIDERS: dict[str, type[LLMProvider]] = {
     "gemini": GeminiProvider,
     "nvidia": NvidiaProvider,
+    "opencode": OpencodeProvider,
 }
 
 
@@ -451,6 +546,5 @@ def build_provider(settings: Settings) -> LLMProvider:
     if key not in PROVIDERS:
         raise LLMError(f"Unknown LLM_PROVIDER {key!r}. Known providers: {', '.join(sorted(PROVIDERS))}")
     provider = PROVIDERS[key](settings)
-    log.info("LLM provider: %s (%s)", provider.name,
-             settings.nvidia_model if key == "nvidia" else settings.gemini_model)
+    log.info("LLM provider: %s (%s)", provider.name, settings.active_model)
     return provider

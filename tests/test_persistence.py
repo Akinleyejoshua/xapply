@@ -106,7 +106,7 @@ def test_patch_config_persists_to_disk(settings: Settings) -> None:
     assert client.get("/api/config").json()["saved"] == []
 
     body = client.patch("/api/config", json={
-        "llm_provider": "nvidia", "nvidia_model": "openai/gpt-oss-20b",
+        "llm_provider": "nvidia", "nvidia_model": "openai/gpt-oss-20b", "force": True,
         "sources": ["greenhouse", "lever"], "seniority_levels": ["senior"],
         "remote_only": True, "match_threshold": 75,
     }).json()
@@ -149,7 +149,8 @@ def test_reset_config_restores_env_defaults(settings: Settings) -> None:
 def test_run_status_reports_the_saved_model(settings: Settings) -> None:
     """The header badge polls /api/run, so it has to agree with /api/config."""
     client = _client(settings)
-    client.patch("/api/config", json={"llm_provider": "nvidia", "nvidia_model": "nv/demo"})
+    client.patch("/api/config", json={"llm_provider": "nvidia", "nvidia_model": "nv/demo",
+                                      "force": True})
     run = client.get("/api/run").json()
     cfg = client.get("/api/config").json()
     assert run["provider"] == cfg["llm_provider"] == "nvidia"

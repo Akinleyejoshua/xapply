@@ -81,12 +81,23 @@ class StatusUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+#: Changing any of these means a different model will be used, so it is worth checking.
+MODEL_KEYS = {"nvidia_model", "gemini_model", "opencode_model", "llm_provider"}
+#: Of those, the ones that represent a deliberate choice of model.
+MODEL_FIELDS = {"nvidia_model", "gemini_model", "opencode_model"}
+
+
 class ConfigPatch(BaseModel):
     """Runtime settings. Everything is optional; only supplied fields change."""
 
-    llm_provider: Optional[Literal["gemini", "nvidia"]] = None
+    llm_provider: Optional[Literal["gemini", "nvidia", "opencode"]] = None
     gemini_model: Optional[str] = None
     nvidia_model: Optional[str] = None
+    opencode_model: Optional[str] = None
+    #: Extra HTTP headers for the LLM request, e.g. a User-Agent a gateway expects.
+    llm_extra_headers: Optional[dict[str, str]] = None
+    #: Save a model even though it did not answer, for one you know is coming back.
+    force: Optional[bool] = None
     sources: Optional[list[str]] = None
     search_queries: Optional[list[str]] = None
     search_location: Optional[str] = None
@@ -132,7 +143,7 @@ class ModelTest(BaseModel):
     """A model id to verify against the provider."""
 
     model: str
-    provider: Optional[Literal["gemini", "nvidia"]] = None
+    provider: Optional[Literal["gemini", "nvidia", "opencode"]] = None
 
 
 class BoardLookup(BaseModel):
@@ -358,6 +369,10 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "llm_provider": settings.llm_provider,
             "gemini_model": settings.gemini_model,
             "nvidia_model": settings.nvidia_model,
+            "opencode_model": settings.opencode_model,
+            "has_opencode_key": bool(settings.opencode_api_key),
+            "llm_extra_headers": settings.llm_extra_headers,
+            "known_providers": ["gemini", "nvidia", "opencode"],
             "active_model": settings.active_model,
             "has_gemini_key": bool(settings.gemini_api_key),
             "has_nvidia_key": bool(settings.nvidia_api_key),
@@ -390,19 +405,38 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             unknown = [c for c in body.countries if c not in COUNTRIES]
             if unknown:
                 raise HTTPException(422, f"Unknown country/countries: {', '.join(unknown)}")
+        fields = body.model_dump(exclude_none=True)
+        force = bool(fields.pop("force", False))
+        before = {k: getattr(settings, k) for k in fields}
         changed = []
-        for key, value in body.model_dump(exclude_none=True).items():
+        for key, value in fields.items():
             try:
                 setattr(settings, key, value)
             except ValidationError as exc:
                 raise HTTPException(422, f"{key}: {exc.errors()[0]['msg']}") from exc
             changed.append(key)
+
+        check = None
+        if MODEL_KEYS & set(changed):
+            check = await _check_active_model()
+            # Choosing a model that cannot answer is refused, because it breaks every run
+            # and can arrive from a stale browser tab as easily as from a typo. Merely
+            # switching provider is not: you have to get there before you can pick a model.
+            picked_a_model = bool(MODEL_FIELDS & set(changed))
+            if picked_a_model and not check["ok"] and not force:
+                for key, value in before.items():
+                    setattr(settings, key, value)
+                raise HTTPException(422, {
+                    "message": f"{check['model']} does not answer, so it was not saved.",
+                    "detail": check["detail"], "model": check["model"],
+                    "hint": "Press 'Check which models work' to see the ones that do.",
+                })
         if changed:
             settings.save_overrides(changed)
             note(f"settings saved: {', '.join(changed)}")
         out = get_config()
-        if {"nvidia_model", "gemini_model", "llm_provider"} & set(changed):
-            out["model_check"] = await _check_active_model()
+        if check:
+            out["model_check"] = check
         return out
 
     async def _check_active_model() -> dict[str, Any]:
@@ -445,6 +479,27 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         when generateContent quota is exhausted, so it stays useful for diagnosis.
         """
         which = (provider or settings.llm_provider).lower()
+        if which == "opencode":
+            from llm import is_chat_model, llm_headers, verified_table
+
+            if not settings.opencode_api_key:
+                return {"provider": "opencode", "models": [], "chat_models": [],
+                        "note": "OPENCODE_API_KEY is not set in .env"}
+            url = settings.opencode_base_url.rstrip("/") + "/models"
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    r = await client.get(url, headers=llm_headers(settings, settings.opencode_api_key))
+                    r.raise_for_status()
+                    ids = sorted(m["id"] for m in r.json().get("data", []))
+            except Exception as exc:
+                raise HTTPException(502, f"Could not reach {url}: {exc}")
+            known = verified_table("opencode")
+            return {"provider": "opencode", "models": ids,
+                    "chat_models": [i for i in ids if is_chat_model(i)],
+                    "verified": sorted(m for m, ok in known.items() if ok),
+                    "broken": sorted(m for m, ok in known.items() if not ok),
+                    "note": "Models ending in -free only work inside OpenCode's own client. "
+                            "The rest need a payment method on your workspace."}
         if which == "nvidia":
             url = settings.nvidia_base_url.rstrip("/") + "/models"
             try:

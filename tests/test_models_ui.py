@@ -227,10 +227,10 @@ def test_pipeline_checks_the_model_before_any_posting() -> None:
 
 def test_a_404_raises_model_unavailable_not_a_generic_error() -> None:
     src = (ROOT / "llm.py").read_text()
-    assert "raise ModelUnavailable(" in src
-    block = src[src.index("if r.status_code in (404, 410)"):]
-    block = block[:block.index("if r.status_code in RETRYABLE_STATUS")]
-    assert "has not deployed" in block and "has retired" in block
+    assert "raise ModelUnavailable(self.explain_model_error(" in src
+    # each provider words it in its own terms
+    assert "has not deployed" in src and "has retired" in src
+    assert "does not serve" in src
 
 
 def test_api_reports_a_model_blocker_at_run_level() -> None:
@@ -317,13 +317,21 @@ def test_choosing_a_model_verifies_it_immediately(monkeypatch, settings) -> None
     db.init()
     client = TestClient(create_app(settings, db))
 
-    bad = client.patch("/api/config", json={"llm_provider": "nvidia",
-                                            "nvidia_model": "01-ai/yi-large"}).json()
-    assert bad["model_check"]["ok"] is False
-    assert "No such model" in bad["model_check"]["detail"]
-
-    good = client.patch("/api/config", json={"nvidia_model": "openai/gpt-oss-20b"}).json()
+    good = client.patch("/api/config", json={"llm_provider": "nvidia",
+                                             "nvidia_model": "openai/gpt-oss-20b"}).json()
     assert good["model_check"]["ok"] is True
+
+    # a model that cannot answer is refused outright, not merely flagged
+    bad = client.patch("/api/config", json={"nvidia_model": "01-ai/yi-large"})
+    assert bad.status_code == 422
+    assert "does not answer" in bad.json()["detail"]["message"]
+    # and the working one is still in place
+    assert client.get("/api/config").json()["nvidia_model"] == "openai/gpt-oss-20b"
+
+    # unless you insist, for a model you know is coming back
+    forced = client.patch("/api/config", json={"nvidia_model": "01-ai/yi-large", "force": True})
+    assert forced.status_code == 200
+    assert forced.json()["nvidia_model"] == "01-ai/yi-large"
 
     # an unrelated setting is not worth an API round trip
     assert "model_check" not in client.patch("/api/config", json={"match_threshold": 70}).json()

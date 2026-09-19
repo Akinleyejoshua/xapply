@@ -509,6 +509,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
                 <select id="runProvider">
                   <option value="gemini">Google Gemini</option>
                   <option value="nvidia">NVIDIA NIM (free)</option>
+                  <option value="opencode">OpenCode Zen</option>
                 </select></label>
               <label class="field" style="margin:0; flex:2; min-width:240px"><span>Model</span>
                 <div class="combo">
@@ -688,6 +689,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <select id="cfgProvider">
                 <option value="gemini">Google Gemini</option>
                 <option value="nvidia">NVIDIA NIM (free)</option>
+                <option value="opencode">OpenCode Zen</option>
               </select></label>
             <label class="field"><span>Model</span>
               <div class="combo">
@@ -703,6 +705,19 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <div class="model-note" id="modelNote" style="margin:-6px 0 12px"></div>
             <div class="dim mono" id="keyState" style="margin-bottom:6px"></div>
             <div id="savedNote"></div>
+            <details style="margin-top:14px">
+              <summary class="dim" style="cursor:pointer; font-size:12.5px">Custom request headers</summary>
+              <p class="card-note" style="margin:10px 0 8px">
+                Sent with every request to the model. Some gateways want a User-Agent, a Referer
+                or an app title. JSON object; leave as <span class="mono">{}</span> for none.
+              </p>
+              <textarea id="cfgHeaders" rows="5" spellcheck="false"
+                placeholder='{"User-Agent": "Mozilla/5.0 ..."}'></textarea>
+              <div class="row" style="margin-top:9px">
+                <button class="sm" id="btnSaveHeaders">Save headers</button>
+                <span class="model-note" id="headerNote"></span>
+              </div>
+            </details>
           </div>
 
           <div class="card">
@@ -876,8 +891,13 @@ function renderConfig(){
   setChecked('cfgFollow', CONFIG.follow_companies);
   setChecked('cfgHeadless', CONFIG.headless);
   $('keyState').innerHTML =
-    `GEMINI_API_KEY ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
-    `NVIDIA_API_KEY ${CONFIG.has_nvidia_key ? 'set' : '<b>missing</b>'}`;
+    `GEMINI ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
+    `NVIDIA ${CONFIG.has_nvidia_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
+    `OPENCODE ${CONFIG.has_opencode_key ? 'set' : '<b>missing</b>'}`;
+  const hdrs = $('cfgHeaders');
+  if(hdrs && document.activeElement !== hdrs){
+    hdrs.value = JSON.stringify(CONFIG.llm_extra_headers || {}, null, 2);
+  }
   const n = (CONFIG.saved || []).length;
   $('savedNote').innerHTML = n
     ? `${n} setting${n === 1 ? '' : 's'} saved to <span class="mono">settings.local.json</span>. ` +
@@ -1007,7 +1027,7 @@ class ModelPicker {
     const data = MODEL_CACHE[this.provider];
     if(data && data.all.includes(v)) return true;       // exactly one of the provider's models
     if(this.provider === 'nvidia') return /^[\w.-]+\/[\w.\-:+]+$/.test(v);   // vendor/model
-    return /^(models\/)?[\w.\-:]+$/.test(v) && v.length > 3;                  // a gemini id
+    return /^(models\/)?[\w.\-:]+$/.test(v) && v.length > 3;                  // gemini or opencode
   }
   commit(){
     const v = this.input.value.trim();
@@ -1047,9 +1067,8 @@ class ModelPicker {
 }
 
 const MODEL_PICKERS = {};
-function currentModel(provider){
-  return provider === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
-}
+const MODEL_KEY = {gemini: 'gemini_model', nvidia: 'nvidia_model', opencode: 'opencode_model'};
+function currentModel(provider){ return CONFIG[MODEL_KEY[provider] || 'gemini_model']; }
 /** Show the model each picker's provider is on. */
 async function renderModels(){
   for(const id of ['runModel', 'cfgModel']){
@@ -1466,7 +1485,7 @@ $('runProvider').onchange = async () => {
 };
 function saveRunModel(value){
   const p = $('runProvider').value, patch = {llm_provider: p};
-  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = value;
+  patch[MODEL_KEY[p]] = value;
   return saveConfig(patch);
 }
 
@@ -1480,11 +1499,30 @@ $('cfgProvider').onchange = async () => {
 };
 function saveCfgModel(value){
   const p = $('cfgProvider').value, patch = {llm_provider: p};
-  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = value;
+  patch[MODEL_KEY[p]] = value;
   $('modelNote').textContent = '';
   $('modelNote').className = 'model-note';
   return saveConfig(patch);
 }
+
+$('btnSaveHeaders').onclick = async () => {
+  const note = $('headerNote');
+  let parsed;
+  try { parsed = JSON.parse($('cfgHeaders').value.trim() || '{}'); }
+  catch(e){ note.className = 'model-note bad'; note.textContent = 'Not valid JSON: ' + e.message; return; }
+  if(typeof parsed !== 'object' || Array.isArray(parsed)){
+    note.className = 'model-note bad'; note.textContent = 'Give a JSON object, e.g. {"User-Agent": "..."}';
+    return;
+  }
+  const clean = {};
+  for(const [k, v] of Object.entries(parsed)) clean[String(k)] = String(v);
+  if(await saveConfig({llm_extra_headers: clean}, true)){
+    note.className = 'model-note ok';
+    const n = Object.keys(clean).length;
+    note.textContent = n ? `${n} header${n === 1 ? '' : 's'} will be sent with every request.`
+                         : 'No extra headers.';
+  }
+};
 
 /** Probe every model once so the picker can label them. */
 $('btnVerifyModels').onclick = async () => {
