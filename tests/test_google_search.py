@@ -371,3 +371,50 @@ async def test_a_search_page_is_not_stopped_for_by_the_browser_guard(
 
     assert page.visited and "udm=14" in page.visited[0]
     assert src.b.visited == [], "the guarded navigation path must not be used here"
+
+
+# ---- the seniority you picked reaches the search ---------------------------
+
+def _clause(settings: Settings, db: Database, levels: list[str]) -> str:
+    settings.seniority_levels = levels
+    return GoogleSearchSource(settings, db, None).level_clause()
+
+
+def test_the_seniority_you_picked_shapes_the_search(settings: Settings, db: Database) -> None:
+    """It used to shape nothing until after the search, so Google returned boards of
+    the wrong level and the filter then threw almost all of them away."""
+    assert _clause(settings, db, ["intern"]) == " (intern OR internship)"
+    assert "senior" in _clause(settings, db, ["senior"])
+    assert '"head of"' in _clause(settings, db, ["lead"]), "a phrase has to stay quoted"
+
+
+def test_no_seniority_picked_leaves_the_search_open(settings: Settings, db: Database) -> None:
+    assert _clause(settings, db, []) == ""
+    assert _clause(settings, db, ["  "]) == ""
+    assert _clause(settings, db, ["bogus"]) == ""
+
+
+def test_mid_level_cannot_be_asked_for_so_the_search_stays_open(
+        settings: Settings, db: Database) -> None:
+    """Mid-level roles are titled "Data Analyst", not "Mid Data Analyst". Narrowing the
+    query to the other levels would hide exactly the postings mid is meant to find."""
+    assert _clause(settings, db, ["mid"]) == ""
+    assert _clause(settings, db, ["mid", "intern"]) == ""
+    assert _clause(settings, db, ["intern", "mid"]) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_level_appears_in_the_query_google_is_given(
+        settings: Settings, db: Database) -> None:
+    settings.seniority_levels = ["intern"]
+    settings.search_queries = ["Data Analyst"]
+    settings.search_location = "Remote"
+    src = GoogleSearchSource(settings, db, None)
+    src.b = FakeBrowser(FakeGate())
+    GoogleSearchSource.SITES = ("job-boards.greenhouse.io",)
+    page = FakePage({"direct": [], "wrapped": [], "cites": []})
+
+    await src.discover(page)
+
+    asked = page.visited[0]
+    assert "intern" in asked and "Data+Analyst" in asked

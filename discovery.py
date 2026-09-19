@@ -832,6 +832,16 @@ class GoogleSearchSource(ApiJobSource):
     MAX_LINK_RESOLVES = 6
     #: Google tolerates a handful of searches per minute from one browser.
     PAUSE_S = 4.0
+    #: Words that find a level on a job board. "mid" has none: a mid-level role is
+    #: almost never titled that way, it is titled "Data Analyst", so asking Google for
+    #: the word would hide exactly the postings it is meant to find.
+    LEVEL_TERMS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "intern": ("intern", "internship"),
+        "junior": ("junior", "graduate", "entry level"),
+        "mid": (),
+        "senior": ("senior",),
+        "lead": ("lead", "principal", "staff", "head of"),
+    }
     #: How long a scan will wait for someone to clear a bot check before giving up on
     #: that search. A scan runs unattended over dozens of boards, so waiting forever
     #: turns the whole run into a hang with nothing on screen.
@@ -978,6 +988,34 @@ class GoogleSearchSource(ApiJobSource):
                  sum(len(v) for v in boards.values()), len(urls))
         return urls, boards
 
+    def level_clause(self) -> str:
+        """The seniority part of the query, as Google understands it.
+
+        Without this the seniority you pick shapes nothing until after the search: the
+        boards Google hands back are whatever level it felt like returning, and the
+        filter then throws most of them away. Asking for the level up front means the
+        boards found are the ones that actually have those roles.
+
+        The board API still decides what is kept. This only steers the search.
+        """
+        wanted = [lvl.strip().lower() for lvl in (self.s.seniority_levels or []) if lvl.strip()]
+        if not wanted:
+            return ""
+        terms: list[str] = []
+        for level in wanted:
+            words = self.LEVEL_TERMS.get(level, ())
+            if not words:
+                # A level with no search word, "mid", cannot be asked for: those roles
+                # are titled plainly. Narrowing the query to the other levels would hide
+                # them, so when one is picked the search stays open and the board API
+                # does the whole job.
+                return ""
+            terms.extend(words)
+        if not terms:
+            return ""
+        quoted = [f'"{t}"' if " " in t else t for t in dict.fromkeys(terms)]
+        return f" ({' OR '.join(quoted)})" if len(quoted) > 1 else f" {quoted[0]}"
+
     async def discover(self, page: Any = None) -> list[JobPosting]:
         if page is None:
             log.warning("the google source needs a browser page; skipping it")
@@ -988,7 +1026,7 @@ class GoogleSearchSource(ApiJobSource):
         searches = 0
         for site in self.SITES:
             for query in self.s.search_queries:
-                terms = f'site:{site} "{query}"'
+                terms = f'site:{site} "{query}"' + self.level_clause()
                 where = (self.s.search_location or "").strip()
                 if where and where.lower() not in ("", "anywhere", "worldwide"):
                     terms += f' "{where}"'
