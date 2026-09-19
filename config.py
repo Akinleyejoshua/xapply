@@ -30,12 +30,27 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ---- AI (Google GenAI) ----
+    # ---- AI ----
+    llm_provider: str = "gemini"  # gemini | nvidia
+
+    # Google Gemini (https://aistudio.google.com/apikey)
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+
+    # NVIDIA NIM (free key at https://build.nvidia.com, OpenAI-compatible)
+    nvidia_api_key: str = ""
+    nvidia_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+
+    llm_timeout_s: float = 180.0
+    llm_max_output_tokens: int = 8192
     match_threshold: int = Field(65, ge=0, le=100)
     ai_max_retries: int = 4
     ai_min_confidence: float = 0.55  # below this a live AI form answer is escalated to a human
+
+    @property
+    def active_model(self) -> str:
+        return self.nvidia_model if self.llm_provider.lower() == "nvidia" else self.gemini_model
 
     # ---- Execution mode ----
     auto_submit: bool = False  # AUTO_SUBMIT=true -> bot clicks Submit itself

@@ -227,3 +227,30 @@ def export_csv(db: Database, path: Path, status: Optional[str] = None) -> Path:
         for r in rows:
             w.writerow(r)
     return path
+
+
+def print_discovered(jobs: list[Any], sources: list[str]) -> None:
+    """Preview of `python main.py discover`: what would be applied to, grouped by ATS."""
+    width = _term_width()
+    print()
+    print(c(f"  DISCOVERED {len(jobs)} POSTING(S) from {', '.join(sources)}".ljust(width - 2), BOLD))
+    print(c("  " + "─" * (width - 4), DIM))
+    if not jobs:
+        print("  Nothing matched. Widen SEARCH_QUERIES, set REMOTE_ONLY=false, "
+              "or add companies with `python main.py companies --add ashby:<token>`.\n")
+        return
+    by_ats: dict[str, list[Any]] = {}
+    for j in jobs:
+        by_ats.setdefault(j.ats, []).append(j)
+    title_w = max(24, width - 64)
+    for ats, items in sorted(by_ats.items(), key=lambda kv: -len(kv[1])):
+        print(c(f"\n  {ats.upper()} ({len(items)})", BOLD))
+        for j in items:
+            desc = f"{len(j.description)}c" if j.description else c("no desc", "33")
+            print(f"    {_trunc(j.company, 20).ljust(20)} {_trunc(j.title, title_w).ljust(title_w)} "
+                  f"{_trunc(j.location, 18).ljust(18)} {desc}")
+            print(c(f"      {j.apply_url or j.url}", DIM))
+    print(c("\n  " + "─" * (width - 4), DIM))
+    ready = sum(1 for j in jobs if j.description)
+    print(f"  {ready}/{len(jobs)} arrived with a full description, so they are scored without opening a browser.")
+    print("  Apply with: python main.py run\n")
