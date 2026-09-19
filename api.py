@@ -31,6 +31,7 @@ from config import PERSISTED_KEYS, Settings
 from config import settings as default_settings
 from database import STATUSES, Database
 from countries import COUNTRIES
+from llm import verified_table
 from discovery import SENIORITY_LEVELS
 from models import JobPosting
 
@@ -383,7 +384,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         }
 
     @app.patch("/api/config", dependencies=[Depends(auth)], tags=["settings"])
-    def patch_config(body: ConfigPatch) -> dict[str, Any]:
+    async def patch_config(body: ConfigPatch) -> dict[str, Any]:
         """Change settings and remember them, so every page and a later restart agree."""
         if body.countries is not None:
             unknown = [c for c in body.countries if c not in COUNTRIES]
@@ -399,7 +400,30 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         if changed:
             settings.save_overrides(changed)
             note(f"settings saved: {', '.join(changed)}")
-        return get_config()
+        out = get_config()
+        if {"nvidia_model", "gemini_model", "llm_provider"} & set(changed):
+            out["model_check"] = await _check_active_model()
+        return out
+
+    async def _check_active_model() -> dict[str, Any]:
+        """Tell the caller straight away whether the model it just chose actually answers.
+
+        A provider can list a model it has never deployed, so a choice that looks valid
+        can silently break the next run. Checking here means the mistake is visible at
+        the moment it is made, including when an old browser tab sends a stale value.
+        """
+        from llm import check_model, note_model_result
+
+        model = settings.active_model
+        known = verified_table(settings.llm_provider).get(model)
+        if known is True:
+            return {"model": model, "ok": True, "detail": "Verified earlier"}
+        result = await check_model(settings, settings.llm_provider, model)
+        ok = bool(result.get("ok") or result.get("status") == 503)
+        note_model_result(settings.llm_provider, model, ok)
+        if not ok:
+            note(f"WARNING: {model} does not answer. {result.get('detail', '')[:120]}")
+        return {"model": model, "ok": ok, "detail": result.get("detail", "")}
 
     @app.post("/api/config/reset", dependencies=[Depends(auth)], tags=["settings"])
     def reset_config() -> dict[str, Any]:

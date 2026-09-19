@@ -333,6 +333,31 @@ Two safeguards make that reliable:
 
 ---
 
+## Recording a submit you made yourself
+
+In assisted mode you press Submit, so the agent has to notice that and record it. It watches the
+page the whole time you are working on it, and any one of four independent signals counts:
+
+| Signal | Example |
+| --- | --- |
+| A confirmation phrase | "Thank you for applying", "You're all set", "We'll be in touch" |
+| A confirmation URL | `/thank-you`, `/success`, `/submitted`, `/confirmation` |
+| The form disappearing | The one signal every ATS shares, whatever wording it uses |
+| Navigating away with the Submit button gone | A redirect to a page that has no form |
+
+The form disappearing matters most, because it works on a site that says nothing at all. Filling
+fields in never triggers it, only the form going away does.
+
+Whichever signal fires is written into the application's note, so **Applications** shows
+*Submitted* with the reason rather than leaving it as *Awaiting human*. If nothing is seen, it
+stays *Awaiting human* honestly, and you can correct it from the detail panel.
+
+Every pause does this, not just the review step: an unanswerable required field, a validation
+error, a missing Submit button, and LinkedIn's review page. On LinkedIn the Easy Apply dialog
+closing is itself proof.
+
+---
+
 ## CAPTCHAs: fill first, solve last
 
 An application form very often carries its own inline reCAPTCHA or Turnstile widget.
@@ -342,6 +367,15 @@ So while navigating, the agent only stops for something that genuinely blocks th
 a login wall, or a challenge on a page with no form on it. An inline widget is noted and
 ignored, the form is filled, and the full check runs immediately before submitting, which
 is the only moment the CAPTCHA has to be solved.
+
+The agent does not solve CAPTCHAs. A CAPTCHA is the site asking whether a person is present, and
+on a job application the honest answer has to be yes. It would not work anyway: reCAPTCHA,
+hCaptcha and Turnstile issue tokens from behavioural signals rather than from the picture, so
+reading the image produces nothing usable.
+
+What reduces them instead: Greenhouse applications open the embed form directly, skipping the
+company marketing pages that carry most of the widgets, and the browser profile persists so you
+are a returning visitor rather than a stranger every run.
 
 **When a challenge will not clear**, skip the posting rather than holding up the run:
 click **Skip this job** in the dashboard banner, type `s` then Enter in the terminal,
@@ -576,6 +610,7 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A search finds far fewer than the board shows | Fixed: terms are scored for resemblance. Lower Match sensitivity to widen further |
 | Only the job description opens, never the form | Fixed: Greenhouse now opens the embed form directly, which never redirects |
 | A CAPTCHA appears before anything is filled | Fixed: the form is filled first, and the challenge is handled at submit time |
+| You submitted but it says *Awaiting human* | Fixed: the page is watched throughout, so a manual submit is recorded. You can also correct any row from its detail panel |
 | A challenge never clears | Use **Skip this job**, type `s` in the terminal, or create `logs/SKIP` |
 | The sensitivity slider snaps back | Fixed: controls you are editing are no longer overwritten by the refresh |
 | A model you want is not in the list | Type its id anyway and press **Test this model**. The answer is definitive |

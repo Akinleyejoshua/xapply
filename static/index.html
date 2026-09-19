@@ -1063,7 +1063,15 @@ async function saveConfig(patch, quiet){
   try{
     CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(patch)});
     renderConfig();
-    if(!quiet) toast('Saved');
+    // The server checks a model as soon as it is chosen, so a provider that lists a
+    // model it never deployed is caught here rather than at the start of the next run.
+    const chk = CONFIG.model_check;
+    if(chk && !chk.ok){
+      const note = $('modelNote');
+      if(note){ note.className = 'model-note bad';
+                note.textContent = `${chk.model} does not answer. ${chk.detail}`; }
+      toast(`${chk.model} does not answer — pick another model`, true);
+    } else if(!quiet) toast('Saved');
     return true;
   } catch(e){ toast(e.message, true); await reloadConfig(); return false; }
 }

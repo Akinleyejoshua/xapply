@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+import asyncio
+import time
+from dataclasses import dataclass
+
 from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeout
 
 from ai_agent import JobAnalysis
@@ -36,13 +40,135 @@ from models import (
 
 log = logging.getLogger(__name__)
 
+#: Every phrasing a careers site uses to say "we got it". Kept broad on purpose: a
+#: submission the agent fails to notice is recorded as still waiting for you, which is
+#: worse than a rare false positive you can correct from the Applications tab.
 CONFIRM_TEXT_RE = re.compile(
-    r"(thank you for applying|thanks for applying|application (has been |was )?(submitted|sent|received)"
-    r"|we('ve| have) received your application|successfully submitted|your application was sent"
-    r"|application submitted|applied successfully)",
+    r"(thank(s| you)[^.]{0,30}(for )?(applying|your (application|interest|submission))"
+    r"|application (has been |was |is )?(submitted|sent|received|complete)"
+    r"|we('ve| have) received your application"
+    r"|your application (has been |was )?(submitted|sent|received)"
+    r"|successfully (submitted|applied)|applied successfully|submission received"
+    r"|you'?re all set|all set!|we'?ll be in touch|we will be in touch"
+    r"|we'?ll review your application|your application is on its way"
+    r"|application complete|thanks for your interest)",
     re.I,
 )
-CONFIRM_URL_HINTS = ("/thanks", "/thank-you", "/confirmation", "/submitted", "/success")
+CONFIRM_URL_HINTS = ("/thanks", "/thank-you", "/thankyou", "/confirmation", "/confirmed",
+                     "/submitted", "/success", "/complete", "/received", "/applied")
+
+#: A snapshot of the page, used to notice that the form has gone away.
+PAGE_STATE_JS = r"""
+() => {
+  const sel = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select';
+  const visible = n => {
+    const st = getComputedStyle(n);
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    const r = n.getBoundingClientRect();
+    return r.width > 0 || r.height > 0 || n.type === 'file';
+  };
+  const fields = [...document.querySelectorAll(sel)].filter(visible).length;
+  const submit = [...document.querySelectorAll('button, input[type=submit], a[role=button]')]
+    .filter(b => /submit|apply/i.test((b.innerText || b.value || '')) && visible(b)).length;
+  return {fields, submit, text: (document.body ? document.body.innerText : '').slice(0, 6000)};
+}
+"""
+
+
+@dataclass
+class SubmissionEvidence:
+    """What the agent saw that says the application went in."""
+
+    submitted: bool = False
+    signal: str = ""
+    url: str = ""
+    at: float = 0.0
+
+    def describe(self) -> str:
+        return f"{self.signal} at {self.url}" if self.submitted else "no submission detected"
+
+
+class SubmissionWatcher:
+    """Watches a page while a human works on it, and notices a manual submit.
+
+    In assisted mode the person presses Submit themselves, and the agent has to record
+    that accurately. Checking once after they say "continue" misses it whenever the site
+    phrases its confirmation unusually, or redirects somewhere unexpected. So the page is
+    polled throughout, and any one of four independent signals counts: a confirmation
+    phrase, a confirmation URL, the form disappearing, or the submit button going away
+    after the URL changed.
+    """
+
+    POLL_SECONDS = 1.2
+
+    def __init__(self, browser: "StealthBrowser", page: Page):
+        self.b = browser
+        self.page = page
+        self.evidence = SubmissionEvidence()
+        self._task: Optional[asyncio.Task] = None
+        self._stop = asyncio.Event()
+        self.baseline: dict[str, Any] = {}
+
+    async def _snapshot(self) -> dict[str, Any]:
+        try:
+            state = await self.page.evaluate(PAGE_STATE_JS)
+            state["url"] = self.page.url
+            return state
+        except Exception:
+            return {}
+
+    async def start(self) -> None:
+        self.baseline = await self._snapshot()
+        self._stop.clear()
+        self._task = asyncio.create_task(self._loop(), name="submission-watcher")
+
+    async def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self.POLL_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                pass
+            if self.evidence.submitted:
+                continue
+            found = await self.check()
+            if found.submitted:
+                self.evidence = found
+                log.info("Submission detected while you worked: %s", found.describe())
+
+    async def check(self) -> SubmissionEvidence:
+        """One look at the page for any sign the application went through."""
+        now = await self._snapshot()
+        if not now:
+            return SubmissionEvidence()
+        url = now.get("url", "")
+        text = now.get("text", "") or ""
+        base_fields = self.baseline.get("fields", 0)
+
+        match = CONFIRM_TEXT_RE.search(text)
+        if match:
+            return SubmissionEvidence(True, f"confirmation text {match.group(0)!r}", url, time.time())
+        low = url.lower()
+        if any(hint in low for hint in CONFIRM_URL_HINTS):
+            return SubmissionEvidence(True, "confirmation URL", url, time.time())
+        # The form vanishing is the one signal every ATS shares, whatever it says.
+        if base_fields >= 5 and now.get("fields", 0) <= max(2, base_fields * 0.3):
+            return SubmissionEvidence(True, "the application form is gone", url, time.time())
+        if (url != self.baseline.get("url") and self.baseline.get("submit", 0)
+                and not now.get("submit", 0) and now.get("fields", 0) < base_fields):
+            return SubmissionEvidence(True, "navigated away and the submit button is gone", url,
+                                      time.time())
+        return SubmissionEvidence()
+
+    async def stop(self) -> SubmissionEvidence:
+        """Stop watching and return the best evidence, checking once more first."""
+        self._stop.set()
+        if self._task:
+            await asyncio.gather(self._task, return_exceptions=True)
+            self._task = None
+        if not self.evidence.submitted:
+            self.evidence = await self.check()
+        return self.evidence
 ERROR_SELECTOR = (
     '.artdeco-inline-feedback--error, [role="alert"], [class*="error-message" i], [class*="form-error" i], '
     '[class*="field-error" i], [class*="errorMessage" i], .error-text, [class*="_error" i]:not(input)'
@@ -366,14 +492,24 @@ class LinkedInEasyApplyApplier(BaseApplier):
                             return self._result(STATUS_SUBMITTED, "Submitted by human after bot attempt", answers, shot, job.url)
                         await self._discard(page)
                         return self._result(STATUS_PENDING, "Submission not confirmed", answers, shot, job.url)
-                    await self.gate.wait("Final review page reached. Verify the form and click "
-                                         "'Submit application' yourself, then continue.")
-                    if await self.confirmed(page, timeout=3000) or await self.already_applied(page) \
-                            or await self.modal(page) is None:
+                    watcher = SubmissionWatcher(self.b, page)
+                    await watcher.start()
+                    outcome = await self.gate.wait("Review page reached. Check it and press "
+                                                   "'Submit application' yourself, then continue.")
+                    evidence = await watcher.stop()
+                    # On LinkedIn the modal closing is itself proof the application went in.
+                    modal_gone = await self.modal(page) is None
+                    if evidence.submitted or modal_gone or await self.already_applied(page):
                         await self._dismiss_post_apply(page)
-                        return self._result(STATUS_SUBMITTED, "Submitted by human (assisted mode)", answers, shot, job.url)
+                        reason = evidence.describe() if evidence.submitted else "the Easy Apply dialog closed"
+                        return self._result(STATUS_SUBMITTED, f"You submitted it: {reason}",
+                                            answers, shot, job.url)
+                    if outcome == HumanGate.SKIP:
+                        await self._discard(page)
+                        return self._result(STATUS_SKIPPED, "Skipped by you", answers, shot, job.url)
                     await self._discard(page)
-                    return self._result(STATUS_PENDING, "Reached review page; human chose not to submit", answers, shot, job.url)
+                    return self._result(STATUS_PENDING, "Reached the review page; no submission seen",
+                                        answers, shot, job.url)
                 nav = await self._button(modal, self.REVIEW_RE) or await self._button(modal, self.NEXT_RE)
                 if nav is None:
                     shot = await self.b.screenshot(page, f"no_nav_{job.job_id}")
@@ -575,10 +711,17 @@ class SinglePageApplier(BaseApplier):
             res = await self.filler.fill_step(scope, ctx)
             answers.extend(res.filled)
             if res.unresolved:
-                if await self.gate.wait(
-                        "Could not confidently answer required field(s): "
-                        + "; ".join(res.unresolved) + ". Fill them in the browser, then continue.",
-                ) == HumanGate.SKIP:
+                watcher = SubmissionWatcher(self.b, page)
+                await watcher.start()
+                outcome = await self.gate.wait(
+                    "Could not answer required field(s) truthfully: " + "; ".join(res.unresolved)
+                    + ". Fill them in the browser, then continue.")
+                evidence = await watcher.stop()
+                if evidence.submitted:
+                    return self._result(STATUS_SUBMITTED,
+                                        f"You filled the rest and submitted it: {evidence.describe()}",
+                                        answers, shot, url)
+                if outcome == HumanGate.SKIP:
                     return self._result(STATUS_SKIPPED, "Skipped by you at the review step",
                                         answers, shot, url)
             # The form is filled by now, so this is the right moment to deal with a CAPTCHA.
@@ -587,15 +730,30 @@ class SinglePageApplier(BaseApplier):
             shot = await self.b.screenshot(page, f"review_{self.ats}_{job.job_id}")
             submit = await self.find_submit(scope, page)
             if submit is None:
-                await self.gate.wait("Submit button not found. If the form is complete, submit it manually, then continue.")
-                ok = await self.confirmed(page, timeout=3000)
-                return self._result(STATUS_SUBMITTED if ok else STATUS_PENDING,
-                                    "Submitted manually" if ok else "Submit button not found", answers, shot, url)
+                watcher = SubmissionWatcher(self.b, page)
+                await watcher.start()
+                await self.gate.wait("No Submit button found. If the form looks complete, "
+                                     "submit it yourself, then continue.")
+                evidence = await watcher.stop()
+                return self._result(
+                    STATUS_SUBMITTED if evidence.submitted else STATUS_PENDING,
+                    f"You submitted it: {evidence.describe()}" if evidence.submitted
+                    else "No Submit button found on the page", answers, shot, url)
             if not self.s.auto_submit:
-                await self.gate.wait("Form filled. Verify it in the browser and click Submit yourself, then continue.")
-                ok = await self.confirmed(page, timeout=3000)
-                return self._result(STATUS_SUBMITTED if ok else STATUS_PENDING,
-                                    "Submitted by human (assisted mode)" if ok else "Human chose not to submit",
+                # Watch the page for the whole time you are on it, so a submit you make
+                # yourself is recorded even if this site words its confirmation oddly.
+                watcher = SubmissionWatcher(self.b, page)
+                await watcher.start()
+                outcome = await self.gate.wait(
+                    "Form filled. Check it in the browser and press Submit yourself, then continue.")
+                evidence = await watcher.stop()
+                if evidence.submitted:
+                    shot = await self.b.screenshot(page, f"submitted_{self.ats}_{job.job_id}") or shot
+                    return self._result(STATUS_SUBMITTED,
+                                        f"You submitted it: {evidence.describe()}", answers, shot, url)
+                if outcome == HumanGate.SKIP:
+                    return self._result(STATUS_SKIPPED, "Skipped by you", answers, shot, url)
+                return self._result(STATUS_PENDING, "Filled and left for you; no submission seen",
                                     answers, shot, url)
             for attempt in range(1, 4):
                 await self.b.human_click(submit)
@@ -608,19 +766,29 @@ class SinglePageApplier(BaseApplier):
                     return self._result(STATUS_SUBMITTED, "Submitted after human solved challenge", answers, shot, url)
                 errs = await self.errors(scope)
                 if not errs:
-                    await self.gate.wait("Clicked Submit but no confirmation was detected. "
-                                         "Check the browser and submit manually if needed, then continue.")
-                    ok = await self.confirmed(page, timeout=3000)
-                    return self._result(STATUS_SUBMITTED if ok else STATUS_PENDING,
-                                        "Submitted by human after bot attempt" if ok else "No confirmation after submit",
-                                        answers, shot, url)
+                    watcher = SubmissionWatcher(self.b, page)
+                    await watcher.start()
+                    await self.gate.wait("Clicked Submit but saw no confirmation. "
+                                         "Check the browser and submit it yourself if needed, then continue.")
+                    evidence = await watcher.stop()
+                    return self._result(
+                        STATUS_SUBMITTED if evidence.submitted else STATUS_PENDING,
+                        f"You finished it: {evidence.describe()}" if evidence.submitted
+                        else "Submit clicked but no confirmation appeared",
+                        answers, shot, url)
                 log.warning("Validation errors (attempt %d): %s", attempt, errs)
                 res = await self.filler.fill_step(scope, ctx, only_errors=True, force_ai=True)
                 answers.extend(res.filled)
                 if res.unresolved or attempt >= 2:
-                    await self.gate.wait(f"Form validation errors: {errs}. Fix them and click Submit yourself, then continue.")
-                    if await self.confirmed(page, timeout=3000):
-                        return self._result(STATUS_SUBMITTED, "Submitted by human after validation errors", answers, shot, url)
+                    watcher = SubmissionWatcher(self.b, page)
+                    await watcher.start()
+                    await self.gate.wait(f"The form reports errors: {errs}. "
+                                         "Fix them and press Submit yourself, then continue.")
+                    evidence = await watcher.stop()
+                    if evidence.submitted:
+                        return self._result(STATUS_SUBMITTED,
+                                            f"You submitted it after fixing the form: {evidence.describe()}",
+                                            answers, shot, url)
                 submit = await self.find_submit(scope, page) or submit
             return self._result(STATUS_FAILED, "Validation errors persisted after retries", answers, shot, url)
         except Exception as exc:
