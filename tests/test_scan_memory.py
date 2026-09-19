@@ -241,3 +241,39 @@ def test_a_missing_api_key_is_reported_not_a_crash(client: TestClient, db: Datab
 
     assert out.status_code == 400
     assert "GEMINI_API_KEY" in out.json()["detail"]
+
+
+# ---- the same list from the terminal --------------------------------------
+
+def test_the_terminal_sees_the_same_saved_results(settings: Settings, db: Database,
+                                                  capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The dashboard and the terminal read one table, so they cannot disagree."""
+    import argparse
+
+    import main
+
+    monkeypatch.setattr(main, "settings", settings)
+    db.save_discovered(_jobs())
+
+    main.cmd_saved(argparse.Namespace(limit=50, search=None, delete=None, clear=False))
+    shown = capsys.readouterr().out
+
+    assert "Data Analyst" in shown and "Analytics Engineer" in shown
+    assert "gh-1" in shown
+
+
+def test_the_terminal_can_remove_saved_results(settings: Settings, db: Database,
+                                               capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    import argparse
+
+    import main
+
+    monkeypatch.setattr(main, "settings", settings)
+    db.save_discovered(_jobs())
+
+    main.cmd_saved(argparse.Namespace(limit=50, search=None, delete=["gh-1"], clear=False))
+    assert [r["job_id"] for r in db.list_discovered()] == ["lv-2"]
+
+    main.cmd_saved(argparse.Namespace(limit=50, search=None, delete=None, clear=True))
+    assert db.count_discovered() == 0
+    assert "Cleared" in capsys.readouterr().out

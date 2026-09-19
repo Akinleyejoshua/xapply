@@ -451,6 +451,73 @@ def cmd_settings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_saved(args: argparse.Namespace) -> int:
+    """The postings scans have turned up, and a way to remove them.
+
+    The same rows the dashboard shows. A scan over thirty boards takes minutes, so its
+    results are kept in the database rather than in the browser, which also means the
+    terminal and the dashboard can never disagree about what was found.
+    """
+    db = _db()
+    if args.clear:
+        n = db.delete_discovered_all()
+        print(f"Cleared {n} scan result(s). Your applications are untouched.")
+        return 0
+    if args.delete:
+        n = db.delete_discovered(args.delete)
+        print(f"Removed {n} scan result(s)." if n else "No scan result had those job ids.")
+        return 0
+
+    rows = db.list_discovered(limit=args.limit, search=args.search)
+    if not rows:
+        print("No saved scan results. Run `python main.py discover` or scan from the dashboard.")
+        return 0
+    print(f"\n{len(rows)} saved scan result(s) of {db.count_discovered()}:\n")
+    print(f"  {'JOB ID':<26} {'REL':>4}  {'COMPANY':<22} {'ROLE':<38} {'WHERE'}")
+    for r in rows:
+        print(f"  {(r['job_id'] or '')[:26]:<26} {r['relevance']:>4.2f}  "
+              f"{(r.get('company') or '?')[:22]:<22} {(r.get('title') or '?')[:38]:<38} "
+              f"{(r.get('location') or '')[:22]}")
+    print("\n  Remove one:  python main.py saved --delete <JOB ID>")
+    print("  Remove all:  python main.py saved --clear\n")
+    return 0
+
+
+def cmd_retry(args: argparse.Namespace) -> int:
+    """Run failed or awaiting applications again, from the start."""
+    import asyncio
+
+    from pipeline import Pipeline
+
+    db = _db()
+    if args.id:
+        rows = [r for r in (db.get(i) for i in args.id) if r]
+    elif args.status:
+        rows = db.list(status=args.status, limit=args.limit)
+    else:
+        print("Give an id, or --status failed | pending_human_review.")
+        return 2
+    urls = [(r.get("apply_url") or r.get("url") or "").strip() for r in rows]
+    urls = [u for u in urls if u]
+    if not urls:
+        print("Nothing to retry.")
+        return 0
+    print(f"\nRetrying {len(urls)} application(s):")
+    for r in rows[:10]:
+        print(f"  #{r['id']:<5} {r['status']:<20} {(r.get('company') or '?')[:24]:24} "
+              f"{(r.get('title') or '?')[:40]}")
+    if not args.yes and input("\nType 'yes' to continue: ").strip().lower() != "yes":
+        print("Cancelled.")
+        return 1
+    # The old rows go first: discovery skips anything already recorded, so leaving them
+    # would mean the retry quietly did nothing.
+    db.delete_many([r["id"] for r in rows if r.get("id")])
+    db.delete_by_urls(urls)
+    stats = asyncio.run(Pipeline(settings, db).run(urls=urls, limit=len(urls)))
+    print(f"\nDone: {stats}")
+    return 0
+
+
 def cmd_delete(args: argparse.Namespace) -> int:
     """Remove applications so their postings become eligible for discovery again."""
     db = _db()
@@ -609,6 +676,21 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("--files", action="store_true", help="also delete the generated PDF and screenshot")
     dl.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     dl.set_defaults(func=cmd_delete)
+
+    sv = sub.add_parser("saved", help="postings scans have found, and how to remove them")
+    sv.add_argument("--limit", type=int, default=50, help="how many to show")
+    sv.add_argument("--search", help="filter by company, role or link")
+    sv.add_argument("--delete", nargs="*", metavar="JOB_ID", help="remove these scan results")
+    sv.add_argument("--clear", action="store_true", help="remove every scan result")
+    sv.set_defaults(func=cmd_saved)
+
+    rt = sub.add_parser("retry", help="run failed or awaiting applications again")
+    rt.add_argument("id", type=int, nargs="*", help="application id(s) to retry")
+    rt.add_argument("--status", choices=["failed", "pending_human_review"],
+                    help="retry everything with this status")
+    rt.add_argument("--limit", type=int, default=25)
+    rt.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    rt.set_defaults(func=cmd_retry)
 
     e = sub.add_parser("export", help="dump the database to CSV")
     e.add_argument("--out", default="applications.csv")
