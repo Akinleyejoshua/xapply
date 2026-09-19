@@ -486,8 +486,14 @@ def test_explain_empty_scan_names_the_responsible_filter(settings: Settings) -> 
     tips = explain_empty_scan(ScanStats(seen=100, dropped_location=100), settings)
     assert any("Nigeria" in t for t in tips)
 
-    # nothing to explain when the scan worked
-    assert explain_empty_scan(ScanStats(seen=10, kept=3), settings) == []
+    # a thin result is explained too: one posting out of two thousand looks like the
+    # search terms when it is usually the country filter
+    thin = explain_empty_scan(ScanStats(seen=2708, kept=1, dropped_location=1238), settings)
+    assert any("Only 1 of 2708" in t for t in thin)
+    assert any("Nigeria" in t for t in thin)
+
+    # nothing to explain once a scan returns a useful number
+    assert explain_empty_scan(ScanStats(seen=2708, kept=227, dropped_title=1469), settings) == []
     # or when no board answered at all
     assert "companies --probe" in explain_empty_scan(ScanStats(), settings)[0]
 

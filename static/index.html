@@ -1266,7 +1266,8 @@ function renderScanDiag(){
     .concat(Object.entries(st.reasons || {})
       .map(([k, v]) => `<span class="count">${esc(LABEL[k] || k)} <b>${v}</b></span>`));
   const tips = (st.tips || []).length
-    ? `<div class="tips"><b>Nothing matched.</b><ul>${st.tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`
+    ? `<div class="tips"><b>${st.kept ? 'Very few matched.' : 'Nothing matched.'}</b>` +
+      `<ul>${st.tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`
     : '';
   el.innerHTML = `<div class="diag"><div class="counts">${counts.join('')}</div>${tips}</div>`;
 }

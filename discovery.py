@@ -810,32 +810,56 @@ async def resolve_board(text: str, timeout: float = 20.0) -> dict[str, Any]:
                        f"No Greenhouse, Lever or Ashby board called {token!r}.")}
 
 
+#: Below this many results a scan is worth explaining, even though it is not empty.
+FEW_RESULTS = 5
+
+
 def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
-    """Turn an empty result into advice that names the filter actually responsible."""
-    if stats.kept:
-        return []
+    """Name the filter responsible when a scan returns nothing, or very little.
+
+    Advice used to appear only for an empty result, which left the more common case
+    unexplained: a scan that returns one posting out of two thousand looks like the
+    search terms were too narrow, when it is usually the country filter.
+    """
     if not stats.seen:
         return ["No board returned any postings. Check the company tokens with "
                 "`python main.py companies --probe`."]
+    if stats.kept > FEW_RESULTS:
+        return []
+
     tips: list[str] = []
-    ranked = sorted(stats.reasons(), key=lambda kv: -kv[1])
-    for label, n in ranked[:3]:
+    if stats.kept:
+        tips.append(f"Only {stats.kept} of {stats.seen} postings survived every filter. "
+                    f"Here is where the rest went.")
+    for label, n in sorted(stats.reasons(), key=lambda kv: -kv[1])[:3]:
         share = round(100 * n / stats.seen)
         if label == "search terms":
-            tips.append(f"{n} of {stats.seen} postings ({share}%) did not match your search terms "
-                        f"({', '.join(settings.search_queries)}). Try fewer or broader terms.")
+            tips.append(f"{n} ({share}%) did not resemble your search terms "
+                        f"({', '.join(settings.search_queries)}). Most backend roles are titled "
+                        f"'Software Engineer, <team>' rather than 'Backend Engineer', so lower "
+                        f"Match sensitivity or add a broader term.")
         elif label == "seniority":
-            tips.append(f"{n} postings were the wrong seniority. You have "
+            tips.append(f"{n} ({share}%) were the wrong seniority. You have "
                         f"{', '.join(settings.seniority_levels)} selected; untick to allow any level.")
         elif label == "location or country":
             where = ", ".join(settings.countries) if settings.countries else settings.search_location
-            extra = " and remote-only is on" if settings.remote_only else ""
-            tips.append(f"{n} postings were outside {where or 'your location filter'}{extra}.")
+            detail = f"{n} ({share}%) were outside {where or 'your location filter'}"
+            if settings.countries and settings.remote_only:
+                detail += (". Remote-only and a country together are strict: a posting has to be "
+                           "genuinely remote AND name that country. Most company boards are based "
+                           "in the US and Europe, so try Anywhere / Worldwide, or clear the country "
+                           "and keep remote-only")
+            elif settings.countries:
+                detail += (". These boards are mostly US and European, so a country outside that "
+                           "returns very little. Anywhere / Worldwide keeps fully remote roles")
+            elif settings.remote_only:
+                detail += " because remote-only drops hybrid and on-site postings"
+            tips.append(detail + ".")
         elif label == "already applied":
-            tips.append(f"{n} postings are already in your database. "
+            tips.append(f"{n} are already in your database. "
                         "`python main.py delete --status failed` frees them up.")
         elif label == "no description":
-            tips.append(f"{n} postings came back with no usable description.")
+            tips.append(f"{n} came back with no usable description.")
         elif label == "no application link":
             tips.append(f"{n} aggregator listings had no Greenhouse, Lever or Ashby link behind them.")
     return tips
