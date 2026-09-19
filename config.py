@@ -43,6 +43,7 @@ PERSISTED_KEYS = (
     "match_threshold",
     "fill_mode",
     "fill_all_at_once",
+    "verify_after_fill",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -121,6 +122,10 @@ class Settings(BaseSettings):
     #: How many answers to work out at the same time in that mode. Higher is faster
     #: until the model provider starts refusing concurrent requests.
     fill_concurrency: int = Field(4, ge=1, le=16)
+    #: After filling, read every field back and repair any that did not take. A click
+    #: outside a box mid-typing, or a form that rejects a programmatic value, leaves a
+    #: field half-filled and the form looks finished until somebody reads it.
+    verify_after_fill: bool = True
     headless: bool = False  # keep False so a human can take over on CAPTCHAs
     human_gate_mode: Literal["terminal", "api"] = "terminal"
 

@@ -692,6 +692,39 @@ class StepResult:
     filled: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     fields_seen: int = 0
+    #: Fields that did not hold their value the first time and were filled again.
+    repaired: list[str] = field(default_factory=list)
+    #: Fields still not holding their value after a second attempt. These are the ones
+    #: worth your eyes, because the form is fighting whatever is being put in them.
+    mismatched: list[str] = field(default_factory=list)
+
+
+#: Reads back what each field actually contains now, by the marker discovery left on it.
+READBACK_JS = r"""
+(ids) => {
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  const out = {};
+  for (const id of ids) {
+    const el = document.querySelector('[data-xapply-idx="' + id + '"]');
+    if (!el) { out[id] = null; continue; }        // the form replaced it
+    const tag = el.tagName;
+    if (tag === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
+      out[id] = el.checked ? 'checked' : '';
+    } else if (tag === 'SELECT') {
+      out[id] = el.selectedIndex >= 0 ? clean(el.options[el.selectedIndex].text) : '';
+    } else if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      out[id] = el.value || '';
+    } else if (el.hasAttribute('aria-checked')) {
+      out[id] = el.getAttribute('aria-checked') === 'true' ? 'checked' : '';
+    } else if (el.isContentEditable) {
+      out[id] = clean(el.innerText);
+    } else {
+      out[id] = clean(el.innerText);              // a button or div acting as a dropdown
+    }
+  }
+  return out;
+}
+"""
 
 
 DISCOVER_JS = r"""
@@ -1043,6 +1076,83 @@ class FormFiller:
                 log.warning("Error filling %r: %s", f.label, exc)
                 if f.required:
                     result.unresolved.append(f.label)
+        if self.s.verify_after_fill:
+            await self.verify(scope, fields, result)
+        return result
+
+    #: A read-back only has to resemble what was entered. A form may title-case a
+    #: choice, trim spaces, or reformat a number, and none of that is a failure.
+    MATCH_RATIO = 0.75
+
+    @staticmethod
+    def holds(entered: str, found: Optional[str]) -> bool:
+        """Whether a field's contents still represent what was entered."""
+        if found is None:
+            return False                       # the element is gone
+        want, got = (entered or "").strip().lower(), (found or "").strip().lower()
+        if not want:
+            return True
+        if not got:
+            return False
+        if want == got:
+            return True
+        # Checked before anything else. A truncated value is a substring of what was
+        # entered, so a containment test calls a half-typed answer a match, and that is
+        # the very case this exists to catch: typing is what an interruption stops.
+        if len(got) < len(want) * 0.9:
+            return False
+        if want in got or got in want:
+            return True                        # the form added or trimmed formatting
+        return difflib.SequenceMatcher(None, want, got).ratio() >= FormFiller.MATCH_RATIO
+
+    async def verify(self, scope: Locator, fields: list[FormField],
+                     result: StepResult) -> StepResult:
+        """Read every filled field back, and fill again anything that did not take.
+
+        Entering a value is not the same as the value being there afterwards. Clicking
+        outside a box while it is being typed into stops it part way, and some forms
+        discard a value they did not see typed. Either way the form looks complete and
+        is not, which is only discovered by whoever reads the application.
+        """
+        entered = {e["label"]: str(e.get("value") or "") for e in result.filled}
+        watched = [f for f in fields if f.label in entered and f.idx]
+        if not watched:
+            return result
+        try:
+            found = await scope.evaluate(READBACK_JS, [f.idx for f in watched])
+        except Exception as exc:
+            log.debug("could not read the form back: %s", exc)
+            return result
+
+        for f in watched:
+            want = entered[f.label]
+            if self.holds(want, found.get(f.idx)):
+                continue
+            log.info("%r did not hold %r (shows %r); entering it again",
+                     f.label[:50], want[:40], str(found.get(f.idx))[:40])
+            try:
+                await self._apply(scope, f, want)
+                result.repaired.append(f.label)
+            except Exception as exc:
+                log.warning("Could not fill %r again: %s", f.label, exc)
+                result.mismatched.append(f.label)
+
+        if not result.repaired:
+            return result
+        # One more read-back, so what is reported is what the form actually holds.
+        again = [f for f in watched if f.label in result.repaired]
+        try:
+            found = await scope.evaluate(READBACK_JS, [f.idx for f in again])
+        except Exception:
+            return result
+        for f in again:
+            if not self.holds(entered[f.label], found.get(f.idx)):
+                result.mismatched.append(f.label)
+                if f.required and f.label not in result.unresolved:
+                    result.unresolved.append(f.label)
+        if result.mismatched:
+            log.warning("These fields will not hold what was entered: %s",
+                        ", ".join(sorted(set(result.mismatched))))
         return result
 
     # ---- per-kind actions ----------------------------------------------

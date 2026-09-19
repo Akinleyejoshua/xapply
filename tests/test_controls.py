@@ -187,3 +187,96 @@ def test_a_typeahead_query_is_narrowed_until_something_matches() -> None:
     assert FormFiller.typeahead_queries("Berlin - Germany") == ["Berlin - Germany", "Berlin"]
     assert FormFiller.typeahead_queries("London") == ["London"]
     assert FormFiller.typeahead_queries("") == []
+
+
+# ---- reading the form back ------------------------------------------------
+
+BROKEN = """<!doctype html><html><head><meta charset="utf-8"><title>t</title></head><body>
+<label for="a">First name</label><input id="a">
+<label for="b">Why do you want to join us?</label><textarea id="b"></textarea>
+<label for="c">Phone</label><input id="c">
+<script>
+// Losing focus cuts the answer short, once, the way clicking outside a box while it is
+// being typed into leaves the rest of the sentence unsent.
+document.getElementById('b').addEventListener('blur', function(){
+  if (!this.dataset.cut && this.value.length > 12) {
+    this.dataset.cut = '1';
+    this.value = this.value.slice(0, 12);
+  }});
+</script></body></html>"""
+
+BROKEN_ANSWERS = {
+    "First name": "Joshua",
+    "Why do you want to join us?": "Because the work is close to what I already build every day.",
+    "Phone": "+2348131519518",
+}
+
+
+class BrokenStub:
+    async def resolve(self, f, ctx, force_ai: bool = False):
+        return ResolvedAnswer(BROKEN_ANSWERS.get(f.label), "stub", 1.0)
+
+
+@pytest.fixture
+async def broken_form(settings: Settings, tmp_path: Path):
+    page_file = tmp_path / "broken.html"
+    page_file.write_text(BROKEN, encoding="utf-8")
+    async with StealthBrowser(settings, HumanGate(mode="api")) as browser:
+        page = browser.page or await browser.context.new_page()
+        await page.goto(page_file.as_uri())
+        yield page, FormFiller(browser, BrokenStub(), settings)
+
+
+@pytest.mark.asyncio
+async def test_a_field_that_lost_its_value_is_filled_again(broken_form, settings) -> None:
+    """Clicking outside a box while it is being typed into stops it part way. The form
+    then looks complete, and only whoever reads the application finds out it is not."""
+    page, filler = broken_form
+    settings.verify_after_fill = True
+
+    result = await filler.fill_step(page.locator("body"), ctx=None)
+
+    assert "Why do you want to join us?" in result.repaired
+    assert await page.input_value("#b") == BROKEN_ANSWERS["Why do you want to join us?"]
+    assert result.mismatched == []
+
+
+@pytest.mark.asyncio
+async def test_fields_that_were_fine_are_not_touched_again(broken_form, settings) -> None:
+    page, filler = broken_form
+    settings.verify_after_fill = True
+
+    result = await filler.fill_step(page.locator("body"), ctx=None)
+
+    assert "First name" not in result.repaired and "Phone" not in result.repaired
+
+
+@pytest.mark.asyncio
+async def test_the_check_can_be_turned_off(broken_form, settings) -> None:
+    page, filler = broken_form
+    settings.verify_after_fill = False
+
+    result = await filler.fill_step(page.locator("body"), ctx=None)
+
+    assert result.repaired == []
+    assert await page.input_value("#b") == "Because the ", "left half-typed, as before"
+
+
+def test_a_truncated_answer_is_not_mistaken_for_a_match() -> None:
+    """A cut-off value is a substring of the full one, so containment alone says yes."""
+    full = "Because the work is close to what I already build every day."
+
+    assert FormFiller.holds(full, full[:30]) is False
+    assert FormFiller.holds(full, full) is True
+    assert FormFiller.holds("Yes", "Ye") is False
+
+
+def test_harmless_reformatting_is_not_treated_as_a_failure() -> None:
+    """Refilling a field the form merely tidied would fight it forever."""
+    assert FormFiller.holds("2 weeks", "2 Weeks") is True
+    assert FormFiller.holds("yes", "Yes") is True
+    assert FormFiller.holds("5", "5 years") is True
+
+
+def test_a_field_the_form_removed_counts_as_lost() -> None:
+    assert FormFiller.holds("Joshua", None) is False
