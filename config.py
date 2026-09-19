@@ -72,7 +72,9 @@ class Settings(BaseSettings):
 
     # NVIDIA NIM (free key at https://build.nvidia.com, OpenAI-compatible)
     nvidia_api_key: str = ""
-    nvidia_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    #: NVIDIA's catalogue lists many models it has not deployed. This one answers today.
+    #: The dashboard is where you change it, and it verifies the choice for you.
+    nvidia_model: str = "openai/gpt-oss-20b"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
 
     llm_timeout_s: float = 180.0

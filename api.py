@@ -182,6 +182,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     app.state.log = []               # live activity log shown in the UI
     app.state.discovered = []        # JobPosting dicts from the last scan
     app.state.scan_stats = {}        # why the last scan kept or dropped what it did
+    app.state.blocker = None         # a configuration problem that stopped the last run
 
     def note(message: str) -> None:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -431,10 +432,16 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                 raise HTTPException(502, f"Could not reach {url}: {exc}")
             from llm import is_chat_model
 
+            from llm import verified_table
+
+            known = verified_table("nvidia")
             return {"provider": "nvidia", "models": ids,
                     "chat_models": [i for i in ids if is_chat_model(i)],
-                    "note": "This is every model NVIDIA's OpenAI-compatible endpoint lists. "
-                            "You can also type an id that is not listed."}
+                    "verified": sorted(m for m, ok in known.items() if ok),
+                    "broken": sorted(m for m, ok in known.items() if not ok),
+                    "note": "NVIDIA lists models it has not deployed, so a listed model can "
+                            "still fail. Press 'Check which models work' to find out, or type "
+                            "an id that is not listed at all."}
 
         if not settings.gemini_api_key:
             return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": "GEMINI_API_KEY not set"}
@@ -451,15 +458,45 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         except Exception as exc:
             log.warning("Gemini ListModels failed: %s", exc)
             return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": str(exc)[:160]}
+        from llm import verified_table
+
+        known = verified_table("gemini")
         return {"provider": "gemini", "models": ids or GEMINI_FALLBACK,
-                "chat_models": ids or GEMINI_FALLBACK}
+                "chat_models": ids or GEMINI_FALLBACK,
+                "verified": sorted(m for m, ok in known.items() if ok),
+                "broken": sorted(m for m, ok in known.items() if not ok)}
+
+    @app.post("/api/models/verify", dependencies=[Depends(auth)], tags=["settings"])
+    async def verify_all_models(provider: Optional[str] = None) -> dict[str, Any]:
+        """Probe every listed chat model and report which ones actually answer.
+
+        NVIDIA's catalogue lists models it has not deployed: of 61 chat-capable entries,
+        only a handful respond. Guessing from the list wastes a whole run, so this
+        settles it once and the picker remembers.
+        """
+        from llm import is_chat_model, verify_models
+
+        which = (provider or settings.llm_provider).lower()
+        listing = await list_models(which)
+        candidates = listing.get("chat_models") or [m for m in listing["models"] if is_chat_model(m)]
+        note(f"checking {len(candidates)} {which} models…")
+        table = await verify_models(settings, which, candidates)
+        working = sorted(m for m, ok in table.items() if ok)
+        note(f"{len(working)} of {len(candidates)} {which} models answered")
+        return {"provider": which, "checked": len(candidates), "working": working,
+                "failed": sorted(m for m, ok in table.items() if not ok)}
 
     @app.post("/api/models/test", dependencies=[Depends(auth)], tags=["settings"])
     async def test_model(body: ModelTest) -> dict[str, Any]:
         """Send one tiny prompt so a model choice can be confirmed before a run."""
         from llm import check_model
 
-        result = await check_model(settings, body.provider or settings.llm_provider, body.model)
+        from llm import note_model_result
+
+        provider = body.provider or settings.llm_provider
+        result = await check_model(settings, provider, body.model)
+        note_model_result(provider, body.model,
+                          bool(result.get("ok") or result.get("status") == 503))
         note(f"model check {body.model}: {'ok' if result.get('ok') else result.get('detail', 'failed')[:80]}")
         return result
 
@@ -669,9 +706,20 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         urls, limit = body.urls, body.limit
 
         async def _go() -> None:
+            from llm import ModelUnavailable
+
             mode = "AUTO-SUBMIT" if settings.auto_submit else "assisted"
             note(f"run started ({mode}, {settings.llm_provider}/{settings.active_model})")
-            stats = await pipeline.run(urls=urls, limit=limit)
+            try:
+                stats = await pipeline.run(urls=urls, limit=limit)
+            except ModelUnavailable as exc:
+                app.state.blocker = {"kind": "model", "detail": str(exc),
+                                     "model": settings.active_model,
+                                     "provider": settings.llm_provider}
+                for line in str(exc).splitlines():
+                    note(line.strip())
+                return
+            app.state.blocker = None
             note(f"run finished: {stats}")
 
         start("run", _go)
@@ -742,6 +790,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "gate": g.status() if g else {"paused": False, "reason": "", "paused_since": None},
             "log": app.state.log[-120:],
             "discovered": len(app.state.discovered),
+            "blocker": app.state.blocker,
         }
 
     @app.get("/health", tags=["control"])

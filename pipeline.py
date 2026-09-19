@@ -26,6 +26,7 @@ from database import (
     Database,
 )
 from job_search import build_sources
+from llm import ModelUnavailable
 from models import JobPosting
 from resume_builder import ResumeBuilder
 
@@ -136,8 +137,29 @@ class Pipeline:
         return result.status
 
     # ---- run -----------------------------------------------------------
+    async def preflight(self) -> None:
+        """Confirm the configured model answers before any posting is touched.
+
+        A model that cannot be reached fails identically for every job, so checking
+        once turns a run that would record dozens of useless failures into a single
+        clear message.
+        """
+        from llm import ModelUnavailable, check_model
+
+        result = await check_model(self.s, self.s.llm_provider, self.s.active_model)
+        if result.get("ok") or result.get("status") == 503:
+            log.info("Model check passed: %s / %s", self.s.llm_provider, self.s.active_model)
+            return
+        raise ModelUnavailable(
+            f"{self.s.llm_provider} cannot use {self.s.active_model!r}, so nothing can be "
+            f"scored.\n  {result.get('detail', '')}\n"
+            f"  Open Settings and press 'Check which models work', or run: "
+            f"python main.py models --verify"
+        )
+
     async def run(self, urls: Optional[list[str]] = None, limit: Optional[int] = None) -> dict[str, int]:
         limit = limit or self.s.max_applications_per_run
+        await self.preflight()
         async with StealthBrowser(self.s, self.gate) as browser:
             resolver = AnswerResolver(self.ai, self.s)
             self.filler = FormFiller(browser, resolver, self.s)
@@ -161,6 +183,11 @@ class Pipeline:
                     try:
                         await self.process(browser, source, job)
                     except KeyboardInterrupt:
+                        raise
+                    except ModelUnavailable:
+                        # Every other posting would fail the same way, so stop cleanly
+                        # rather than filling the database with identical failures.
+                        log.error("Stopping the run: the model is unavailable")
                         raise
                     except Exception as exc:
                         log.exception("Unhandled error on %s", job.url)

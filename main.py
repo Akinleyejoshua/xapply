@@ -239,12 +239,28 @@ def cmd_models(args: argparse.Namespace) -> int:
         return 1
     if args.search:
         ids = [i for i in ids if args.search.lower() in i.lower()]
+    if args.verify:
+        from llm import is_chat_model, verify_models
+
+        candidates = [i for i in ids if is_chat_model(i)]
+        print(f"\n  Checking {len(candidates)} model(s); NVIDIA lists more than it serves...")
+        table = asyncio.run(verify_models(settings, "nvidia", candidates))
+        working = sorted(m for m, ok in table.items() if ok)
+        print(f"\n  {len(working)} of {len(candidates)} answered:\n")
+        for m in working:
+            print(f"   * {m}" if m == settings.nvidia_model else f"     {m}")
+        print(f"\n  Current: {settings.nvidia_model}"
+              f"{'' if settings.nvidia_model in working else '   <- does NOT answer'}")
+        print("  Set one with: python main.py run --provider nvidia --model <id>,")
+        print("  or choose it in the dashboard under Settings.\n")
+        return 0
     print(f"\n  {len(ids)} NVIDIA model(s){' matching ' + repr(args.search) if args.search else ''}:")
     for i in ids:
         mark = "  * " if i == settings.nvidia_model else "    "
         print(f"{mark}{i}")
     print(f"\n  Current: {settings.nvidia_model}")
-    print("  Change it with NVIDIA_MODEL in .env, or per run: python main.py run --provider nvidia --model <id>\n")
+    print("  NVIDIA lists models it has not deployed. Check which ones answer:")
+    print("     python main.py models --verify\n")
     return 0
 
 
@@ -522,6 +538,8 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("models", help="list the models the provider offers")
     m.add_argument("--provider", choices=["gemini", "nvidia"])
     m.add_argument("--search", help="filter the model ids")
+    m.add_argument("--verify", action="store_true",
+                   help="call each model and list only the ones that answer")
     m.set_defaults(func=cmd_models)
 
     co = sub.add_parser("companies", help="inspect, probe or extend the company board tokens")
