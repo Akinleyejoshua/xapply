@@ -598,6 +598,7 @@ map onto range options properly: 6 years picks "5-10 years", not the nearest sta
 | `reports.py` | Terminal dashboard rendering |
 | `api.py` | FastAPI app: every flow the CLI has |
 | `static/index.html` | The web dashboard. One store drives every page |
+| `assets/fonts/` | Bricolage Grotesque, served locally and embedded in every PDF |
 | `settings.local.json` | Choices made in the UI. Delete it to fall back to `.env` |
 | `main.py` | CLI |
 
@@ -617,6 +618,17 @@ several small steps before clicking.
 **File uploads.** `set_input_files` is followed by three checks: the input reports a file, the
 filename appears on the page, and any upload spinner has disappeared. Only then does the bot
 advance.
+
+**Typography.** Bricolage Grotesque, the same face as the dashboard. The font files live in
+`assets/fonts/` and are served by the app, so nothing is fetched from a CDN at runtime and nothing
+is requested from a third party. The PDF embeds separate static weights rather than the variable
+font, because Chromium renders a variable font into a PDF at its lightest instance, which left
+every resume in ExtraLight. The licence is recorded in `assets/fonts/README.md`.
+
+**ATS-readable text.** Everything written into a resume or typed into a form is flattened to plain
+ASCII: a model writes "Full\u2011stack" with a non-breaking hyphen freely, and a recruiter searching
+for "Full-stack" would never find it. Font ligatures are switched off for the same reason, so "fi"
+is not extracted as a single glyph. A generated resume contains no character above U+007F.
 
 **Single-page resumes.** The PDF is rendered, its page count measured, and if it overflows, the
 least relevant project is dropped and it is rendered again, then older experience, then the scale
@@ -664,7 +676,7 @@ Logs: `logs/xapply.log`. Audits: `logs/applications/*.json`. Screenshots: `logs/
 
 Sidebar navigation, five pages, light and dark following your system setting. The palette is black,
 white and a royal blue accent, with pure neutral greys so the accent is the only colour doing
-decorative work. Status still carries its own colour, because green, amber and red tell you at a
+decorative work. The typeface throughout, dashboard and resume alike, is **Bricolage Grotesque**. Status still carries its own colour, because green, amber and red tell you at a
 glance whether an application went through, is waiting for you, or failed, and that is information
 rather than decoration.
 
