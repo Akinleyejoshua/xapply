@@ -12,10 +12,11 @@
 :root{
   color-scheme: light dark;
 
-  /* neutral ramp */
-  --n0:#ffffff; --n25:#fcfcfd; --n50:#f8fafc; --n100:#f1f5f9; --n150:#e9eef5;
-  --n200:#e2e8f0; --n300:#cbd5e1; --n400:#94a3b8; --n500:#64748b;
-  --n600:#475569; --n700:#334155; --n800:#1e293b; --n900:#0f172a;
+  /* Neutral ramp: pure greys, no blue tint, so the royal blue accent is the only colour
+     doing any work. */
+  --n0:#ffffff; --n25:#fcfcfc; --n50:#fafafa; --n100:#f5f5f5; --n150:#efefef;
+  --n200:#e5e5e5; --n300:#d4d4d4; --n400:#a3a3a3; --n500:#737373;
+  --n600:#525252; --n700:#3f3f3f; --n800:#262626; --n900:#141414;
 
   --bg:var(--n50);
   --surface:var(--n0);
@@ -23,28 +24,33 @@
   --surface-3:var(--n100);
   --line:var(--n200);
   --line-soft:var(--n150);
-  --fg:#0b1220;
+  --fg:#0a0a0a;
   --fg-2:var(--n600);
   --fg-3:var(--n500);
 
-  --accent:#4f46e5;
+  /* Royal blue */
+  --accent:#4169e1;
   --accent-fg:#ffffff;
-  --accent-soft:rgba(79,70,229,.10);
-  --accent-line:rgba(79,70,229,.32);
+  --accent-text:#2c4fc4;                 /* darker, so links clear AA on white */
+  --accent-soft:rgba(65,105,225,.09);
+  --accent-line:rgba(65,105,225,.38);
+  --accent-glow:rgba(65,105,225,.16);
 
-  --ok:#0f9d58; --ok-soft:rgba(15,157,88,.12);
-  --warn:#b45309; --warn-soft:rgba(180,83,9,.12);
-  --err:#dc2626; --err-soft:rgba(220,38,38,.10);
-  --info:#0369a1; --info-soft:rgba(3,105,161,.10);
-  --mute:#64748b; --mute-soft:rgba(100,116,139,.12);
+  --ok:#15803d; --ok-soft:rgba(21,128,61,.10);
+  --warn:#a16207; --warn-soft:rgba(161,98,7,.11);
+  --err:#c62828; --err-soft:rgba(198,40,40,.09);
+  --info:var(--accent-text); --info-soft:var(--accent-soft);
+  --mute:#737373; --mute-soft:rgba(115,115,115,.11);
+
+  --console-bg:#0a0a0a; --console-fg:#d8d8d8; --console-dim:#6e6e73;
 
   --r-xs:6px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:20px; --r-full:999px;
 
-  --sh-xs:0 1px 2px rgba(15,23,42,.05);
-  --sh-sm:0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
-  --sh-md:0 4px 12px rgba(15,23,42,.07), 0 1px 3px rgba(15,23,42,.05);
-  --sh-lg:0 12px 32px rgba(15,23,42,.12), 0 2px 8px rgba(15,23,42,.06);
-  --sh-xl:0 24px 64px rgba(15,23,42,.18);
+  --sh-xs:0 1px 2px rgba(0,0,0,.04);
+  --sh-sm:0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.03);
+  --sh-md:0 4px 12px rgba(0,0,0,.07), 0 1px 3px rgba(0,0,0,.04);
+  --sh-lg:0 12px 32px rgba(0,0,0,.11), 0 2px 8px rgba(0,0,0,.05);
+  --sh-xl:0 24px 64px rgba(0,0,0,.17);
 
   --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
@@ -55,32 +61,36 @@
 
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#0a0c11;
-    --surface:#111520;
-    --surface-2:#151a27;
-    --surface-3:#1b2231;
-    --line:#242c3d;
-    --line-soft:#1c2333;
-    --fg:#eef2f8;
-    --fg-2:#a9b4c7;
-    --fg-3:#78859c;
+    --bg:#000000;
+    --surface:#0c0c0e;
+    --surface-2:#131316;
+    --surface-3:#1b1b1f;
+    --line:#26262a;
+    --line-soft:#1c1c20;
+    --fg:#ffffff;
+    --fg-2:#a6a6ad;
+    --fg-3:#78787f;
 
-    --accent:#7c8cff;
-    --accent-fg:#0a0c11;
-    --accent-soft:rgba(124,140,255,.14);
-    --accent-line:rgba(124,140,255,.38);
+    --accent:#4169e1;
+    --accent-fg:#ffffff;
+    --accent-text:#7fa0ff;               /* lifted, so links clear AA on black */
+    --accent-soft:rgba(65,105,225,.18);
+    --accent-line:rgba(127,160,255,.42);
+    --accent-glow:rgba(65,105,225,.28);
 
     --ok:#4ade80; --ok-soft:rgba(74,222,128,.13);
     --warn:#fbbf24; --warn-soft:rgba(251,191,36,.13);
     --err:#f87171; --err-soft:rgba(248,113,113,.13);
-    --info:#60a5fa; --info-soft:rgba(96,165,250,.13);
-    --mute:#8593a8; --mute-soft:rgba(133,147,168,.14);
+    --info:var(--accent-text); --info-soft:var(--accent-soft);
+    --mute:#8a8a92; --mute-soft:rgba(138,138,146,.14);
+
+    --console-bg:#050506; --console-fg:#cfcfd4; --console-dim:#5c5c63;
 
     --sh-xs:none;
-    --sh-sm:0 1px 2px rgba(0,0,0,.4);
-    --sh-md:0 6px 18px rgba(0,0,0,.45);
-    --sh-lg:0 16px 44px rgba(0,0,0,.55);
-    --sh-xl:0 32px 80px rgba(0,0,0,.7);
+    --sh-sm:0 1px 2px rgba(0,0,0,.6);
+    --sh-md:0 6px 18px rgba(0,0,0,.6);
+    --sh-lg:0 16px 44px rgba(0,0,0,.7);
+    --sh-xl:0 32px 80px rgba(0,0,0,.85);
   }
 }
 
@@ -100,13 +110,13 @@ h1{font-size:22px}
 h2{font-size:15.5px}
 h3{font-size:13px}
 p{margin:0}
-a{color:var(--accent); text-decoration:none}
+a{color:var(--accent-text); text-decoration:none}
 a:hover{text-decoration:underline; text-underline-offset:2px}
 .mono{font-family:var(--mono); font-size:12px; letter-spacing:0}
 .dim{color:var(--fg-3)}
 .sp{flex:1}
 .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-::selection{background:var(--accent-soft)}
+::selection{background:var(--accent-glow)}
 :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:var(--r-xs)}
 
 /* ============================================================
@@ -121,9 +131,8 @@ aside{
 .brand{display:flex; align-items:center; gap:11px; padding:4px 10px 22px}
 .brand .mark{
   width:32px; height:32px; border-radius:9px; display:grid; place-items:center;
-  background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 55%, #22d3ee));
-  color:#fff; font-weight:800; font-size:15px; letter-spacing:-.04em;
-  box-shadow:var(--sh-sm);
+  background:var(--accent); color:#fff; font-weight:800; font-size:15px; letter-spacing:-.04em;
+  box-shadow:0 2px 8px var(--accent-glow);
 }
 .brand .name{font-size:15.5px; font-weight:680; letter-spacing:-.025em}
 .brand .sub{font-size:11px; color:var(--fg-3); letter-spacing:.01em; margin-top:-2px}
@@ -142,7 +151,8 @@ nav button{
 nav button svg{width:17px; height:17px; flex:none; opacity:.75; transition:opacity .14s var(--ease)}
 nav button:hover{background:var(--surface-3); color:var(--fg)}
 nav button:hover svg{opacity:1}
-nav button.on{background:var(--accent-soft); color:var(--accent); font-weight:600}
+nav button.on{background:var(--accent-soft); color:var(--accent-text); font-weight:620;
+  box-shadow:inset 2px 0 0 var(--accent)}
 nav button.on svg{opacity:1}
 
 .side-foot{margin-top:auto; padding:15px 11px 3px; border-top:1px solid var(--line-soft); display:grid; gap:12px}
@@ -206,19 +216,23 @@ button,select,input,textarea{
 input,select,textarea{box-shadow:var(--sh-xs)}
 input:hover,select:hover,textarea:hover{border-color:var(--n300)}
 input:focus,select:focus,textarea:focus{
-  outline:none; border-color:var(--accent); box-shadow:0 0 0 3.5px var(--accent-soft);
+  outline:none; border-color:var(--accent); box-shadow:0 0 0 3.5px var(--accent-glow);
 }
 input::placeholder,textarea::placeholder{color:var(--fg-3)}
 select{appearance:none; padding-right:32px; cursor:pointer;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a3a3a3' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 11px center}
 textarea{font-family:var(--mono); font-size:12.5px; line-height:1.65; width:100%; resize:vertical}
 
 button{cursor:pointer; font-weight:560; font-size:13.5px; box-shadow:var(--sh-xs); white-space:nowrap}
 button:hover:not(:disabled){background:var(--surface-3); border-color:var(--n300)}
 button:active:not(:disabled){transform:translateY(.5px)}
-button:disabled{opacity:.42; cursor:not-allowed; box-shadow:none}
-button.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-fg); box-shadow:var(--sh-sm)}
+button:disabled{opacity:.5; cursor:not-allowed; box-shadow:none}
+button.danger:disabled,button.primary:disabled{
+  background:var(--surface-3); border-color:var(--line); color:var(--fg-3); opacity:1;
+}
+button.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-fg);
+  box-shadow:0 1px 3px var(--accent-glow)}
 button.primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 86%, #000); border-color:transparent}
 button.danger{background:var(--err); border-color:var(--err); color:#fff}
 button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--err) 86%, #000); border-color:transparent}
@@ -247,7 +261,7 @@ label.check .dim{font-size:12.5px; line-height:1.5}
 }
 .chip:hover{border-color:var(--n300); background:var(--surface-3)}
 .chip input{width:auto; margin:0; accent-color:var(--accent); box-shadow:none; cursor:pointer}
-.chip:has(input:checked){background:var(--accent-soft); border-color:var(--accent-line); color:var(--accent); font-weight:600}
+.chip:has(input:checked){background:var(--accent-soft); border-color:var(--accent-line); color:var(--accent-text); font-weight:620}
 .chip button{background:none; border:0; box-shadow:none; color:var(--fg-3); padding:0 0 0 1px;
   font-size:15px; line-height:1; cursor:pointer}
 .chip button:hover{background:none; color:var(--err)}
@@ -309,19 +323,19 @@ td.click,.click{cursor:pointer}
    Console, banner, dialog, toast
    ============================================================ */
 .console{
-  background:#080a0f; color:#b9c6d8; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--console-bg); color:var(--console-fg); border:1px solid var(--line); border-radius:var(--r-md);
   padding:15px 17px; height:264px; overflow:auto; white-space:pre-wrap;
   font-family:var(--mono); font-size:11.5px; line-height:1.85; letter-spacing:0;
 }
 .console:empty{display:grid; place-items:center}
 .console:empty::after{
   content:"No activity yet. Start a scan or a run to see it here.";
-  color:#5a6478; font-size:12px; font-family:var(--sans); letter-spacing:-.005em; text-align:center;
+  color:var(--console-dim); font-size:12px; font-family:var(--sans); letter-spacing:-.005em; text-align:center;
   max-width:26ch; line-height:1.6;
 }
 .console::-webkit-scrollbar,.db::-webkit-scrollbar,.desc::-webkit-scrollbar{width:9px; height:9px}
 .console::-webkit-scrollbar-thumb,.db::-webkit-scrollbar-thumb,.desc::-webkit-scrollbar-thumb{
-  background:rgba(148,163,184,.3); border-radius:var(--r-full)}
+  background:rgba(128,128,136,.34); border-radius:var(--r-full)}
 .console::-webkit-scrollbar-track{background:transparent}
 
 #gatebar{
@@ -338,7 +352,7 @@ dialog{
   background:var(--surface); color:var(--fg); border:1px solid var(--line);
   border-radius:var(--r-xl); max-width:1000px; width:94%; padding:0; box-shadow:var(--sh-xl);
 }
-dialog::backdrop{background:rgba(3,7,18,.62); backdrop-filter:blur(3px)}
+dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
 .dh{display:flex; align-items:center; gap:12px; padding:19px 26px; border-bottom:1px solid var(--line);
   position:sticky; top:0; background:var(--surface); border-radius:var(--r-xl) var(--r-xl) 0 0; z-index:2}
 .dh b{font-size:15px; font-weight:640; letter-spacing:-.018em}

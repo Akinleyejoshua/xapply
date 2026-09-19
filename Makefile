@@ -81,8 +81,9 @@ run-auto: dirs  ## Run the pipeline with AUTO_SUBMIT (bot clicks Submit)
 analyze: dirs  ## Dry-run one posting: make analyze URL=https://www.linkedin.com/jobs/view/123/
 	$(PY) main.py analyze --url "$(URL)"
 
-serve: dirs  ## Start the web dashboard (scan, apply, review, settings) at http://127.0.0.1:8000
-	$(PY) main.py serve
+PORT ?= 8000
+serve: dirs  ## Start the web dashboard. Override the port with: make serve PORT=8001
+	$(PY) main.py serve --port $(PORT)
 
 ui: serve  ## Alias for `make serve`
 

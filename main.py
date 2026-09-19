@@ -269,8 +269,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 2
     app = create_app(settings)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  XApply admin dashboard: {url}\n  API docs:               {url}/docs\n")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    print(f"\n  XApply dashboard: {url}\n  API docs:         {url}/docs")
+    print(f"  LLM:              {settings.llm_provider} / {settings.active_model}")
+    print("  Press Ctrl-C to stop.\n")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (48, 98):      # EADDRINUSE on macOS / Linux
+            print(f"\nPort {args.port} is already in use. Something else is bound to it, "
+                  f"maybe another XApply.\nStart on a different port:  make serve PORT={args.port + 1}\n")
+            return 2
+        raise
+    except KeyboardInterrupt:
+        print("\nDashboard stopped.")
     return 0
 
 
