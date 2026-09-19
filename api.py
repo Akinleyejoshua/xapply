@@ -106,7 +106,8 @@ class ConfigPatch(BaseModel):
     countries: Optional[list[str]] = None
     title_match_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
-    auto_submit: Optional[bool] = None
+    fill_mode: Optional[Literal["documents", "assisted", "auto"]] = None
+    auto_submit: Optional[bool] = None      # legacy alias for fill_mode="auto"
     headless: Optional[bool] = None
     max_applications_per_run: Optional[int] = Field(None, ge=1, le=200)
     max_jobs_per_company: Optional[int] = Field(None, ge=1, le=200)
@@ -386,6 +387,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "known_countries": COUNTRIES,
             "title_match_threshold": settings.title_match_threshold,
             "match_threshold": settings.match_threshold,
+            "fill_mode": settings.fill_mode,
             "auto_submit": settings.auto_submit,
             "headless": settings.headless,
             "max_applications_per_run": settings.max_applications_per_run,
@@ -407,6 +409,11 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                 raise HTTPException(422, f"Unknown country/countries: {', '.join(unknown)}")
         fields = body.model_dump(exclude_none=True)
         force = bool(fields.pop("force", False))
+        # auto_submit is the old name for fill_mode="auto"; translate rather than store both.
+        if "auto_submit" in fields and "fill_mode" not in fields:
+            fields["fill_mode"] = "auto" if fields.pop("auto_submit") else (
+                settings.fill_mode if settings.fill_mode != "auto" else "assisted")
+        fields.pop("auto_submit", None)
         before = {k: getattr(settings, k) for k in fields}
         changed = []
         for key, value in fields.items():
@@ -829,7 +836,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         from pipeline import Pipeline  # lazy: needs an LLM key
 
         if body.auto_submit is not None:
-            settings.auto_submit = body.auto_submit
+            settings.fill_mode = "auto" if body.auto_submit else (
+                settings.fill_mode if settings.fill_mode != "auto" else "assisted")
         pipeline = Pipeline(settings, database, app.state.gate)
         app.state.gate = pipeline.gate
         urls, limit = body.urls, body.limit
@@ -837,7 +845,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         async def _go() -> None:
             from llm import ModelUnavailable
 
-            mode = "AUTO-SUBMIT" if settings.auto_submit else "assisted"
+            mode = settings.fill_mode
             note(f"run started ({mode}, {settings.llm_provider}/{settings.active_model})")
             try:
                 stats = await pipeline.run(urls=urls, limit=limit)
@@ -920,6 +928,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "running": busy(),
             "kind": app.state.task_kind,
             "auto_submit": settings.auto_submit,
+            "fill_mode": settings.fill_mode,
             "provider": settings.llm_provider,
             "model": settings.active_model,
             "gate": g.status() if g else {"paused": False, "reason": "", "paused_since": None},

@@ -114,10 +114,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     from pipeline import Pipeline
 
     apply_llm_overrides(args)
+    if args.mode:
+        settings.fill_mode = args.mode
     if args.auto_submit:
-        settings.auto_submit = True
+        settings.fill_mode = "auto"
     if args.assisted:
-        settings.auto_submit = False
+        settings.fill_mode = "assisted"
+    if args.documents:
+        settings.fill_mode = "documents"
     if args.threshold is not None:
         settings.match_threshold = args.threshold
     if args.headless:
@@ -135,7 +139,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         urls = [l.strip() for l in Path(args.urls_file).read_text().splitlines()
                 if l.strip() and not l.startswith("#")]
 
-    mode = "AUTO-SUBMIT (the bot clicks Submit)" if settings.auto_submit else "ASSISTED (you click Submit)"
+    mode = {
+        "documents": "DOCUMENTS ONLY (resume and cover letter attached; the rest is yours)",
+        "assisted": "ASSISTED (the agent fills the form, you press Submit)",
+        "auto": "AUTO (the agent fills the form and presses Submit)",
+    }[settings.fill_mode]
     print("\n" + "=" * 72)
     print(f"  XApply | mode: {mode}")
     print(f"  Threshold: {settings.match_threshold}   Max applications: {args.limit or settings.max_applications_per_run}")
@@ -505,8 +513,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login", help="open the browser to sign in once").set_defaults(func=cmd_login)
 
     r = sub.add_parser("run", help="discover, analyze, tailor and apply")
-    r.add_argument("--auto-submit", action="store_true", help="bot clicks Submit itself")
-    r.add_argument("--assisted", action="store_true", help="force assisted mode (you click Submit)")
+    r.add_argument("--mode", choices=["documents", "assisted", "auto"],
+                   help="documents: attach the resume and cover letter only. "
+                        "assisted: fill everything, you submit. auto: fill and submit")
+    r.add_argument("--documents", action="store_true",
+                   help="shorthand for --mode documents")
+    r.add_argument("--auto-submit", action="store_true", help="shorthand for --mode auto")
+    r.add_argument("--assisted", action="store_true", help="shorthand for --mode assisted")
     r.add_argument("--limit", type=int, help="max applications this run")
     r.add_argument("--threshold", type=int, help="override MATCH_THRESHOLD")
     r.add_argument("--headless", action="store_true", help="run headless (not recommended)")

@@ -485,11 +485,26 @@ class StealthBrowser:
         await locator.click(timeout=timeout)
         await self.sleep()
 
+    #: Above this length, typing character by character is pointless and slow: a
+    #: 1,800-character cover letter at ~70ms a key takes over two minutes and hits the
+    #: action timeout, which silently truncated letters to a couple of hundred characters.
+    TYPE_CHAR_BY_CHAR_LIMIT = 220
+
     async def human_type(self, locator: Locator, text: str, clear: bool = True) -> None:
+        """Enter text, keystroke by keystroke for ordinary fields and at once for long prose."""
         await locator.scroll_into_view_if_needed()
         await locator.click()
         if clear:
             await locator.fill("")
+        if len(text) > self.TYPE_CHAR_BY_CHAR_LIMIT:
+            await locator.fill(text)
+            # A React textarea needs an input event to register a programmatic fill.
+            try:
+                await locator.dispatch_event("input")
+            except Exception:
+                pass
+            await self.sleep(0.8, 0.25)
+            return
         await locator.press_sequentially(text, delay=random.uniform(35, 110))
         await self.sleep(0.4, 0.15)
 

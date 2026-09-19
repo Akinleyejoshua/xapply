@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Iterable, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ PERSISTED_KEYS = (
     "countries",
     "title_match_threshold",
     "match_threshold",
-    "auto_submit",
+    "fill_mode",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -104,7 +104,12 @@ class Settings(BaseSettings):
         return getattr(self, self.MODEL_SETTING.get(self.llm_provider.lower(), "gemini_model"))
 
     # ---- Execution mode ----
-    auto_submit: bool = False  # AUTO_SUBMIT=true -> bot clicks Submit itself
+    #: documents = attach the resume and, when asked for, a cover letter, and leave every
+    #:             other field to you
+    #: assisted  = fill everything, then stop so you check it and press Submit
+    #: auto      = fill everything and press Submit
+    fill_mode: Literal["documents", "assisted", "auto"] = "assisted"
+    auto_submit: bool = False  # kept in step with fill_mode; auto mode implies it
     headless: bool = False  # keep False so a human can take over on CAPTCHAs
     human_gate_mode: Literal["terminal", "api"] = "terminal"
 
@@ -174,6 +179,28 @@ class Settings(BaseSettings):
     @classmethod
     def _csv(cls, value: Any) -> Any:
         return _split_csv(value)
+
+    _mode_ready: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="after")
+    def _sync_mode(self) -> "Settings":
+        """`fill_mode` is the single source of truth; `auto_submit` mirrors it.
+
+        `AUTO_SUBMIT=true` predates the three-way mode and still appears in `.env` files,
+        so on the first pass it is read as a request for auto mode. After that the mode
+        decides, and nothing can leave the two disagreeing.
+        """
+        if not self._mode_ready:
+            if self.auto_submit and self.fill_mode == "assisted":
+                object.__setattr__(self, "fill_mode", "auto")
+            self._mode_ready = True
+        object.__setattr__(self, "auto_submit", self.fill_mode == "auto")
+        return self
+
+    @property
+    def fills_every_field(self) -> bool:
+        """False in documents mode, where only the attachments are the agent's job."""
+        return self.fill_mode != "documents"
 
     @field_validator("llm_extra_headers", mode="before")
     @classmethod

@@ -17,7 +17,7 @@ from typing import Any, Optional
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.async_api import async_playwright
 
-from ai_agent import JobAnalysis
+from ai_agent import CoverLetter, JobAnalysis
 from config import Settings
 from config import settings as default_settings
 from models import JobPosting, ats_text
@@ -177,11 +177,7 @@ class ResumeBuilder:
             if rest:
                 skill_groups.append({"label": skill_group_label(label), "items": rest})
 
-        links = []
-        for key, label in (("linkedin", "LinkedIn"), ("github", "GitHub"), ("website", "Portfolio")):
-            url = profile.get(key)
-            if url:
-                links.append({"label": label, "url": url, "display": re.sub(r"^https?://(www\.)?", "", url).rstrip("/")})
+        links = self._links(profile)
 
         return {
             "name": profile.get("name", ""),
@@ -228,6 +224,17 @@ class ResumeBuilder:
             log.warning("No font files in %s; the resume will use the fallback face", FONT_DIR)
         return "".join(rules)
 
+    @staticmethod
+    def _links(profile: dict) -> list[dict[str, str]]:
+        """Contact links, shown the same way on the resume and the cover letter."""
+        links = []
+        for key, label in (("linkedin", "LinkedIn"), ("github", "GitHub"), ("website", "Portfolio")):
+            url = profile.get(key)
+            if url:
+                links.append({"label": label, "url": url,
+                              "display": re.sub(r"^https?://(www\.)?", "", url).rstrip("/")})
+        return links
+
     def render_html(self, profile: dict, analysis: JobAnalysis) -> str:
         template = self.env.get_template("resume.html")
         # Flatten typographic characters so an applicant tracking system reads the same
@@ -260,6 +267,40 @@ class ResumeBuilder:
         trimmed = out[-1][1]
         out.append(("no-projects", {**trimmed, "projects": []}))
         return out
+
+    # ---- cover letter ---------------------------------------------------
+    def cover_letter_path(self, job: JobPosting, analysis: Optional[JobAnalysis] = None) -> Path:
+        company = job.company or (analysis.company_name if analysis else "")
+        role = job.title or (analysis.job_title if analysis else "")
+        return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}_cover_letter.pdf"
+
+    def render_cover_letter(self, profile: dict, letter: "CoverLetter", job: JobPosting,
+                            analysis: Optional[JobAnalysis] = None) -> str:
+        template = self.env.get_template("cover_letter.html")
+        context = {
+            "name": profile.get("name", ""),
+            "headline": profile.get("headline", ""),
+            "email": profile.get("email", ""),
+            "phone": profile.get("phone", ""),
+            "location": profile.get("location", ""),
+            "links": self._links(profile),
+            "role": job.title or (analysis.job_title if analysis else ""),
+            "company": job.company or (analysis.company_name if analysis else ""),
+            "greeting": letter.greeting,
+            "paragraphs": letter.paragraphs,
+            "signature": letter.signature,
+        }
+        return template.render(font_face=self.font_face(), **ats_text(context))
+
+    async def build_cover_letter(self, profile: dict, letter: "CoverLetter", job: JobPosting,
+                                 analysis: Optional[JobAnalysis] = None) -> Path:
+        """Render a cover letter to its own single-page PDF."""
+        self.settings.output_dir.mkdir(parents=True, exist_ok=True)
+        path = self.cover_letter_path(job, analysis)
+        html = self.render_cover_letter(profile, letter, job, analysis)
+        await render_first_that_fits([("cover", html)], path)
+        log.info("Cover letter written to %s", path)
+        return path
 
     async def build(self, profile: dict, analysis: JobAnalysis, job: JobPosting) -> Path:
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)

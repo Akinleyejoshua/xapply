@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 import asyncio
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeout
 
 from ai_agent import JobAnalysis
-from browser_bot import FormFiller, HumanGate, ResolveContext, StealthBrowser
+from browser_bot import FormField, FormFiller, HumanGate, ResolveContext, StealthBrowser
 from config import Settings
 from database import STATUS_FAILED, STATUS_PENDING, STATUS_SKIPPED, STATUS_SUBMITTED
 from models import (
@@ -252,6 +252,19 @@ APPLY_TRIGGER_RE = re.compile(
     r"submit (an )?application|start (your )?application|i'?m interested)\s*$", re.I
 )
 
+#: A cover letter can be asked for as an upload or as a free-text box.
+COVER_LETTER_RE = re.compile(
+    r"cover.?letter|letter of (interest|introduction|motivation)|motivation letter", re.I)
+#: Prompts that are really "write us a short letter", answered the same way.
+COVER_PROMPT_RE = re.compile(
+    r"why (do you want|are you interested|would you like).{0,40}(join|work|role|position|us|company)"
+    r"|tell us (about yourself|why)|what (draws|attracts) you"
+    r"|why (this|our) (role|company|team)", re.I)
+COVER_FILE_INPUTS = (
+    'input[type="file"][name*="cover" i], input[type="file"][id*="cover" i], '
+    'input[type="file"][name*="letter" i], input[type="file"][id*="letter" i]'
+)
+
 RESUME_FILE_INPUTS = (
     'input[type="file"][name*="resume" i], input[type="file"][id*="resume" i], '
     'input[type="file"][name*="cv" i], input[type="file"][id*="cv" i], '
@@ -266,11 +279,78 @@ def _short_exc(exc: BaseException, limit: int = 300) -> str:
 class BaseApplier:
     ats = "unknown"
 
-    def __init__(self, browser: StealthBrowser, filler: FormFiller, gate: HumanGate, settings: Settings):
+    def __init__(self, browser: StealthBrowser, filler: FormFiller, gate: HumanGate,
+                 settings: Settings, cover_letter: Optional[Callable[[], Any]] = None):
         self.b = browser
         self.filler = filler
         self.gate = gate
         self.s = settings
+        #: Awaitable returning (pdf_path, text) for this posting. Called only when a form
+        #: actually asks for a letter, so no API call is spent when none is wanted.
+        self.cover_letter = cover_letter
+
+    async def attach_documents(self, page: Page, scope: Locator,
+                               resume_path: Path) -> list[dict[str, Any]]:
+        """Upload the resume, and a cover letter when the form asks for one.
+
+        This is the whole of the agent's job in documents mode, and the first step of
+        every other mode.
+        """
+        attached: list[dict[str, Any]] = []
+        if await self.upload_resume(page, scope, resume_path):
+            attached.append({"label": "Resume", "kind": "file", "value": resume_path.name,
+                             "source": "resume_builder", "confidence": 1.0, "ok": True})
+        entry = await self.attach_cover_letter(page, scope)
+        if entry:
+            attached.append(entry)
+        return attached
+
+    async def wants_cover_letter(self, scope: Locator) -> Optional[FormField]:
+        """The field a cover letter belongs in, if the form has one."""
+        try:
+            fields = await self.filler.discover(scope)
+        except Exception as exc:
+            log.debug("could not inspect the form for a cover letter: %s", exc)
+            return None
+        for f in fields:
+            if f.kind == "file" and COVER_LETTER_RE.search(f.label or ""):
+                return f
+            if f.kind == "textarea" and (COVER_LETTER_RE.search(f.label or "")
+                                         or COVER_PROMPT_RE.search(f.label or "")):
+                return f
+        return None
+
+    async def attach_cover_letter(self, page: Page, scope: Locator) -> Optional[dict[str, Any]]:
+        """Write and attach a cover letter, but only if this form asked for one."""
+        if not self.cover_letter:
+            return None
+        field = await self.wants_cover_letter(scope)
+        if field is None:
+            return None
+        try:
+            pdf_path, text = await self.cover_letter()
+        except Exception as exc:
+            log.warning("Could not write a cover letter: %s", exc)
+            return None
+        if field.kind == "file":
+            uploads = scope.locator(COVER_FILE_INPUTS)
+            if not await uploads.count():
+                return None
+            await uploads.first.set_input_files(str(pdf_path))
+            await self.b.sleep(1.2, 0.3)
+            log.info("Attached cover letter %s", pdf_path.name)
+            return {"label": field.label or "Cover letter", "kind": "file",
+                    "value": pdf_path.name, "source": "cover_letter", "confidence": 1.0, "ok": True}
+        box = scope.locator(f'[data-xapply-idx="{field.idx}"]')
+        try:
+            await self.b.human_type(box, text)
+        except Exception as exc:
+            log.warning("Could not type the cover letter into %r: %s", field.label, exc)
+            return None
+        log.info("Wrote the cover letter into %r", field.label)
+        return {"label": field.label or "Cover letter", "kind": "textarea",
+                "value": text[:120] + ("..." if len(text) > 120 else ""),
+                "source": "cover_letter", "confidence": 1.0, "ok": True}
 
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:  # pragma: no cover
@@ -454,10 +534,28 @@ class LinkedInEasyApplyApplier(BaseApplier):
                         return self._result(STATUS_SUBMITTED, "Application sent", answers, shot, job.url)
                     return self._result(STATUS_FAILED, "Easy Apply modal disappeared", answers, shot, job.url)
                 if not uploaded:
-                    uploaded = await self.upload_resume(page, modal, resume_path)
-                    if uploaded:
-                        answers.append({"label": "Resume", "kind": "file", "value": resume_path.name,
-                                        "source": "resume_builder", "confidence": 1.0, "ok": True})
+                    attached = await self.attach_documents(page, modal, resume_path)
+                    uploaded = bool(attached)
+                    answers.extend(attached)
+                if not self.s.fills_every_field:
+                    watcher = SubmissionWatcher(self.b, page)
+                    await watcher.start()
+                    shot = await self.b.screenshot(page, f"documents_linkedin_{job.job_id}")
+                    outcome = await self.gate.wait(
+                        "Resume attached. Fill in the rest of the Easy Apply steps and submit "
+                        "them yourself, then continue.")
+                    evidence = await watcher.stop()
+                    if evidence.submitted or await self.modal(page) is None \
+                            or await self.already_applied(page):
+                        await self._dismiss_post_apply(page)
+                        return self._result(STATUS_SUBMITTED,
+                                            "Documents attached; you submitted it", answers, shot, job.url)
+                    if outcome == HumanGate.SKIP:
+                        await self._discard(page)
+                        return self._result(STATUS_SKIPPED, "Skipped by you", answers, shot, job.url)
+                    await self._discard(page)
+                    return self._result(STATUS_PENDING, "Resume attached; the rest is yours",
+                                        answers, shot, job.url)
                 res = await self.filler.fill_step(modal, ctx)
                 answers.extend(res.filled)
                 if res.unresolved:
@@ -704,10 +802,29 @@ class SinglePageApplier(BaseApplier):
                 shot = await self.b.screenshot(page, f"noform_{self.ats}_{job.job_id}")
                 return self._result(STATUS_FAILED, "Application form not found", answers, shot, url)
             ctx = ResolveContext(profile, job, analysis)
-            if await self.upload_resume(page, scope, resume_path):
-                answers.append({"label": "Resume", "kind": "file", "value": resume_path.name,
-                                "source": "resume_builder", "confidence": 1.0, "ok": True})
+            answers.extend(await self.attach_documents(page, scope, resume_path))
             await self.b.human_scroll(page, 700)
+
+            if not self.s.fills_every_field:
+                # Documents mode: the attachments were the job. Everything else is yours.
+                watcher = SubmissionWatcher(self.b, page)
+                await watcher.start()
+                shot = await self.b.screenshot(page, f"documents_{self.ats}_{job.job_id}")
+                attached = ", ".join(a["value"] for a in answers) or "nothing"
+                outcome = await self.gate.wait(
+                    f"Attached {attached}. Fill in the rest of the form and submit it yourself, "
+                    "then continue.")
+                evidence = await watcher.stop()
+                if evidence.submitted:
+                    return self._result(STATUS_SUBMITTED,
+                                        f"Documents attached; you submitted it: {evidence.describe()}",
+                                        answers, shot, url)
+                if outcome == HumanGate.SKIP:
+                    return self._result(STATUS_SKIPPED, "Skipped by you", answers, shot, url)
+                return self._result(STATUS_PENDING,
+                                    f"Documents attached ({attached}); the rest is yours",
+                                    answers, shot, url)
+
             res = await self.filler.fill_step(scope, ctx)
             answers.extend(res.filled)
             if res.unresolved:
@@ -899,6 +1016,7 @@ APPLIERS: dict[str, type[BaseApplier]] = {
 
 
 def get_applier(ats: str, browser: StealthBrowser, filler: FormFiller, gate: HumanGate,
-                settings: Settings) -> Optional[BaseApplier]:
+                settings: Settings,
+                cover_letter: Optional[Callable[[], Any]] = None) -> Optional[BaseApplier]:
     cls = APPLIERS.get(ats)
-    return cls(browser, filler, gate, settings) if cls else None
+    return cls(browser, filler, gate, settings, cover_letter) if cls else None

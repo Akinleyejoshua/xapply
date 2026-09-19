@@ -393,6 +393,26 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
 .desc{white-space:pre-wrap; max-height:330px; overflow:auto; background:var(--surface-2);
   border:1px solid var(--line-soft); padding:15px 17px; border-radius:var(--r-md); line-height:1.7}
 
+/* A segmented control: three mutually exclusive choices read faster side by side than
+   as three stacked cards, and the description of the chosen one sits underneath. */
+.segmented{display:flex; gap:3px; padding:3px; border:1px solid var(--line);
+  border-radius:var(--r-md); background:var(--surface-2); width:100%}
+.seg{flex:1; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  padding:8px 10px; border-radius:var(--r-sm); text-align:center; user-select:none;
+  transition:background .14s var(--ease), color .14s var(--ease)}
+.seg input{position:absolute; opacity:0; width:0; height:0; margin:0; padding:0}
+.seg span{font-size:13px; font-weight:560; color:var(--fg-2); line-height:1.3; white-space:nowrap}
+.seg:hover span{color:var(--fg)}
+.seg:has(input:checked){background:var(--surface); box-shadow:var(--sh-sm)}
+.seg:has(input:checked) span{color:var(--accent-text); font-weight:650}
+.seg:has(input:focus-visible){outline:2px solid var(--accent); outline-offset:1px}
+.mode-desc{font-size:12.5px; color:var(--fg-3); line-height:1.55; margin-top:9px; min-height:34px}
+@media(max-width:560px){
+  .segmented{flex-wrap:wrap}
+  .seg{flex:1 1 100%}
+  .seg span{white-space:normal}
+}
+
 .combo{position:relative}
 .combo input{width:100%; padding-right:34px}
 .combo .caret{position:absolute; right:11px; top:50%; transform:translateY(-50%);
@@ -504,13 +524,19 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <h2>Run controls</h2><span class="sp"></span>
               <span class="dim mono" id="ctlState">idle</span>
             </div>
-            <p class="card-note">
-              Assisted mode fills the form and stops so you click Submit. Auto mode submits by itself,
-              and still pauses on a CAPTCHA or a question it cannot answer truthfully.
-            </p>
-            <div class="row">
+            <label class="field"><span>What the agent does</span>
+              <div class="segmented" id="modePick" role="radiogroup" aria-label="What the agent does">
+                <label class="seg"><input type="radio" name="fillmode" value="documents">
+                  <span>Documents only</span></label>
+                <label class="seg"><input type="radio" name="fillmode" value="assisted">
+                  <span>Fill the form</span></label>
+                <label class="seg"><input type="radio" name="fillmode" value="auto">
+                  <span>Fill and submit</span></label>
+              </div>
+              <p class="mode-desc" id="modeDesc"></p>
+            </label>
+            <div class="row" style="margin-top:2px">
               <button class="primary" id="btnRun">Scan and apply</button>
-              <button id="btnRunAuto">Run with auto-submit</button>
               <button class="danger ghost" id="btnStop" disabled>Stop</button>
             </div>
             <div class="row" style="margin-top:20px; align-items:flex-end">
@@ -747,8 +773,9 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <div class="chips" id="cfgLevels"></div></label>
             <label class="field"><span>Default countries &mdash; none chosen means anywhere</span>
               <div class="chips" id="cfgCountryChips"></div></label>
-            <label class="check"><input type="checkbox" id="cfgAuto">
-              <span><b>Auto-submit</b><span class="dim">The agent clicks Submit. It still pauses on CAPTCHAs.</span></span></label>
+            <p class="card-note" style="margin:0 0 12px">What the agent does is chosen on the
+              Dashboard, next to the run button.</p>
+            <label class="check" style="display:none"><input type="checkbox" id="cfgAuto"><span></span></label>
             <label class="check"><input type="checkbox" id="cfgRemote">
               <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site are dropped.</span></span></label>
             <label class="check"><input type="checkbox" id="cfgFollow">
@@ -901,6 +928,10 @@ function renderConfig(){
   setVal('cfgThreshold', CONFIG.match_threshold);
   setVal('cfgMaxApps', CONFIG.max_applications_per_run);
   setVal('cfgMaxCompany', CONFIG.max_jobs_per_company);
+  const mode = CONFIG.fill_mode || (CONFIG.auto_submit ? 'auto' : 'assisted');
+  const radio = document.querySelector(`#modePick input[value="${mode}"]`);
+  if(radio) radio.checked = true;
+  $('modeDesc').textContent = MODE_DESC[mode] || '';
   setChecked('cfgAuto', CONFIG.auto_submit);
   setChecked('cfgRemote', CONFIG.remote_only);
   setChecked('cfgFollow', CONFIG.follow_companies);
@@ -1128,13 +1159,15 @@ async function poll(){
   $('runBadge').style.display = running ? '' : 'none';
   $('runBadge').innerHTML = '<span class="dot"></span>' +
     (running ? (st.kind === 'discover' ? 'scanning' : 'applying') : 'idle');
-  $('modeBadge').className = 'badge ' + (st.auto_submit ? 'auto' : 'assist');
-  $('modeBadge').innerHTML = '<span class="dot"></span>' + (st.auto_submit ? 'auto-submit' : 'assisted');
+  const m = st.fill_mode || (st.auto_submit ? 'auto' : 'assisted');
+  $('modeBadge').className = 'badge ' + (m === 'auto' ? 'auto' : m === 'documents' ? 'run' : 'assist');
+  $('modeBadge').innerHTML = '<span class="dot"></span>' +
+    ({documents: 'documents only', assisted: 'assisted', auto: 'auto-submit'}[m] || m);
   $('llmBadge').textContent = st.provider + ' / ' + st.model;
   $('ctlState').textContent = running ? st.kind + ' running' : 'idle';
   $('scanState').textContent = st.kind === 'discover'
     ? `scanning… ${st.discovered || 0} found so far` : '';
-  $('btnRun').disabled = $('btnRunAuto').disabled = $('btnScan').disabled = running;
+  $('btnRun').disabled = $('btnScan').disabled = running;
   $('btnStop').disabled = $('btnScanStop').disabled = !running;
 
   const text = (st.log || []).join('\n');
@@ -1225,18 +1258,26 @@ async function loadStats(){
     <td>${esc(r.title)}</td><td class="dim">${esc(r.ats)}</td><td class="dim">${ago(r.updated_at)}</td></tr>`).join('')
     || '<tr><td colspan="6" class="empty">Nothing yet. Scan a board to get started.</td></tr>';
 }
-$('btnRun').onclick = () => startRun(false);
-$('btnRunAuto').onclick = () => { if(confirm('Auto-submit sends real applications without you clicking Submit. Continue?')) startRun(true); };
+// The mode is chosen above, so the button simply runs in whatever mode is selected.
+$('btnRun').onclick = () => startRun();
 $('btnStop').onclick = $('btnScanStop').onclick = async () => {
   try { await call('/admin/stop', {method:'POST'}); toast('Stop requested'); } catch(e){ toast(e.message, true); } };
-async function startRun(auto){
+const MODE_LABEL = {documents: 'attaching documents only', assisted: 'filling forms for you to submit',
+                    auto: 'filling and submitting'};
+const MODE_DESC = {
+  documents: 'Attaches your tailored resume, and a cover letter when the form asks for one. '
+           + 'Everything else is left for you to fill in and submit.',
+  assisted:  'Fills every field it can answer truthfully from your profile, then stops so you '
+           + 'check it and press Submit.',
+  auto:      'Fills the form and presses Submit itself. It still pauses on a CAPTCHA, or on a '
+           + 'question it cannot answer truthfully.',
+};
+async function startRun(){
   if(!await saveConfig({match_threshold: +$('runThreshold').value,
                         max_applications_per_run: +$('runLimit').value}, true)) return;
   try{
-    // auto_submit is passed explicitly, so these buttons always mean what they say,
-    // whatever the saved default happens to be.
-    await call('/admin/run', {method:'POST', body: JSON.stringify({limit:+$('runLimit').value, auto_submit:auto})});
-    toast(auto ? 'Run started with auto-submit' : 'Run started in assisted mode');
+    await call('/admin/run', {method:'POST', body: JSON.stringify({limit: +$('runLimit').value})});
+    toast('Run started: ' + (MODE_LABEL[CONFIG.fill_mode] || CONFIG.fill_mode));
   } catch(e){ toast(e.message, true); }
 }
 
@@ -1493,6 +1534,17 @@ $('scanQueries').oninput = debounced(() => saveConfig(
 $('scanLocation').oninput = debounced(() => saveConfig({search_location: $('scanLocation').value}, true));
 
 // dashboard
+$('modePick').addEventListener('change', e => {
+  const mode = e.target.value;
+  $('modeDesc').textContent = MODE_DESC[mode] || '';
+  if(mode === 'auto' && !confirm(
+      'Fill and submit sends real applications without you pressing Submit. Continue?')){
+    const back = document.querySelector(`#modePick input[value="${CONFIG.fill_mode || 'assisted'}"]`);
+    if(back) back.checked = true;
+    return;
+  }
+  saveConfig({fill_mode: mode}, true);
+});
 $('runLimit').onchange = () => saveConfig({max_applications_per_run: +$('runLimit').value}, true);
 $('runThreshold').onchange = () => saveConfig({match_threshold: +$('runThreshold').value}, true);
 MODEL_PICKERS['runModel'] = new ModelPicker('runModel', 'runModelList', 'runProvider', saveRunModel);

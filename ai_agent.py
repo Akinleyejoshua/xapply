@@ -111,6 +111,45 @@ class JobAnalysis(BaseModel):
         return {a.question: a.answer for a in self.answers}
 
 
+class CoverLetter(BaseModel):
+    """A cover letter written for one specific posting."""
+
+    greeting: str = Field(
+        description="Salutation line, e.g. 'Dear Hiring Team,'. Use the team or company name only "
+        "if the job description names one. Never invent a person's name."
+    )
+    opening: str = Field(
+        description="2-3 sentences naming the role and company and saying, concretely, why this "
+        "candidate fits. No filler such as 'I am writing to apply'."
+    )
+    body: list[str] = Field(
+        description="2-3 paragraphs, each 2-4 sentences. Each paragraph takes one requirement from "
+        "the job description and answers it with a specific thing the candidate actually did, "
+        "drawn from the master profile, with its real numbers. No claim may go beyond the profile."
+    )
+    closing: str = Field(
+        description="1-2 sentences: what the candidate would bring, and a plain willingness to talk. "
+        "No begging, no exclamation marks."
+    )
+    signature: str = Field(
+        description="Sign-off and the candidate's name only, e.g. 'Sincerely,\nJane Doe'. "
+        "Never append an address block, email, phone number or links: the letter is filed "
+        "alongside the resume, which already carries them."
+    )
+
+    def as_text(self) -> str:
+        """The letter as plain text, for a textarea on an application form."""
+        parts = [self.greeting, "", self.opening, ""]
+        for paragraph in self.body:
+            parts += [paragraph, ""]
+        parts += [self.closing, "", self.signature]
+        return "\n".join(parts).strip()
+
+    @property
+    def paragraphs(self) -> list[str]:
+        return [self.opening, *self.body, self.closing]
+
+
 class FieldAnswer(BaseModel):
     answer: str = Field(
         description="Value to enter. For choice fields it MUST be one of the provided options, verbatim. "
@@ -179,6 +218,40 @@ WRITING RULES
 - No markdown, no bullet symbols inside strings.
 """
 
+COVER_LETTER_PROMPT = """Write a cover letter for this candidate and this specific job.
+
+MASTER PROFILE (JSON, source of truth):
+{profile}
+
+JOB
+Title: {title}
+Company: {company}
+Location: {location}
+
+JOB DESCRIPTION:
+\"\"\"
+{description}
+\"\"\"
+
+WHAT THE ANALYSIS ALREADY FOUND
+Match score: {score}
+Strengths and gaps: {rationale}
+Requirements the candidate does not meet: {gaps}
+
+RULES
+- Every claim must be traceable to the master profile. No invented employers, tools, degrees,
+  numbers or achievements. If the profile does not support it, leave it out.
+- Do not claim, or apologise for, anything in the list of unmet requirements. Simply write about
+  what the candidate has actually done.
+- Be specific. Name the real project or employer and the real result. A sentence that could
+  appear in anyone's letter is a wasted sentence.
+- No flattery about the company, no "passionate about", no "I believe I would be a great fit".
+- Plain ASCII punctuation only: ordinary hyphens and straight quotes.
+- Around 250-320 words in total.
+- End with the sign-off and the name. Do not add a contact block, address, email, phone
+  number or links; the resume carries those already.
+"""
+
 FIELD_PROMPT = """You are filling ONE field of an online job application on behalf of the candidate.
 
 MASTER PROFILE (JSON, source of truth):
@@ -231,6 +304,24 @@ class AIAgent:
         log.info("Gemini analysis: %s @ %s -> score %d", analysis.job_title,
                  analysis.company_name, analysis.match_score)
         return analysis
+
+    async def write_cover_letter(self, profile: dict, job: JobPosting,
+                                 analysis: Optional[JobAnalysis] = None) -> CoverLetter:
+        """Write a cover letter for one posting, grounded in the profile."""
+        prompt = COVER_LETTER_PROMPT.format(
+            profile=json.dumps(profile, ensure_ascii=False, indent=1),
+            title=job.title or (analysis.job_title if analysis else ""),
+            company=job.company or (analysis.company_name if analysis else ""),
+            location=job.location or "(unspecified)",
+            description=(job.description or "")[:12_000],
+            score=analysis.match_score if analysis else "(not scored)",
+            rationale=analysis.match_rationale if analysis else "(not scored)",
+            gaps=", ".join(analysis.missing_requirements) if analysis else "(not scored)",
+        )
+        letter = await self._generate(CoverLetter, prompt, temperature=0.35)
+        log.info("Cover letter written for %s @ %s (%d paragraphs)",
+                 job.title, job.company, len(letter.paragraphs))
+        return letter
 
     async def answer_form_question(
         self,

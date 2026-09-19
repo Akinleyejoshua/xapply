@@ -100,7 +100,8 @@ class Pipeline:
             log.info("SKIP: %s", note)
             return STATUS_SKIPPED
 
-        applier = get_applier(job.ats, browser, self.filler, self.gate, self.s)
+        applier = get_applier(job.ats, browser, self.filler, self.gate, self.s,
+                              cover_letter=self._cover_letter_factory(job))
         if applier is None:
             note = f"No applier for ATS {job.ats!r} ({job.apply_url or job.url})"
             self.db.record(job, STATUS_SKIPPED, notes=note)
@@ -123,7 +124,11 @@ class Pipeline:
             return STATUS_SKIPPED
 
         resume_path = await self.resumes.build(self.profile, analysis, job)
-        log.info("Match %d -> applying via %s", analysis.match_score, job.ats)
+        if applier.cover_letter is not None:
+            applier.cover_letter.cache["analysis"] = analysis
+        mode = {"documents": "attaching documents only", "assisted": "filling the form",
+                "auto": "filling and submitting"}[self.s.fill_mode]
+        log.info("Match %d -> %s via %s", analysis.match_score, mode, job.ats)
         result = await applier.apply(page, job, analysis, resume_path, self.profile)
         audit = self.write_audit(job, analysis, result.status, result.note, result.answers,
                                  str(resume_path), result.screenshot_path)
@@ -135,6 +140,27 @@ class Pipeline:
         self._bump(result.status)
         log.info("%s: %s", result.status.upper(), result.note)
         return result.status
+
+    def _cover_letter_factory(self, job: JobPosting):
+        """Write this posting's cover letter at most once, and only if a form asks.
+
+        Most applications never request one, so generating eagerly would spend an API
+        call per job for nothing.
+        """
+        cache: dict[str, Any] = {}
+
+        async def make() -> tuple[Path, str]:
+            if "result" in cache:
+                return cache["result"]
+            analysis = cache.get("analysis")
+            letter = await self.ai.write_cover_letter(self.profile, job, analysis)
+            pdf = await self.resumes.build_cover_letter(self.profile, letter, job, analysis)
+            cache["result"] = (pdf, letter.as_text())
+            log.info("Cover letter ready: %s", pdf.name)
+            return cache["result"]
+
+        make.cache = cache          # the pipeline drops the analysis in before applying
+        return make
 
     # ---- run -----------------------------------------------------------
     async def preflight(self) -> None:

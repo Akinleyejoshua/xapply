@@ -111,9 +111,48 @@ than failing.
 
 ---
 
-## The two execution modes
+## The three execution modes
 
-**Assisted (`AUTO_SUBMIT=false`, the default).** The bot navigates, uploads the tailored resume,
+Chosen on the Dashboard, next to the run button, and saved with the rest of your settings.
+
+| Mode | What the agent does | What you do |
+| --- | --- | --- |
+| **Documents only** | Attaches your tailored resume, and a cover letter when the form asks for one | Fill in every other field, and submit |
+| **Assisted** *(default)* | Fills every field it can answer truthfully, then stops | Check it, and submit |
+| **Auto** | Fills the form and presses Submit | Nothing, unless it pauses |
+
+```bash
+python main.py run --mode documents
+python main.py run --mode assisted     # the default
+python main.py run --mode auto
+```
+
+`AUTO_SUBMIT=true` in an old `.env` still means auto mode.
+
+### Documents only
+
+The agent's whole job is the paperwork. It reaches the form, attaches the tailored resume, looks
+for a cover letter field, and stops. It types nothing else, not even your name, so nothing goes
+into the application that you did not put there.
+
+A cover letter is written only when a form actually asks for one, either as an upload or as a
+free-text box, so no API call is spent on the majority of applications that never request one.
+It is grounded in the same profile as the resume, told not to claim anything the profile does not
+support, and told not to mention the requirements the analysis found you do not meet. The letter
+is rendered to its own single-page PDF for an upload field, or entered whole into a text box.
+
+Whichever way you submit, the agent is still watching, so the application is recorded as
+*Submitted* with the evidence rather than left as *Awaiting human*:
+
+```
+Documents attached; you submitted it: confirmation text 'Thank you for applying'
+```
+
+---
+
+## What a pause looks like
+
+**Assisted mode.** The bot navigates, uploads the tailored resume,
 fills every text field, select, radio and checkbox, then stops at the review page:
 
 ```
@@ -536,6 +575,7 @@ any other host with the default token is refused.
 | Group | Endpoints |
 | --- | --- |
 | Overview | `GET /api/stats`, `/api/applications`, `/api/applications/{id}`, `PATCH /api/applications/{id}` |
+| Files | `GET /api/applications/{id}/resume` returns the tailored PDF; the cover letter sits beside it in `output_resumes/` |
 | Delete | `DELETE /api/applications/{id}`, `POST /api/applications/delete` |
 | Files | `GET /api/applications/{id}/resume`, `/screenshot`, `/api/export.csv`, `/api/audits` |
 | Discover | `POST /admin/discover`, `GET /api/discovered`, `GET /api/scan-stats`, `POST /api/detect` |
@@ -603,7 +643,8 @@ map onto range options properly: 6 years picks "5-10 years", not the nearest sta
 | `database.py` | SQLite schema, dedupe, status tracking, stats |
 | `llm.py` | Provider abstraction: Gemini and NVIDIA behind one structured-output call |
 | `ai_agent.py` | Prompts, Pydantic schemas, guardrails |
-| `resume_builder.py` | Jinja2 template to Chromium to single-page PDF, hallucination filter |
+| `resume_builder.py` | Resume and cover letter: Jinja2 to Chromium to single-page PDF, hallucination filter |
+| `templates/cover_letter.html` | The cover letter layout, in the same typeface as the resume |
 | `browser_bot.py` | Stealth browser, human gate, form discovery, answer resolution |
 | `appliers.py` | Per-ATS drivers: Greenhouse, Lever, Ashby, LinkedIn |
 | `discovery.py` | Board APIs, aggregator feeds, Google search |
@@ -679,6 +720,8 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
 | A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |
 | Stopping a scan lost the results | Fixed: results are published board by board and survive a stop |
+| A cover letter came out truncated | Fixed: long prose is entered at once rather than typed key by key, which hit the action timeout |
+| No cover letter was produced | One is written only when the form asks for it. Check the form has a cover letter field |
 | `make: *** [serve] Terminated: 15` | Something sent the server SIGTERM. Usually a `pkill` matching `main.py serve`, or a second copy starting on the same port. `make serve PORT=8001` runs another one safely |
 | Port already in use | The dashboard now says so and suggests the next port instead of raising |
 | A setting will not stick | Check `python main.py settings`. Only the keys it lists are saved; the rest come from `.env` |
