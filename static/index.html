@@ -633,7 +633,9 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
         <div class="grid two">
           <div class="card">
             <div class="card-head"><h2>Scan job boards</h2></div>
-            <label class="field"><span>Sources</span><div class="chips" id="srcChips"></div></label>
+            <label class="field"><span>Sources</span>
+              <div class="chips" id="srcChips"></div>
+              <span class="hint" id="srcHint"></span></label>
             <label class="field"><span>Search terms, comma separated</span>
               <input id="scanQueries" placeholder="Full Stack Developer, Backend Engineer"></label>
             <label class="field"><span>Countries &mdash; none chosen means anywhere</span>
@@ -688,6 +690,29 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <button id="btnManualAuto">Fill and submit automatically</button>
           </div>
           <div id="urlCheck" style="margin-top:14px"></div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+          <div class="card-head"><h2>Apply by email</h2>
+            <span class="sp"></span>
+            <button class="sm ghost" id="btnEmailCheck">Check my email account</button></div>
+          <p class="card-note">
+            For a posting that says to send your CV to an address instead of offering a form.
+            The agent reads the page, finds the address, tailors your resume and cover letter,
+            shows you the draft, and sends it once you continue.
+          </p>
+          <div class="pair">
+            <label class="field"><span>Link to the posting</span>
+              <input id="emailUrl" spellcheck="false"
+                placeholder="https://example.com/careers/data-analyst"></label>
+            <label class="field"><span>Address, only if the page hides it</span>
+              <input id="emailTo" spellcheck="false" placeholder="careers@example.com"></label>
+          </div>
+          <div class="row" style="margin-top:4px">
+            <button class="primary" id="btnEmailApply">Write the application</button>
+            <span class="dim" id="emailState"></span>
+          </div>
+          <div id="emailCheckResult" style="margin-top:12px"></div>
         </div>
 
         <div class="card" style="margin-top:18px">
@@ -971,6 +996,19 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
 <script>
 
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+/** What each source actually does, for the ones whose name does not say. */
+const SOURCE_HELP = {
+  greenhouse: 'reads the Greenhouse boards under Company boards. No browser needed.',
+  lever: 'reads the Lever boards under Company boards. No browser needed.',
+  ashby: 'reads the Ashby boards under Company boards. No browser needed.',
+  remoteok: 'a public feed of remote roles, resolved to the real application link.',
+  himalayas: 'a public feed of remote roles, resolved to the real application link.',
+  google: 'searches Google for company boards and remembers the ones it finds.',
+  emails: 'finds roles advertised with an address instead of a form, and applies by writing to it.',
+  linkedin: 'Easy Apply. Needs you signed in to LinkedIn under Accounts.',
+  urls: 'reads jobs.txt.',
+};
+
 const LBL = {submitted:'Submitted', pending_human_review:'Awaiting human', skipped:'Skipped',
              failed:'Failed', in_progress:'In progress'};
 const $ = id => document.getElementById(id);
@@ -1028,8 +1066,22 @@ function renderConfig(){
   if(!CONFIG.known_sources) return;
   // --- scan page ---
   const onSrc = new Set(CONFIG.sources || []);
-  $('srcChips').innerHTML = (CONFIG.known_sources || []).map(x => `<label class="chip">
+  $('srcChips').innerHTML = (CONFIG.known_sources || []).map(x => `<label class="chip"
+    title="${esc(SOURCE_HELP[x] || '')}">
     <input type="checkbox" value="${esc(x)}" ${onSrc.has(x) ? 'checked' : ''}> ${esc(x)}</label>`).join('');
+  // Say what the non-obvious ones do, and what they still need, rather than leaving a
+  // row of bare words that only make sense if you already know.
+  const hint = $('srcHint');
+  if(hint){
+    const picked = [...onSrc].filter(x => SOURCE_HELP[x]);
+    hint.innerHTML = picked.length
+      ? picked.map(x => `<b>${esc(x)}</b> ${esc(SOURCE_HELP[x])}`).join('<br>')
+      : 'Hover a source to see what it does.';
+    if(onSrc.has('emails') && !CONFIG.email_apply){
+      hint.innerHTML += '<br><b style="color:var(--warn)">emails needs \'Apply by email\' ' +
+        'turned on in Settings, or it can do nothing with what it finds.</b>';
+    }
+  }
   const onLvl = new Set(CONFIG.seniority_levels || []);
   const levels = CONFIG.known_seniority || [];
   const levelChips = target => levels.map(l => `<label class="chip">
@@ -1977,6 +2029,29 @@ $('btnProfSave').onclick = async () => {
   catch(e){ toast(e.message, true); }
 };
 
+/* ---------- applying by email ---------- */
+$('btnEmailCheck').onclick = async () => {
+  const out = $('emailCheckResult');
+  out.innerHTML = '<span class="dim">Opening your email account…</span>';
+  try{
+    const r = await call('/api/email/check', {method:'POST'});
+    out.innerHTML = `<div class="model-note ${r.ready ? 'ok' : 'bad'}">${esc(r.detail)}</div>`;
+  } catch(e){
+    out.innerHTML = `<div class="model-note bad">${esc(e.message)}</div>`;
+  }
+};
+
+$('btnEmailApply').onclick = async () => {
+  const url = ($('emailUrl').value || '').trim();
+  if(!url) return toast('Paste the link to the posting', true);
+  try{
+    await call('/api/email/apply', {method:'POST',
+      body: JSON.stringify({url, to: ($('emailTo').value || '').trim() || null})});
+    toast('Reading the posting and writing your application');
+    show('dash');
+  } catch(e){ toast(e.message, true); }
+};
+
 /* ---------- accounts ---------- */
 async function loadAccounts(){
   let rows = [];
@@ -2068,6 +2143,7 @@ function renderLog(lines){
 const VIEW_STATE = [
   ['foundFilter', 'value'], ['appStatus', 'value'], ['appSearch', 'value'],
   ['manualUrls', 'value'], ['delFiles', 'checked'],
+  ['emailUrl', 'value'], ['emailTo', 'value'],
 ];
 
 function saveViewState(){

@@ -582,6 +582,18 @@ The other way is **a mail server**, with `SMTP_HOST`, `SMTP_USER` and `SMTP_PASS
 `.env`. For Gmail that password is an app password, not your account password, which is
 the reason the browser route exists.
 
+Once it is on, there are two ways in:
+
+- **Scan page, "Apply by email".** Paste a link, press **Write the application**. The
+  agent reads the page, finds the address, tailors your resume and cover letter, shows
+  you the draft and sends it when you continue. **Check my email account** opens Gmail
+  and tells you whether the session is still good, without sending anything.
+- **The `emails` source.** Tick it on the Scan page and a scan looks for roles that are
+  advertised with an address instead of a form, then applies to them this way.
+
+From the terminal it is the same route: any link you pass that has no form behind it
+goes to email, so `python main.py run --url <link>` works too.
+
 It is off by default, and stays careful when it is on:
 
 - The recipient is only ever an address found in the posting. It is never guessed, and

@@ -341,6 +341,66 @@ class Pipeline:
                     break
         return self.stats
 
+    async def email_one(self, url: str, to: Optional[str] = None) -> dict[str, Any]:
+        """Apply to one posting by writing to whoever it says to write to.
+
+        The whole email route in one call, so it can be run against a link you found
+        yourself rather than only reaching it by chance in the middle of a scan.
+        """
+        from email_apply import find_address
+
+        async with StealthBrowser(self.s, self.gate) as browser:
+            resolver = AnswerResolver(self.ai, self.s)
+            self.filler = FormFiller(browser, resolver, self.s)
+            job = JobPosting.from_url(url, source="urls")
+            job.apply_url = ""
+            try:
+                source = build_sources(self.s, browser, self.db, [url])[0]
+                job = await source.hydrate(browser.page, job)
+            except Exception as exc:
+                log.warning("Could not read %s: %s", url, exc)
+            page_text = await self._page_text(browser)
+            if not job.description or len(job.description) < 120:
+                job.description = page_text
+            address = (to or "").strip() or find_address(job, page_text)
+            if not address:
+                raise ValueError(
+                    f"No application address on {url}. The posting may use a form "
+                    f"instead, or give the address as an image. You can supply one "
+                    f"yourself if you know it.")
+            job.title = job.title or "Role"
+            analysis = await self.ai.analyze_job(self.profile, job)
+            job.title = job.title or analysis.job_title
+            job.company = job.company or analysis.company_name
+            resume = await self.resumes.build(self.profile, analysis, job)
+            cover = self._cover_letter_factory(job)
+            cover.cache["analysis"] = analysis
+            status = await self._apply_by_email(job, analysis, resume, self.resumes.last_trim,
+                                                address, cover, browser=browser)
+        return {"status": status, "to": address, "job": job.to_dict(),
+                "resume_path": str(resume)}
+
+    async def check_email_account(self) -> dict[str, Any]:
+        """Open Gmail and say whether the session is still good. Sends nothing."""
+        from email_apply import EmailApplier, GmailTransport, NotConfigured
+
+        mailer = EmailApplier(self.s, getattr(self, "gate", None))
+        if mailer.transport != "gmail":
+            missing = mailer.missing_settings()
+            return {"transport": mailer.transport, "ready": not missing,
+                    "detail": ("Ready to send through " + (self.s.smtp_host or "your mail server"))
+                    if not missing else "Still needs " + ", ".join(missing) + " in .env"}
+        async with StealthBrowser(self.s, self.gate) as browser:
+            try:
+                await GmailTransport(self.s, browser).open_mail()
+            except NotConfigured as exc:
+                return {"transport": "gmail", "ready": False, "detail": str(exc)}
+            except Exception as exc:
+                return {"transport": "gmail", "ready": False,
+                        "detail": f"Could not open Gmail: {exc}"}
+        return {"transport": "gmail", "ready": True,
+                "detail": "Signed in to Gmail. Applications will be sent from this account."}
+
     async def analyze_only(self, url: str) -> dict[str, Any]:
         """Dry run: fetch a posting, score it, build the resume, apply nothing."""
         async with StealthBrowser(self.s, self.gate) as browser:

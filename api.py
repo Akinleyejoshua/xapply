@@ -184,6 +184,14 @@ class DiscoveredDelete(BaseModel):
     all: bool = False
 
 
+class EmailApplyRequest(BaseModel):
+    """One posting, applied to by writing to whoever it says to write to."""
+
+    url: str
+    #: Only when the posting hides the address, or names several and you know which.
+    to: Optional[str] = None
+
+
 class RetryRequest(BaseModel):
     """Which applications to try again: specific ids, or everything with one status."""
 
@@ -811,6 +819,58 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             note(f"removed company {ats}:{board_token}")
         return {k: v for k, v in data.items() if not k.startswith("_")}
+
+    # ---- applying by email ------------------------------------------------
+    @app.post("/api/email/check", dependencies=[Depends(auth)], tags=["apply"])
+    async def check_email() -> dict[str, Any]:
+        """Open Gmail and say whether applications can be sent from it. Sends nothing."""
+        from llm import LLMError
+        from pipeline import Pipeline
+
+        try:
+            pipeline = Pipeline(settings, database, app.state.gate)
+        except LLMError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        app.state.gate = pipeline.gate
+        out = await pipeline.check_email_account()
+        note(f"email check: {out['detail']}", "info" if out["ready"] else "warn")
+        return out
+
+    @app.post("/api/email/apply", dependencies=[Depends(auth)], tags=["apply"])
+    async def apply_by_email(body: EmailApplyRequest) -> dict[str, Any]:
+        """Apply to one posting by writing to the address it gives.
+
+        The same route a scan takes when it meets a posting with no form, reachable
+        directly so it can be used on a link you found yourself.
+        """
+        from llm import LLMError
+        from pipeline import Pipeline
+
+        if not settings.email_apply:
+            raise HTTPException(400, "Turn on 'Apply by email' in Settings first.")
+        url = (body.url or "").strip()
+        if not url:
+            raise HTTPException(400, "Give the link to the posting.")
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        try:
+            pipeline = Pipeline(settings, database, app.state.gate)
+        except LLMError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        app.state.gate = pipeline.gate
+
+        async def _go() -> None:
+            note(f"applying by email to {url}", "info")
+            try:
+                out = await pipeline.email_one(url, body.to)
+            except ValueError as exc:
+                note(str(exc), "warn")
+                return
+            note(f"{out['status']}: {out['to']}",
+                 "info" if out["status"] == "submitted" else "warn")
+
+        start("email", _go)
+        return {"started": True, "url": url}
 
     # ---- accounts ---------------------------------------------------------
     @app.get("/api/integrations", dependencies=[Depends(auth)], tags=["accounts"])

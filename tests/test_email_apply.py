@@ -303,3 +303,99 @@ def test_the_smtp_message_still_says_gmail_is_an_option(settings, job) -> None:
             EmailApplier(settings).send(draft))
 
     assert "EMAIL_TRANSPORT=gmail" in str(caught.value)
+
+
+# ---- the action flow: reaching all of this on purpose ---------------------
+
+def _api(tmp_path: Path, **over):
+    from api import create_app
+    from database import Database
+
+    settings = Settings(_env_file=None, db_path=tmp_path / "t.db",
+                        overrides_path=tmp_path / "s.json", log_dir=tmp_path / "l",
+                        audit_dir=tmp_path / "l" / "a", output_dir=tmp_path / "o",
+                        user_data_dir=tmp_path / "p", company_file=tmp_path / "c.json",
+                        template_dir=Path(__file__).resolve().parents[1] / "templates",
+                        **over)
+    db = Database(settings.db_path)
+    db.init()
+    from fastapi.testclient import TestClient
+
+    return TestClient(create_app(settings, db)), settings
+
+
+def test_there_is_a_way_to_apply_by_email_on_purpose(tmp_path: Path,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before this it could only be reached by chance, mid-scan, when a posting happened
+    to have no form."""
+    client, settings = _api(tmp_path, email_apply=True)
+    asked = {}
+
+    class StubPipeline:
+        def __init__(self, *a, **k) -> None:
+            self.gate = None
+
+        async def email_one(self, url, to=None):
+            asked.update(url=url, to=to)
+            return {"status": "submitted", "to": to or "careers@example.com",
+                    "job": {}, "resume_path": "cv.pdf"}
+
+    import pipeline
+    monkeypatch.setattr(pipeline, "Pipeline", StubPipeline)
+
+    out = client.post("/api/email/apply",
+                      json={"url": "example.com/jobs/1", "to": "careers@example.com"})
+
+    assert out.status_code == 200 and out.json()["started"] is True
+    assert out.json()["url"] == "https://example.com/jobs/1", "a bare host is made a URL"
+
+
+def test_applying_by_email_is_refused_while_the_feature_is_off(tmp_path: Path) -> None:
+    client, _ = _api(tmp_path, email_apply=False)
+
+    out = client.post("/api/email/apply", json={"url": "https://example.com/j"})
+
+    assert out.status_code == 400 and "Settings" in out.json()["detail"]
+
+
+def test_a_link_is_required(tmp_path: Path) -> None:
+    client, _ = _api(tmp_path, email_apply=True)
+
+    assert client.post("/api/email/apply", json={"url": "   "}).status_code == 400
+
+
+def test_the_email_account_can_be_checked_without_sending(tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """Otherwise the only way to learn the session has lapsed is a failed application."""
+    client, _ = _api(tmp_path, email_apply=True, email_transport="gmail")
+
+    class StubPipeline:
+        def __init__(self, *a, **k) -> None:
+            self.gate = None
+
+        async def check_email_account(self):
+            return {"transport": "gmail", "ready": False,
+                    "detail": "Not signed in to Gmail in this browser profile."}
+
+    import pipeline
+    monkeypatch.setattr(pipeline, "Pipeline", StubPipeline)
+
+    out = client.post("/api/email/check").json()
+
+    assert out["ready"] is False and "Gmail" in out["detail"]
+
+
+def test_an_smtp_setup_is_checked_without_opening_anything(settings) -> None:
+    """There is no session to look at, so this is answered from the settings alone."""
+    import asyncio
+
+    from pipeline import Pipeline
+
+    settings.email_transport = "smtp"
+    p = Pipeline.__new__(Pipeline)
+    p.s = settings
+
+    out = asyncio.run(p.check_email_account())
+
+    assert out["transport"] == "smtp" and out["ready"] is False
+    assert "SMTP_HOST" in out["detail"]
