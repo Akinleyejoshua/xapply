@@ -849,6 +849,16 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
           </div>
 
           <div class="card">
+            <div class="card-head"><h2>Accounts</h2>
+              <span class="sp"></span>
+              <button class="sm ghost" id="btnAccountsRefresh">Refresh</button></div>
+            <p class="card-note">Sign in once and the browser profile keeps the session until
+              you sign out, exactly as your everyday browser does. No password is stored here:
+              you sign in yourself, in a window, including any second factor.</p>
+            <div id="accounts"></div>
+          </div>
+
+          <div class="card">
             <div class="card-head"><h2>Company boards</h2></div>
             <p class="card-note">Paste any job link you found in your browser and the board behind it is
               identified and verified automatically. A board link, or a bare company token, works too.</p>
@@ -947,6 +957,7 @@ function show(name){
   renderConfig();                       // every page reflects the same saved state
   if(name === 'apps') loadApps();
   if(name === 'profile') loadProfile();
+  if(name === 'settings') loadAccounts();
 }
 
 /* ---------- state ----------
@@ -1916,6 +1927,50 @@ $('btnProfSave').onclick = async () => {
   try { await call('/api/profile', {method:'PUT', body: JSON.stringify(parsed)}); toast('profile.json saved'); loadProfile(); }
   catch(e){ toast(e.message, true); }
 };
+
+/* ---------- accounts ---------- */
+async function loadAccounts(){
+  let rows = [];
+  try { rows = await call('/api/integrations'); } catch(e){ return; }
+  $('accounts').innerHTML = `<table><thead><tr><th>Account</th><th>Status</th>
+    <th>Used for</th><th style="width:150px"></th></tr></thead><tbody>` +
+    rows.map(r => {
+      const pill = r.signed_in
+        ? '<span class="pill submitted">signed in</span>'
+        : (r.needed_now ? '<span class="pill failed">needed, signed out</span>'
+                        : '<span class="pill skipped">signed out</span>');
+      return `<tr>
+        <td><b>${esc(r.label)}</b></td>
+        <td>${pill}</td>
+        <td class="dim">${esc(r.used_for || '')}</td>
+        <td class="row-actions">
+          <button class="sm" onclick="accountIn('${esc(r.name)}')">${
+            r.signed_in ? 'Sign in again' : 'Sign in'}</button>
+          ${r.signed_in ? `<button class="sm ghost danger"
+             onclick="accountOut('${esc(r.name)}','${esc(r.label)}')">Sign out</button>` : ''}
+        </td></tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+async function accountIn(name){
+  try{
+    const out = await call('/api/integrations/' + encodeURIComponent(name) + '/login',
+                           {method:'POST'});
+    toast('Opening ' + out.label + ' in a window. Sign in, then press Continue.');
+    show('dash');
+  } catch(e){ toast(e.message, true); }
+}
+
+async function accountOut(name, label){
+  if(!confirm(`Sign out of ${label}? Its cookies are removed from the browser profile.`)) return;
+  try{
+    await call('/api/integrations/' + encodeURIComponent(name) + '/logout', {method:'POST'});
+    toast('Signed out of ' + label);
+    loadAccounts();
+  } catch(e){ toast(e.message, true); }
+}
+
+$('btnAccountsRefresh').onclick = loadAccounts;
 
 /* ---------- activity ----------
    Every line the run produces, coloured by what kind of thing it is, so a failure is

@@ -527,10 +527,15 @@ A scan over the board APIs opens no browser at all, whatever these are set to, b
 it is plain HTTP. Applying to a web form always needs one, hidden or not. Applying by
 email needs no form, so nothing is opened for it.
 
-### Signing in to a site, once
+### Accounts
 
-Sessions live in the browser profile, exactly as they do in your everyday browser. Sign
-in once and it lasts until you sign out or delete the profile:
+Settings has an **Accounts** section listing every site the tool can make use of, whether
+this browser profile is still signed in to each one, and what each is used for. An
+account something is currently relying on shows as needed when it is signed out, so a
+run does not fail for a reason you could have seen beforehand.
+
+Sessions live in the browser profile, exactly as they do in your everyday browser, and
+last until you sign out or delete the profile. Sign in from that section, or:
 
 ```bash
 make signin SITE=x          # or linkedin, indeed, glassdoor, wellfound, gmail
@@ -538,7 +543,11 @@ make signin SITE=https://any-site.example/login
 ```
 
 Nothing is typed for you and no password is stored in this project. You sign in
-yourself, including any second factor.
+yourself, in a window, including any second factor. Signing out removes that site's
+cookies from the profile and leaves every other account alone.
+
+The status is read from the profile's own cookie store rather than by opening each site,
+so the whole list answers at once.
 
 ### Finding roles that have no form
 

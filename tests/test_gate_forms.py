@@ -130,7 +130,9 @@ def test_lazy_browser_reports_not_started(settings: Settings) -> None:
     with pytest.raises(AttributeError, match="not been started"):
         _ = lazy.human_click
     assert "greenhouse" not in BROWSER_SOURCES | BROWSER_FALLBACK_SOURCES
-    assert {"linkedin", "google", "urls"} == BROWSER_SOURCES
+    # Sources that render a page. A board API is plain HTTP and must never be in here,
+    # or a scan opens a window and leaves it sitting empty.
+    assert {"linkedin", "google", "urls", "emails"} == BROWSER_SOURCES
 
 
 @pytest.mark.asyncio

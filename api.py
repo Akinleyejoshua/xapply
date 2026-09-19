@@ -31,6 +31,10 @@ from config import PERSISTED_KEYS, Settings
 from config import settings as default_settings
 from database import STATUSES, Database
 from email_apply import EmailApplier
+from integrations import BY_NAME as INTEGRATIONS_BY_NAME
+from integrations import forget as integration_forget
+from integrations import signed_in as integration_signed_in
+from integrations import status as integration_status
 from countries import COUNTRIES
 from llm import verified_table
 from discovery import SENIORITY_LEVELS
@@ -807,6 +811,51 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             note(f"removed company {ats}:{board_token}")
         return {k: v for k, v in data.items() if not k.startswith("_")}
+
+    # ---- accounts ---------------------------------------------------------
+    @app.get("/api/integrations", dependencies=[Depends(auth)], tags=["accounts"])
+    def get_integrations() -> list[dict[str, Any]]:
+        """Which accounts this browser profile is still signed in to.
+
+        Read from the profile's own cookie store rather than by opening each site, so
+        the whole list is answered at once. Without it, whether a run can read X or send
+        from Gmail is only discoverable by starting one and watching it fail.
+        """
+        return integration_status(settings.user_data_dir, settings)
+
+    @app.post("/api/integrations/{name}/login", dependencies=[Depends(auth)], tags=["accounts"])
+    async def sign_in(name: str) -> dict[str, Any]:
+        """Open a window at the sign-in page. You do the signing in."""
+        from pipeline import login_flow
+
+        item = INTEGRATIONS_BY_NAME.get(name)
+        if item is None:
+            raise HTTPException(404, f"No account called {name!r}")
+
+        async def _go() -> None:
+            note(f"opening {item.label} to sign in", "info")
+            await login_flow(settings, name)
+            note(f"{item.label}: signed in" if integration_signed_in(
+                settings.user_data_dir, item) else
+                f"{item.label}: still signed out", "info")
+
+        start(f"signin:{name}", _go)
+        return {"opening": item.sign_in_url, "label": item.label}
+
+    @app.post("/api/integrations/{name}/logout", dependencies=[Depends(auth)], tags=["accounts"])
+    def sign_out(name: str) -> dict[str, Any]:
+        """Forget this account by removing its cookies from the profile."""
+        if busy():
+            raise HTTPException(409, "Something is running. Stop it first, so the "
+                                     "browser is not holding the cookie store open.")
+        try:
+            removed = integration_forget(settings.user_data_dir, name)
+        except KeyError:
+            raise HTTPException(404, f"No account called {name!r}") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        note(f"signed out of {name}", "info")
+        return {"forgotten": removed, "name": name}
 
     # ---- discover ---------------------------------------------------------
     @app.get("/api/discovered", dependencies=[Depends(auth)], tags=["discover"])
