@@ -108,18 +108,89 @@ def title_matches(title: str, token_sets: list[set[str]], ratio: float = TITLE_M
     return False
 
 
-def location_matches(text: str, wanted: str, remote_only: bool, is_remote: Optional[bool] = None) -> bool:
-    blob = (text or "").lower()
+#: Ashby sets `isRemote: true` on hybrid roles too (505 of OpenAI's 537 "remote" jobs are
+#: Hybrid), so that flag cannot be trusted on its own. `workplaceType` is authoritative
+#: when present; otherwise fall back to what the location text says.
+REMOTE_WORDS = ("remote", "anywhere", "distributed", "work from home", "wfh")
+NOT_REMOTE_WORDS = ("hybrid", "on-site", "onsite", "in office", "in-office")
+
+
+def looks_remote(location_text: str, workplace_type: Optional[str] = None) -> bool:
+    """Whether a posting is genuinely remote, not merely hybrid."""
+    wt = (workplace_type or "").strip().lower().replace("-", "").replace(" ", "")
+    if wt:
+        return wt == "remote"
+    blob = (location_text or "").lower()
+    if any(w in blob for w in NOT_REMOTE_WORDS):
+        return False
+    return any(w in blob for w in REMOTE_WORDS)
+
+
+def location_matches(text: str, wanted: str, remote_only: bool,
+                     workplace_type: Optional[str] = None) -> bool:
     if remote_only:
-        if is_remote is True:
-            return True
-        if is_remote is False:
-            return False
-        return "remote" in blob or "anywhere" in blob or "distributed" in blob
+        return looks_remote(text, workplace_type)
     w = (wanted or "").strip().lower()
     if not w or w in ("remote", "anywhere", "worldwide"):
         return True
-    return w in blob or "remote" in blob
+    return w in (text or "").lower() or looks_remote(text, workplace_type)
+
+
+# --------------------------------------------------------------------------
+# Seniority
+# --------------------------------------------------------------------------
+
+SENIORITY_LEVELS = ("intern", "junior", "mid", "senior", "lead")
+
+#: Checked in order; the first hit wins.
+#: The junior *prefix* is checked before `lead` on purpose: "Associate Product Manager"
+#: is a junior role, not a leadership one, even though it contains "manager".
+SENIORITY_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("intern", re.compile(r"\b(intern|internship|co-?op|apprentice|trainee|placement)\b", re.I)),
+    ("junior", re.compile(r"^\s*(associate|assistant|junior|jr\.?|entry[ -]?level|graduate|new ?grad)\b", re.I)),
+    ("lead", re.compile(r"\b(lead|leader|staff|principal|distinguished|fellow|head of|"
+                        r"director|vp|vice president|chief|architect)\b", re.I)),
+    ("senior", re.compile(r"\b(senior|sr\.?|snr|experienced)\b", re.I)),
+    ("junior", re.compile(r"\b(junior|jr\.?|entry[ -]?level|graduate|new ?grad|early career)\b", re.I)),
+]
+
+
+#: "Manager" only signals leadership when it is the role, not part of a product name.
+#: "Engineering Manager" is a lead; "Software Engineer, Ads Manager" is not.
+MANAGER_RE = re.compile(r"\bmanagers?\b", re.I)
+IC_ROLE_RE = re.compile(r"\b(engineer|developer|scientist|analyst|designer|researcher|"
+                        r"programmer|administrator|consultant)\b", re.I)
+
+
+def _is_manager_role(title: str) -> bool:
+    m = MANAGER_RE.search(title or "")
+    if not m:
+        return False
+    ic = IC_ROLE_RE.search(title)
+    # An individual-contributor noun before "manager" means the word belongs to a product.
+    return not (ic and ic.start() < m.start())
+
+
+def seniority_of(title: str) -> str:
+    """Bucket a job title into intern / junior / mid / senior / lead.
+
+    Titles carrying no level word at all are treated as `mid`, which is how most
+    postings read ("Backend Engineer", "Full Stack Developer").
+    """
+    t = title or ""
+    for level, pattern in SENIORITY_PATTERNS:
+        if pattern.search(t):
+            if level == "senior" and _is_manager_role(t):
+                return "lead"          # "Senior Engineering Manager"
+            return level
+    return "lead" if _is_manager_role(t) else "mid"
+
+
+def seniority_matches(title: str, wanted: Optional[list[str]]) -> bool:
+    """True when the title's level is one the user asked for (empty list = any level)."""
+    if not wanted:
+        return True
+    return seniority_of(title) in {w.strip().lower() for w in wanted}
 
 
 # --------------------------------------------------------------------------
@@ -204,6 +275,7 @@ class GreenhouseBoardSource(ApiJobSource):
                 candidates = [
                     j for j in listing["jobs"]
                     if title_matches(j.get("title", ""), self.tokens)
+                    and seniority_matches(j.get("title", ""), self.s.seniority_levels)
                     and location_matches((j.get("location") or {}).get("name", ""),
                                          self.s.search_location, self.s.remote_only)
                 ][: self.s.max_jobs_per_company]
@@ -263,9 +335,10 @@ class LeverBoardSource(ApiJobSource):
                     loc = cats.get("location") or ""
                     if not title_matches(title, self.tokens):
                         continue
-                    if not location_matches(f"{loc} {cats.get('commitment','')} {p.get('workplaceType','')}",
-                                            self.s.search_location, self.s.remote_only,
-                                            is_remote=(p.get("workplaceType") == "remote") or None):
+                    if not seniority_matches(title, self.s.seniority_levels):
+                        continue
+                    if not location_matches(loc, self.s.search_location, self.s.remote_only,
+                                            workplace_type=p.get("workplaceType")):
                         continue
                     description = (p.get("descriptionPlain") or "") + "\n\n" + (p.get("additionalPlain") or "")
                     hosted = p.get("hostedUrl") or ""
@@ -312,10 +385,12 @@ class AshbyBoardSource(ApiJobSource):
                     title = (p.get("title") or "").strip()
                     if not title_matches(title, self.tokens):
                         continue
+                    if not seniority_matches(title, self.s.seniority_levels):
+                        continue
                     locs = " ".join([p.get("location") or ""] +
                                     [s.get("location", "") for s in (p.get("secondaryLocations") or [])])
-                    if not location_matches(f"{locs} {p.get('workplaceType','')}", self.s.search_location,
-                                            self.s.remote_only, is_remote=p.get("isRemote")):
+                    if not location_matches(locs, self.s.search_location, self.s.remote_only,
+                                            workplace_type=p.get("workplaceType")):
                         continue
                     hosted = p.get("jobUrl") or ""
                     job = JobPosting(
@@ -429,7 +504,8 @@ class RemoteOKSource(AggregatorSource):
                 log.warning("remoteok: unexpected feed shape")
                 return found
             rows = [d for d in data if isinstance(d, dict) and d.get("position")]
-            matched = [d for d in rows if title_matches(d.get("position", ""), self.tokens)]
+            matched = [d for d in rows if title_matches(d.get("position", ""), self.tokens)
+                       and seniority_matches(d.get("position", ""), self.s.seniority_levels)]
             log.info("remoteok: %d/%d listings match the title filter", len(matched), len(rows))
             for d in matched[: self.s.max_jobs_per_company]:
                 link = d.get("apply_url") or d.get("url") or ""
@@ -461,7 +537,8 @@ class HimalayasSource(AggregatorSource):
         async with await self._client() as client:
             data = await self._json(client, self.FEED.format(limit=self.s.aggregator_page_size))
             jobs = (data or {}).get("jobs") or []
-            matched = [d for d in jobs if title_matches(d.get("title", ""), self.tokens)]
+            matched = [d for d in jobs if title_matches(d.get("title", ""), self.tokens)
+                       and seniority_matches(d.get("title", ""), self.s.seniority_levels)]
             log.info("himalayas: %d/%d listings match the title filter", len(matched), len(jobs))
             for d in matched[: self.s.max_jobs_per_company]:
                 link = d.get("applicationLink") or d.get("guid") or ""

@@ -185,8 +185,10 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
         <label class="field"><span>Search terms, comma separated</span>
           <input id="scanQueries" placeholder="Full Stack Developer, Backend Engineer"></label>
         <label class="field"><span>Location</span><input id="scanLocation" placeholder="Remote"></label>
+        <label class="field"><span>Seniority (none ticked means any level)</span>
+          <div class="chips" id="scanLevels"></div></label>
         <label class="check"><input type="checkbox" id="scanRemote">
-          <span><b>Remote roles only</b><span class="dim">Drop any posting that is not remote, whatever the location says.</span></span></label>
+          <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site postings are dropped.</span></span></label>
         <div class="row">
           <button class="primary" id="btnScan">Scan now</button>
           <button class="danger" id="btnScanStop" disabled>Stop</button>
@@ -289,7 +291,9 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
         <label class="check"><input type="checkbox" id="cfgAuto">
           <span><b>Auto-submit</b><span class="dim">Bot clicks Submit. It still pauses on CAPTCHAs.</span></span></label>
         <label class="check"><input type="checkbox" id="cfgRemote">
-          <span><b>Remote roles only</b><span class="dim">Drop postings that do not look remote.</span></span></label>
+          <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site are dropped.</span></span></label>
+        <label class="field"><span>Default seniority (none ticked means any level)</span>
+          <div class="chips" id="cfgLevels"></div></label>
         <label class="check"><input type="checkbox" id="cfgFollow">
           <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box ticked.</span></span></label>
         <label class="check"><input type="checkbox" id="cfgHeadless">
@@ -436,6 +440,12 @@ async function startRun(auto){
 }
 
 /* ---------- scan ---------- */
+function renderLevels(){
+  const known = CONFIG.known_seniority || ['intern','junior','mid','senior','lead'];
+  const on = new Set(CONFIG.seniority_levels || []);
+  $('scanLevels').innerHTML = known.map(l => `<label class="chip">
+    <input type="checkbox" value="${esc(l)}" ${on.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
+}
 function renderSources(){
   const known = CONFIG.known_sources || [];
   const on = new Set(CONFIG.sources || []);
@@ -449,7 +459,8 @@ $('btnScan').onclick = async () => {
   try{
     await call('/admin/discover', {method:'POST', body: JSON.stringify(
       {sources, queries: queries.length ? queries : null, location: $('scanLocation').value,
-       remote_only: $('scanRemote').checked})});
+       remote_only: $('scanRemote').checked,
+       seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)})});
     toast('Scanning ' + sources.join(', '));
     FOUND = []; SELECTED.clear(); renderFound();
   } catch(e){ toast(e.message, true); }
@@ -632,6 +643,11 @@ async function loadSettings(){
   $('scanLocation').value = CONFIG.search_location || '';
   $('scanRemote').checked = !!CONFIG.remote_only;
   renderSources();
+  renderLevels();
+  const knownL = CONFIG.known_seniority || [];
+  const onL = new Set(CONFIG.seniority_levels || []);
+  $('cfgLevels').innerHTML = knownL.map(l => `<label class="chip">
+    <input type="checkbox" value="${esc(l)}" ${onL.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
   $('runProvider').value = CONFIG.llm_provider;
   await Promise.all([loadModels(), loadRunModels()]);
   const g = CONFIG.has_gemini_key, n = CONFIG.has_nvidia_key;
@@ -683,6 +699,7 @@ $('btnSaveMatch').onclick = async () => {
       match_threshold:+$('cfgThreshold').value, max_applications_per_run:+$('cfgMaxApps').value,
       max_jobs_per_company:+$('cfgMaxCompany').value, auto_submit:$('cfgAuto').checked,
       remote_only:$('cfgRemote').checked, follow_companies:$('cfgFollow').checked,
+      seniority_levels:[...document.querySelectorAll('#cfgLevels input:checked')].map(i => i.value),
       headless:$('cfgHeadless').checked})});
     toast('Settings saved');
   } catch(e){ toast(e.message, true); }

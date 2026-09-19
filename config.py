@@ -67,7 +67,9 @@ class Settings(BaseSettings):
     max_applications_per_run: int = 10
     url_list_file: Path = BASE_DIR / "jobs.txt"
     follow_companies: bool = False
-    remote_only: bool = False          # keep only postings that look remote
+    remote_only: bool = False          # keep only postings that are genuinely remote (not hybrid)
+    #: intern | junior | mid | senior | lead. Empty means every level.
+    seniority_levels: Annotated[list[str], NoDecode] = []
 
     # ---- Discovery (public board APIs + aggregators) ----
     company_file: Path = BASE_DIR / "companies.json"
@@ -109,7 +111,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     admin_token: str = "change-me"
 
-    @field_validator("sources", "search_queries", mode="before")
+    @field_validator("sources", "search_queries", "seniority_levels", mode="before")
     @classmethod
     def _csv(cls, value: Any) -> Any:
         return _split_csv(value)

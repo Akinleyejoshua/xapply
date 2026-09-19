@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from config import Settings
 from config import settings as default_settings
 from database import STATUSES, Database
+from discovery import SENIORITY_LEVELS
 from models import JobPosting
 
 log = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class ConfigPatch(BaseModel):
     search_queries: Optional[list[str]] = None
     search_location: Optional[str] = None
     remote_only: Optional[bool] = None
+    seniority_levels: Optional[list[Literal["intern", "junior", "mid", "senior", "lead"]]] = None
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
     auto_submit: Optional[bool] = None
     headless: Optional[bool] = None
@@ -101,6 +103,7 @@ class DiscoverRequest(BaseModel):
     queries: Optional[list[str]] = None
     location: Optional[str] = None
     remote_only: Optional[bool] = None
+    seniority_levels: Optional[list[str]] = None
 
 
 class RunRequest(BaseModel):
@@ -342,6 +345,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "search_queries": settings.search_queries,
             "search_location": settings.search_location,
             "remote_only": settings.remote_only,
+            "seniority_levels": settings.seniority_levels,
+            "known_seniority": list(SENIORITY_LEVELS),
             "match_threshold": settings.match_threshold,
             "auto_submit": settings.auto_submit,
             "headless": settings.headless,
@@ -462,14 +467,17 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             settings.search_location = body.location
         if body.remote_only is not None:
             settings.remote_only = body.remote_only
+        if body.seniority_levels is not None:
+            settings.seniority_levels = body.seniority_levels
 
         async def _go() -> None:
             from browser_bot import HumanGate
             from job_search import LazyBrowser, build_sources
 
-            scope = "remote roles only" if settings.remote_only else f"location {settings.search_location!r}"
+            scope = "remote only" if settings.remote_only else f"location {settings.search_location!r}"
+            levels = ", ".join(settings.seniority_levels) if settings.seniority_levels else "any level"
             note(f"scanning {', '.join(settings.sources)} for "
-                 f"{', '.join(settings.search_queries)} ({scope})")
+                 f"{', '.join(settings.search_queries)} ({scope}, {levels})")
             gate = app.state.gate or HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
             app.state.gate = gate
             # LazyBrowser only opens a real window if a source actually asks for a page,

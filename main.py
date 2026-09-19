@@ -98,6 +98,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         settings.headless = True
     if args.remote_only:
         settings.remote_only = True
+    if args.seniority:
+        settings.seniority_levels = [x.strip().lower() for x in args.seniority.split(",") if x.strip()]
     urls = None
     if args.url:
         urls = list(args.url)
@@ -109,7 +111,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("\n" + "=" * 72)
     print(f"  XApply | mode: {mode}")
     print(f"  Threshold: {settings.match_threshold}   Max applications: {args.limit or settings.max_applications_per_run}")
-    print(f"  Sources: {', '.join(settings.sources)}")
+    levels = ", ".join(settings.seniority_levels) if settings.seniority_levels else "any level"
+    print(f"  Sources: {', '.join(settings.sources)}   Levels: {levels}"
+          + ("   Remote only" if settings.remote_only else ""))
     print(f"  LLM: {settings.llm_provider} / {settings.active_model}")
     print("=" * 72 + "\n")
 
@@ -153,6 +157,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
         settings.search_location = args.location
     if args.remote_only:
         settings.remote_only = True
+    if args.seniority:
+        settings.seniority_levels = [x.strip().lower() for x in args.seniority.split(",") if x.strip()]
     db = _db()
 
     async def go() -> list:
@@ -398,7 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--limit", type=int, help="max applications this run")
     r.add_argument("--threshold", type=int, help="override MATCH_THRESHOLD")
     r.add_argument("--headless", action="store_true", help="run headless (not recommended)")
-    r.add_argument("--remote-only", action="store_true", help="apply only to postings that look remote")
+    r.add_argument("--remote-only", action="store_true", help="apply only to genuinely remote postings")
+    r.add_argument("--seniority", help="comma separated: intern,junior,mid,senior,lead")
     r.add_argument("--url", action="append", help="apply to this URL only (repeatable)")
     r.add_argument("--urls-file", help="file of URLs, one per line")
     r.set_defaults(func=cmd_run)
@@ -414,7 +421,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--sources", help="override SOURCES, e.g. greenhouse,ashby,lever")
     d.add_argument("--queries", help="override SEARCH_QUERIES, comma separated")
     d.add_argument("--location", help="override SEARCH_LOCATION")
-    d.add_argument("--remote-only", action="store_true", help="keep only postings that look remote")
+    d.add_argument("--remote-only", action="store_true", help="keep only genuinely remote postings")
+    d.add_argument("--seniority", help="comma separated: intern,junior,mid,senior,lead")
     d.add_argument("--save", help="write the discovered URLs to this file")
     d.add_argument("--json", action="store_true")
     d.set_defaults(func=cmd_discover)
