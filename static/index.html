@@ -930,9 +930,15 @@ class ModelPicker {
   constructor(inputId, listId, providerId, onPick){
     this.input = $(inputId); this.list = $(listId);
     this.providerId = providerId; this.onPick = onPick;
-    this.showAll = false; this.active = -1; this.items = [];
-    this.input.addEventListener('focus', () => { this.input.dataset.editing = '1'; this.open(); });
-    this.input.addEventListener('input', () => this.open());
+    this.showAll = false; this.active = -1; this.items = []; this.typed = false;
+    this.input.addEventListener('focus', () => {
+      this.input.dataset.editing = '1';
+      // Opening the list should show everything, not filter by the model already chosen.
+      this.typed = false;
+      this.input.select();
+      this.open();
+    });
+    this.input.addEventListener('input', () => { this.typed = true; this.open(); });
     this.input.addEventListener('keydown', e => this.onKey(e));
     this.input.addEventListener('blur', () => setTimeout(() => {
       delete this.input.dataset.editing; this.close(); this.commit();
@@ -944,10 +950,13 @@ class ModelPicker {
     try { data = await modelsFor(this.provider); }
     catch(e){ this.list.innerHTML = `<div class="combo-empty">${esc(e.message)}</div>`;
               this.list.classList.add('open'); return; }
-    const q = this.input.value.trim().toLowerCase();
+    const q = this.typed ? this.input.value.trim().toLowerCase() : '';
     const pool = this.showAll ? data.all : data.chat;
-    this.items = pool.filter(m => !q || m.toLowerCase().includes(q));
     const current = this.input.value.trim();
+    this.items = pool.filter(m => !q || m.toLowerCase().includes(q));
+    if(!q && current && this.items.includes(current)){
+      this.items = [current, ...this.items.filter(m => m !== current)];
+    }
     const hidden = data.all.length - data.chat.length;
     const head = `<div class="combo-head">
       <span>${this.items.length} of ${pool.length}</span>
