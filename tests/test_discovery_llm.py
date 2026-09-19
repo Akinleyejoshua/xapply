@@ -549,3 +549,95 @@ def test_dashboard_shows_scan_diagnostics() -> None:
     html = (ROOT / "static" / "index.html").read_text()
     for marker in ('id="scanDiag"', "function renderScanDiag()", "/api/scan-stats", "LAST_KIND"):
         assert marker in html, marker
+
+
+# ---- results as they arrive, and a scan you stop ---------------------------
+#
+# Regression: a scan over thirty company boards takes minutes, and stopping it threw
+# away everything it had gathered. Results are now published board by board.
+
+
+@pytest.mark.asyncio
+async def test_sources_report_each_board_as_it_finishes(monkeypatch, settings, db) -> None:
+    settings.search_queries = ["Data Analytics"]
+    batches: list[tuple[str, int]] = []
+
+    def on_batch(name, jobs):
+        batches.append((name, len(jobs)))
+
+    # The stub matches on a URL fragment, and the list path is a prefix of the detail
+    # path, so the detail routes have to be registered first.
+    routes = {}
+    for token, ids in (("acme", [1, 2]), ("beta", [3])):
+        for i in ids:
+            routes[f"/boards/{token}/jobs/{i}"] = {
+                "id": i, "title": "Data Analyst", "company_name": token.title(),
+                "location": {"name": "Remote"}, "content": "Own reporting. " * 30,
+                "absolute_url": f"https://job-boards.greenhouse.io/{token}/jobs/{i}"}
+    for token, ids in (("acme", [1, 2]), ("beta", [3])):
+        routes[f"/boards/{token}/jobs"] = {"jobs": [
+            {"id": i, "title": "Data Analyst", "location": {"name": "Remote"},
+             "absolute_url": f"https://job-boards.greenhouse.io/{token}/jobs/{i}"} for i in ids]}
+
+    src = GreenhouseBoardSource(settings, db, None, tokens=["acme", "beta"])
+    src.on_batch = on_batch
+    patch_client(monkeypatch, src, routes)
+    jobs = await src.discover()
+
+    assert len(jobs) == 3
+    assert batches == [("greenhouse", 2), ("greenhouse", 1)], \
+        "each board must report as soon as it finishes, not all at the end"
+    assert sum(n for _, n in batches) == len(jobs)
+
+
+@pytest.mark.asyncio
+async def test_a_board_with_no_matches_reports_nothing(monkeypatch, settings, db) -> None:
+    settings.search_queries = ["Data Analytics"]
+    calls: list[int] = []
+    src = GreenhouseBoardSource(settings, db, None, tokens=["acme"])
+    src.on_batch = lambda name, jobs: calls.append(len(jobs))
+    patch_client(monkeypatch, src, {"/boards/acme/jobs": {"jobs": [
+        {"id": 1, "title": "Office Manager", "location": {"name": "Remote"},
+         "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"}]}})
+    assert await src.discover() == []
+    assert calls == [], "an empty board must not fire an empty batch"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_progress_callback_does_not_stop_the_scan(monkeypatch, settings, db) -> None:
+    settings.search_queries = ["Data Analytics"]
+    src = GreenhouseBoardSource(settings, db, None, tokens=["acme"])
+
+    def explode(name, jobs):
+        raise RuntimeError("the UI went away")
+
+    src.on_batch = explode
+    patch_client(monkeypatch, src, {
+        "/boards/acme/jobs/1": {"id": 1, "title": "Data Analyst", "company_name": "Acme",
+                                "location": {"name": "Remote"}, "content": "Own reporting. " * 30,
+                                "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"},
+        "/boards/acme/jobs": {"jobs": [{"id": 1, "title": "Data Analyst",
+                                        "location": {"name": "Remote"},
+                                        "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"}]}})
+    assert len(await src.discover()) == 1
+
+
+def test_api_publishes_partial_results_and_survives_a_stop() -> None:
+    src = (ROOT / "api.py").read_text()
+    go = src[src.index("async def _go() -> None:\n            from browser_bot import HumanGate"):]
+    go = go[:go.index("start(\"discover\"")]
+    assert "def publish()" in go
+    assert "src.on_batch = on_batch" in go
+    assert "except asyncio.CancelledError:" in go
+    assert "keeping the" in go, "a stopped scan must say what it kept"
+    # the counters shown must include the source still running
+    assert "def live_totals()" in go
+
+
+def test_dashboard_refreshes_while_a_scan_runs() -> None:
+    html = (ROOT / "static" / "index.html").read_text()
+    poll = html[html.index("async function poll()"):]
+    poll = poll[:poll.index("async function release()")]
+    assert "st.discovered !== FOUND.length" in poll, "results must refresh as the count moves"
+    assert "found so far" in html
+    assert "still scanning" in html

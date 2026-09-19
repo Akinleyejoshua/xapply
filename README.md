@@ -411,6 +411,22 @@ the reason, and the agent moves to the next one.
 
 ---
 
+## Stopping a scan
+
+A scan across thirty company boards takes minutes. Results are published as each board
+finishes, so the table fills while it runs and the counters move with it. Pressing **Stop**
+keeps everything found up to that point rather than discarding it, and the activity log records
+what was kept:
+
+```
+scan stopped early; keeping the 20 posting(s) found so far (1713 examined before the stop)
+```
+
+The diagnostics strip shows *still scanning* while a scan is in progress, so a partial count is
+never mistaken for a final one.
+
+---
+
 ## When a scan finds nothing
 
 Every scan counts what it examined and what each filter removed, so an empty result explains
@@ -662,6 +678,7 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
 | A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |
+| Stopping a scan lost the results | Fixed: results are published board by board and survive a stop |
 | `make: *** [serve] Terminated: 15` | Something sent the server SIGTERM. Usually a `pkill` matching `main.py serve`, or a second copy starting on the same port. `make serve PORT=8001` runs another one safely |
 | Port already in use | The dashboard now says so and suggests the next port instead of raising |
 | A setting will not stick | Check `python main.py settings`. Only the keys it lists are saved; the rest come from `.env` |
