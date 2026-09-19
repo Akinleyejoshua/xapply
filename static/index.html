@@ -1236,7 +1236,7 @@ async function poll(){
   $('btnRun').disabled = $('btnScan').disabled = running;
   $('btnStop').disabled = $('btnScanStop').disabled = !running;
 
-  renderLog(st.log || []);
+  renderLog(st.activity || st.log || []);
 
   // A configuration problem that stopped a run outranks the human-input banner.
   const bar = $('gatebar');
@@ -1917,7 +1917,10 @@ function logClass(entry){
 
 function renderLog(lines){
   // Older servers sent plain strings; accept both so a stale tab still shows something.
-  const rows = lines.map(l => typeof l === 'string' ? {at: '', kind: 'info', text: l} : l);
+  const rows = lines.map(l => typeof l === 'string'
+    ? {at: (l.match(/^(\d\d:\d\d:\d\d)\s+/) || ['', ''])[1], kind: 'info',
+       text: l.replace(/^\d\d:\d\d:\d\d\s+/, '')}
+    : (l && typeof l === 'object' ? l : {at: '', kind: 'info', text: String(l)}));
   const key = rows.length + '|' + (rows.length ? rows[rows.length - 1].text : '');
   if(key === LAST_LOG) return;
   LAST_LOG = key;

@@ -1141,7 +1141,12 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "provider": settings.llm_provider,
             "model": settings.active_model,
             "gate": g.status() if g else {"paused": False, "reason": "", "paused_since": None},
-            "log": app.state.log[-240:],
+            # Two shapes on purpose. `activity` is the structured feed the dashboard
+            # colours. `log` stays the plain list of strings it has always been, so a
+            # tab still running the previous script shows text rather than a column of
+            # [object Object].
+            "activity": app.state.log[-240:],
+            "log": [f"{row['at']}  {row['text']}" for row in app.state.log[-240:]],
             "discovered": len(app.state.discovered),
             "blocker": app.state.blocker,
         }

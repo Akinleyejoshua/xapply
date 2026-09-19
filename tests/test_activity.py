@@ -122,3 +122,23 @@ def test_filling_a_field_is_logged_with_where_the_answer_came_from() -> None:
     source = Path(browser_bot.__file__).read_text(encoding="utf-8")
 
     assert 'log.info("Filled %s: %s  [%s]"' in source
+
+
+def test_a_tab_running_the_previous_script_still_shows_text(client: TestClient) -> None:
+    """The feed became a list of objects, and a tab that had not been refreshed rendered
+    a column of [object Object]. Both shapes are sent so that cannot happen again."""
+    logging.getLogger("pipeline").info("Filled Email: you@example.com")
+
+    payload = client.get("/api/run").json()
+
+    assert all(isinstance(line, str) for line in payload["log"])
+    assert any("Filled Email" in line for line in payload["log"])
+    assert all(isinstance(row, dict) for row in payload["activity"])
+
+
+def test_the_plain_lines_still_carry_the_time(client: TestClient) -> None:
+    logging.getLogger("pipeline").info("something happened")
+
+    line = [x for x in client.get("/api/run").json()["log"] if "something happened" in x][0]
+
+    assert line[:8].count(":") == 2
