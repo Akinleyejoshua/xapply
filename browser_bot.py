@@ -481,9 +481,38 @@ class StealthBrowser:
             await asyncio.sleep(random.uniform(0.05, 0.25))
         await self.sleep(0.5, 0.2)
 
+    #: How far from the middle of the window an element may sit before it is worth
+    #: scrolling again. Anything inside this band is already comfortably readable.
+    SCROLL_DEAD_ZONE_PX = 200
+
+    async def bring_into_view(self, locator: Locator) -> None:
+        """Put an element in the middle of the window, once, and then leave it alone.
+
+        `scroll_into_view_if_needed` moves by the smallest amount that makes an element
+        visible, so an element sitting under a sticky header or footer is nudged again
+        by every later call. With several calls per field, that reads as the page
+        twitching up and down while you are trying to look at it.
+        """
+        try:
+            await locator.evaluate(
+                """(el, dead) => {
+                    const r = el.getBoundingClientRect();
+                    const middle = window.innerHeight / 2;
+                    const centre = r.top + r.height / 2;
+                    if (Math.abs(centre - middle) <= dead) return;   // close enough already
+                    el.scrollIntoView({block: 'center', inline: 'nearest'});
+                }""",
+                self.SCROLL_DEAD_ZONE_PX,
+            )
+        except Exception:
+            try:
+                await locator.scroll_into_view_if_needed()
+            except Exception:
+                pass
+
     async def human_click(self, locator: Locator, timeout: Optional[int] = None) -> None:
         timeout = timeout or self.s.action_timeout_ms
-        await locator.scroll_into_view_if_needed(timeout=timeout)
+        await self.bring_into_view(locator)
         await self.sleep(0.35, 0.12)
         try:
             await locator.hover(timeout=min(timeout, 3000))
@@ -500,7 +529,7 @@ class StealthBrowser:
 
     async def human_type(self, locator: Locator, text: str, clear: bool = True) -> None:
         """Enter text, keystroke by keystroke for ordinary fields and at once for long prose."""
-        await locator.scroll_into_view_if_needed()
+        await self.bring_into_view(locator)
         await locator.click()
         if clear:
             await locator.fill("")
@@ -628,6 +657,13 @@ class FormField:
     has_error: bool = False
     error_text: str = ""
     hidden_select: bool = False
+    #: Where this field sits on the page. Fields used to be filled in discovery order,
+    #: which put every radio group last, so the page jumped back to the top halfway
+    #: through and then worked down again. Filling in page order walks down once.
+    order: int = 0
+    #: False for a dropdown you can only click, such as a button that opens a list.
+    #: Typing into one throws, which is why they were skipped rather than filled.
+    typeable: bool = True
 
     @property
     def option_labels(self) -> list[str]:
@@ -700,8 +736,10 @@ DISCOVER_JS = r"""
     }
     return '';
   };
-  let idx = 0; const out = []; const radioGroups = new Map();
+  let idx = 0; let order = 0; const out = []; const radioGroups = new Map();
+  const placeholderish = t => /^(select|choose|please|pick|-+|\s*)$/i.test((t || '').split(' ')[0]) && (t || '').length < 30;
   root.querySelectorAll('input, textarea, select').forEach(el => {
+    const myOrder = order++;
     let type = (el.getAttribute('type') || '').toLowerCase();
     if (el.tagName === 'SELECT') type = 'select';
     else if (el.tagName === 'TEXTAREA') type = 'textarea';
@@ -723,7 +761,7 @@ DISCOVER_JS = r"""
       if (!radioGroups.has(key)) {
         radioGroups.set(key, { kind: 'radio', label: groupLabelOf(el), idx: '', name: el.name || '', dom_id: '',
                                required: required, options: [], current_value: '', has_error: false, error_text: '',
-                               hidden_select: false });
+                               hidden_select: false, order: myOrder, typeable: false });
       }
       const g = radioGroups.get(key);
       const optLabel = clean((el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.value);
@@ -735,11 +773,12 @@ DISCOVER_JS = r"""
     }
     const d = { kind: type, label: labelOf(el), idx: id, name: el.name || '', dom_id: el.id || '',
                 required: required, options: [], current_value: '', has_error: false, error_text: '',
-                hidden_select: hiddenSelect };
+                hidden_select: hiddenSelect, order: myOrder, typeable: true };
     if (type === 'select') {
       d.options = [...el.options].map(o => ({ label: clean(o.text), value: o.value, idx: '', dom_id: '' }));
       const cur = el.selectedIndex >= 0 ? clean(el.options[el.selectedIndex].text) : '';
-      d.current_value = /^(select|choose|please|-+|\s*)$/i.test(cur.split(' ')[0]) && cur.length < 30 ? '' : cur;
+      d.current_value = placeholderish(cur) ? '' : cur;
+      d.typeable = false;
     } else if (type === 'checkbox') {
       d.current_value = el.checked ? 'checked' : '';
     } else if (type === 'file') {
@@ -752,6 +791,32 @@ DISCOVER_JS = r"""
     const err = errorOf(el); if (err) { d.has_error = true; d.error_text = err; }
     out.push(d);
   });
+
+  // Dropdowns built out of a button or a div, with no native control behind them.
+  // Nothing above finds these, because they are not an input, a textarea or a select,
+  // so on forms that use them the bot filled everything else and left them empty.
+  root.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"]').forEach(el => {
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;  // already captured
+    if (el.querySelector('input:not([type=hidden]), textarea, select')) return;  // a wrapper, not the control
+    if (el.hasAttribute('data-xapply-idx')) return;
+    if (!visible(el)) return;
+    if (el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled')) return;
+    const id = 'x' + (idx++);
+    el.setAttribute('data-xapply-idx', id);
+    const shown = clean(el.innerText);
+    const active = el.getAttribute('aria-activedescendant');
+    const activeText = active ? clean((document.getElementById(active) || {}).innerText || '') : '';
+    const d = { kind: 'combobox', label: labelOf(el), idx: id, name: el.getAttribute('name') || '',
+                dom_id: el.id || '', required: el.getAttribute('aria-required') === 'true',
+                options: [], current_value: '', has_error: false, error_text: '',
+                hidden_select: false, order: order++, typeable: false };
+    const cur = activeText || shown;
+    d.current_value = placeholderish(cur) ? '' : cur;
+    const err = errorOf(el); if (err) { d.has_error = true; d.error_text = err; }
+    out.push(d);
+  });
+
   return out.concat([...radioGroups.values()]);
 }
 """
@@ -767,7 +832,10 @@ class FormFiller:
 
     async def discover(self, scope: Locator) -> list[FormField]:
         raw = await scope.evaluate(DISCOVER_JS)
-        fields = [FormField(**d) for d in raw]
+        # Sorted by position, not by discovery order. Radio groups are collected as they
+        # are met but emitted last, so filling in discovery order sent the page back to
+        # the top partway through and then down again.
+        fields = sorted((FormField(**d) for d in raw), key=lambda f: f.order)
         log.debug("Discovered %d fields: %s", len(fields), [(f.kind, f.label[:40]) for f in fields])
         return fields
 
@@ -853,7 +921,7 @@ class FormFiller:
                 await loc.select_option(value=opt["value"], force=True)
                 await loc.dispatch_event("change")
             else:
-                await loc.scroll_into_view_if_needed()
+                await self.b.bring_into_view(loc)
                 await loc.select_option(value=opt["value"])
             await self.b.sleep(0.5, 0.15)
             return chosen
@@ -909,23 +977,66 @@ class FormFiller:
         return {"label": f.label, "kind": "checkbox", "value": "checked" if want else "unchecked",
                 "source": source, "confidence": 1.0, "ok": True}
 
+    #: Where an opened dropdown puts its choices, whatever it is built from.
+    OPTION_SELECTOR = ('[role="option"], [role="listbox"] li, [role="menuitem"], '
+                       '[role="menuitemradio"], [class*="option" i][id*="option" i], '
+                       '.basic-typeahead__selectable')
+
+    async def _open_menu(self, scope: Locator, f: FormField) -> Locator:
+        """Click a dropdown open and return a locator for whatever it revealed."""
+        loc = self._loc(scope, f.idx)
+        await self.b.bring_into_view(loc)
+        await loc.click()
+        await asyncio.sleep(0.6)
+        return scope.page.locator(self.OPTION_SELECTOR)
+
+    async def _visible_option_texts(self, options: Locator, cap: int = 200) -> list[str]:
+        out: list[str] = []
+        for i in range(min(await options.count(), cap)):
+            o = options.nth(i)
+            try:
+                if not await o.is_visible():
+                    continue
+                text = (await o.inner_text()).strip()
+            except Exception:
+                continue
+            if text:
+                out.append(re.sub(r"\s+", " ", text))
+        return out
+
+    async def _pick_from_menu(self, options: Locator, target: str) -> Optional[str]:
+        """Click the choice closest to `target`, or None when nothing is close enough."""
+        best: Optional[Locator] = None
+        best_score = 0.0
+        best_text = ""
+        for i in range(min(await options.count(), 200)):
+            o = options.nth(i)
+            try:
+                if not await o.is_visible():
+                    continue
+                text = (await o.inner_text()).strip()
+            except Exception:
+                continue
+            if not text:
+                continue
+            if text.lower() == target.lower():
+                best, best_score, best_text = o, 1.0, text
+                break
+            score = difflib.SequenceMatcher(None, text.lower(), target.lower()).ratio()
+            if score > best_score:
+                best, best_score, best_text = o, score, text
+        if best is None or best_score < 0.4:
+            return None
+        await best.click()
+        await self.b.sleep(0.4, 0.1)
+        return best_text
+
     async def _combobox_options(self, scope: Locator, f: FormField) -> list[dict[str, str]]:
         """Open a custom (React) select, read its options, close it again."""
-        loc = self._loc(scope, f.idx)
         try:
-            await loc.scroll_into_view_if_needed()
-            await loc.click()
-            await asyncio.sleep(0.6)
+            opts = await self._open_menu(scope, f)
             page = scope.page
-            opts = page.locator('[role="option"], [role="listbox"] li, [class*="option" i][id*="option" i]')
-            labels: list[str] = []
-            n = min(await opts.count(), 200)
-            for i in range(n):
-                o = opts.nth(i)
-                if await o.is_visible():
-                    t = (await o.inner_text()).strip()
-                    if t:
-                        labels.append(re.sub(r"\s+", " ", t))
+            labels = await self._visible_option_texts(opts)
             await page.keyboard.press("Escape")
             await asyncio.sleep(0.2)
             return [{"label": l, "value": l, "idx": "", "dom_id": ""} for l in labels]
@@ -940,32 +1051,36 @@ class FormFiller:
         if f.options and not target:
             # Typeahead style (e.g. location): type the raw value and pick the first suggestion.
             target = value
-        await loc.scroll_into_view_if_needed()
+
+        if not f.typeable:
+            # A dropdown made of a button or a div. There is nothing to type into, so it
+            # is opened and the closest choice is clicked. Typing into one of these threw,
+            # which is why these fields used to be left empty.
+            try:
+                options = await self._open_menu(scope, f)
+                chosen = await self._pick_from_menu(options, target)
+                if chosen:
+                    return chosen
+                log.info("No option in %r resembles %r (saw: %s)", f.label, target,
+                         (await self._visible_option_texts(options, 8)))
+                await page.keyboard.press("Escape")
+            except Exception as exc:
+                log.info("Could not work the dropdown %r: %s", f.label, exc)
+                try:
+                    await page.keyboard.press("Escape")
+                except Exception:
+                    pass
+            return None
+
+        await self.b.bring_into_view(loc)
         await loc.click()
         await loc.fill("")
         await loc.press_sequentially(target[:60], delay=random.uniform(40, 100))
         await asyncio.sleep(0.9)
-        option = page.locator('[role="option"], [role="listbox"] li, .basic-typeahead__selectable')
         try:
-            n = min(await option.count(), 50)
-            best: Optional[Locator] = None
-            best_score = 0.0
-            for i in range(n):
-                o = option.nth(i)
-                if not await o.is_visible():
-                    continue
-                t = (await o.inner_text()).strip()
-                score = difflib.SequenceMatcher(None, t.lower(), target.lower()).ratio()
-                if t.lower() == target.lower():
-                    best, best_score = o, 1.0
-                    break
-                if score > best_score:
-                    best, best_score = o, score
-            if best is not None and best_score >= 0.4:
-                chosen_text = (await best.inner_text()).strip()
-                await best.click()
-                await self.b.sleep(0.4, 0.1)
-                return chosen_text
+            chosen = await self._pick_from_menu(page.locator(self.OPTION_SELECTOR), target)
+            if chosen:
+                return chosen
         except PlaywrightTimeout:
             pass
         # keyboard fallback
