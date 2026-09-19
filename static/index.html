@@ -535,6 +535,14 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <div class="chips" id="scanLevels"></div></label>
             <label class="check"><input type="checkbox" id="scanRemote">
               <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site postings are dropped.</span></span></label>
+            <label class="field" style="margin-top:4px">
+              <span>Match sensitivity <span class="dim" id="thrLabel"></span></span>
+              <input type="range" id="scanThreshold" min="0.15" max="0.9" step="0.05"
+                     style="width:100%; padding:0; box-shadow:none; border:0; background:none; accent-color:var(--accent)">
+              <span class="dim" style="font-size:12px; display:block; margin-top:5px">
+                Lower casts a wider net. Every posting is still scored properly by the model
+                afterwards, so a loose net costs an API call, not a bad application.</span>
+            </label>
             <div class="row" style="margin-top:6px">
               <button class="primary" id="btnScan">Scan now</button>
               <button class="danger ghost" id="btnScanStop" disabled>Stop</button>
@@ -577,7 +585,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
           <div id="scanDiag"></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>ATS</th><th>JD</th></tr></thead>
+              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>Match</th><th>ATS</th><th>JD</th></tr></thead>
               <tbody id="foundRows"></tbody>
             </table>
           </div>
@@ -674,13 +682,25 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
 
           <div class="card">
             <div class="card-head"><h2>Company boards</h2></div>
-            <p class="card-note">Tokens for the public Greenhouse, Lever and Ashby APIs. The token is the
-              path segment in the board URL, so <span class="mono">jobs.ashbyhq.com/linear/…</span> is
-              <span class="mono">linear</span>.</p>
-            <div class="row" style="margin-bottom:8px">
-              <select id="newAts" style="width:145px"><option>greenhouse</option><option>lever</option><option>ashby</option></select>
-              <input id="newToken" placeholder="company token" style="flex:1; min-width:140px">
-              <button id="btnAddCompany">Add</button>
+            <p class="card-note">Paste any job link you found in your browser and the board behind it is
+              identified and verified automatically. A board link, or a bare company token, works too.</p>
+            <div class="row" style="margin-bottom:9px">
+              <input id="boardInput" style="flex:1; min-width:200px"
+                placeholder="https://job-boards.greenhouse.io/gitlab/jobs/8556658002">
+              <button id="btnCheckBoard">Check</button>
+              <button class="primary" id="btnAddBoard">Add</button>
+            </div>
+            <div id="boardResult" style="margin-bottom:12px"></div>
+            <details style="margin-bottom:12px">
+              <summary class="dim" style="cursor:pointer; font-size:12.5px">Add by token instead</summary>
+              <div class="row" style="margin-top:9px">
+                <select id="newAts" style="width:140px"><option>greenhouse</option><option>lever</option><option>ashby</option></select>
+                <input id="newToken" placeholder="company token" style="flex:1; min-width:130px">
+                <button id="btnAddCompany">Add</button>
+              </div>
+            </details>
+            <div class="row" style="margin-bottom:10px">
+              <button class="sm ghost" id="btnProbeBoards">Count open roles on every board</button>
             </div>
             <div id="companyList"></div>
           </div>
@@ -792,6 +812,9 @@ function renderConfig(){
   setVal('scanQueries', (CONFIG.search_queries || []).join(', '));
   setVal('scanLocation', CONFIG.search_location || '');
   setChecked('scanRemote', CONFIG.remote_only);
+  const thr = CONFIG.title_match_threshold ?? 0.45;
+  setVal('scanThreshold', thr);
+  $('thrLabel').textContent = thresholdLabel(thr);
   // --- dashboard ---
   setVal('runLimit', CONFIG.max_applications_per_run);
   setVal('runThreshold', CONFIG.match_threshold);
@@ -1010,9 +1033,12 @@ function renderFound(){
         onchange="toggleSel(this)"></td>
       <td>${esc(j.company)}</td>
       <td>${esc(j.title)}<br><a class="mono dim" href="${esc(u)}" target="_blank">${esc(u.slice(0,70))}</a></td>
-      <td class="dim">${esc(j.location)}</td><td class="dim">${esc(j.ats)}</td>
+      <td class="dim">${esc(j.location)}</td>
+      <td class="score" title="How closely the title matched your search terms">${
+        j.relevance ? j.relevance.toFixed(2) : '-'}</td>
+      <td class="dim">${esc(j.ats)}</td>
       <td class="dim mono">${j.description ? (j.description.length + 'c') : '-'}</td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
+  }).join('') || '<tr><td colspan="7" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
   updateSelUi();
 }
 function toggleSel(cb){ cb.checked ? SELECTED.add(cb.dataset.url) : SELECTED.delete(cb.dataset.url); updateSelUi(); }
@@ -1166,6 +1192,15 @@ $('srcChips').addEventListener('change', () => saveConfig(
 $('scanLevels').addEventListener('change', () => saveConfig(
   {seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true));
 $('scanRemote').onchange = () => saveConfig({remote_only: $('scanRemote').checked}, true);
+function thresholdLabel(v){
+  return `${v.toFixed(2)} \u2014 ${v <= 0.3 ? 'very wide' : v <= 0.5 ? 'balanced'
+                                  : v <= 0.7 ? 'strict' : 'very strict'}`;
+}
+$('scanThreshold').oninput = () => {
+  $('thrLabel').textContent = thresholdLabel(parseFloat($('scanThreshold').value));
+};
+$('scanThreshold').onchange = () =>
+  saveConfig({title_match_threshold: parseFloat($('scanThreshold').value)}, true);
 $('btnAddCountry').onclick = addCountry;
 $('countryPick').ondblclick = addCountry;
 $('btnClearCountries').onclick = () => saveConfig({countries: []}, true);
@@ -1209,11 +1244,67 @@ for(const [id, key] of [['cfgAuto','auto_submit'], ['cfgRemote','remote_only'],
   };
 }
 
+/* Company boards: identify whatever the user pastes, then add it. */
+let BOARD_COUNTS = {};
+function renderBoardResult(r){
+  const el = $('boardResult');
+  if(!r){ el.innerHTML = ''; return; }
+  if(!r.ok){
+    el.innerHTML = `<div class="diag"><div class="tips">${esc(r.detail || 'Not recognised')}</div></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="counts" style="display:flex; gap:8px; flex-wrap:wrap">
+    <span class="count">${esc(r.ats)}</span>
+    <span class="count">token <b>${esc(r.token)}</b></span>
+    <span class="count"><b>${r.open_roles}</b> open roles</span>
+    ${r.already_added ? '<span class="count">already added</span>' : ''}</div>`;
+}
+async function checkBoard(){
+  const text = $('boardInput').value.trim();
+  if(!text) return null;
+  $('boardResult').innerHTML = '<span class="dim">Checking…</span>';
+  try{
+    const r = await call('/api/companies/resolve', {method:'POST', body: JSON.stringify({text})});
+    renderBoardResult(r);
+    return r;
+  } catch(e){ renderBoardResult({ok:false, detail:e.message}); return null; }
+}
+async function addBoard(){
+  const text = $('boardInput').value.trim();
+  if(!text) return toast('Paste a job link, a board link or a company token', true);
+  try{
+    const r = await call('/api/companies/add-from-url', {method:'POST', body: JSON.stringify({text})});
+    renderBoardResult({...r.added, already_added: true});
+    $('boardInput').value = '';
+    toast(`Added ${r.added.ats}/${r.added.token} — ${r.added.open_roles} open roles`);
+    await loadCompanies();
+  } catch(e){ renderBoardResult({ok:false, detail:e.message}); }
+}
+$('btnCheckBoard').onclick = checkBoard;
+$('btnAddBoard').onclick = addBoard;
+$('boardInput').addEventListener('keyup', e => { if(e.key === 'Enter') addBoard(); });
+$('btnProbeBoards').onclick = async () => {
+  const b = $('btnProbeBoards');
+  b.disabled = true; b.textContent = 'Counting…';
+  try{
+    const rows = await call('/api/companies/probe');
+    BOARD_COUNTS = Object.fromEntries(rows.map(r => [`${r.ats}:${r.token}`, r.ok ? r.open_roles : -1]));
+    await loadCompanies();
+  } catch(e){ toast(e.message, true); }
+  b.disabled = false; b.textContent = 'Count open roles on every board';
+};
+
 async function loadCompanies(){
   const c = await call('/api/companies');
   $('companyList').innerHTML = Object.entries(c).map(([ats, toks]) =>
-    `<div class="sec">${esc(ats)} (${toks.length})</div><div class="chips">${toks.map(t =>
-      `<span class="chip">${esc(t)}<button title="Remove" onclick="delCompany('${esc(ats)}','${esc(t)}')">×</button></span>`).join('')}</div>`).join('');
+    `<div class="sec">${esc(ats)} (${toks.length})</div><div class="chips">${toks.map(t => {
+      const n = BOARD_COUNTS[`${ats}:${t}`];
+      const tag = n === undefined ? ''
+        : n < 0 ? ' <span style="color:var(--err)">dead</span>'
+                : ` <span class="dim">${n}</span>`;
+      return `<span class="chip">${esc(t)}${tag}<button title="Remove"
+        onclick="delCompany('${esc(ats)}','${esc(t)}')">×</button></span>`;
+    }).join('')}</div>`).join('');
 }
 $('btnAddCompany').onclick = async () => {
   const token = $('newToken').value.trim();

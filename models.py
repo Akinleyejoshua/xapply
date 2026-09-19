@@ -60,6 +60,7 @@ class JobPosting:
     ats: str = UNKNOWN  # where we apply (linkedin | greenhouse | lever | ashby | unknown)
     apply_url: str = ""  # external application URL when the posting hands off to another ATS
     easy_apply: bool = False
+    relevance: float = 0.0   # 0-1, how well the title answered the search terms
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

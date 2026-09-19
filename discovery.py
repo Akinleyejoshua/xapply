@@ -39,6 +39,7 @@ import httpx
 
 from config import Settings
 from countries import ANYWHERE, COUNTRIES, country_matches
+from matching import best_relevance
 from database import Database
 from models import ASHBY, GREENHOUSE, LEVER, UNKNOWN, JobPosting, detect_ats, job_id_from_url
 
@@ -78,69 +79,34 @@ def strip_html(raw: str) -> str:
     return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
 
 
-def query_tokens(queries: Iterable[str]) -> list[set[str]]:
-    """['Python Developer'] -> [{'python', 'developer'}] for cheap title pre-filtering."""
-    out = []
-    for q in queries:
-        toks = {t for t in re.split(r"[^a-z0-9+#.]+", q.lower()) if len(t) > 1 and t not in STOPWORDS}
-        if toks:
-            out.append(toks)
-    return out
+def query_tokens(queries: Iterable[str]) -> list[str]:
+    """The raw search terms. Kept as a named step so sources read the same as before."""
+    return [q.strip() for q in queries if q and q.strip()]
 
 
-#: A single shared word is far too loose: "Machine Learning Engineer" would match every
-#: posting containing "Engineer". Require a majority of a query's words instead.
-TITLE_MATCH_RATIO = 0.6
-
-#: Shortest prefix two words must share to count as the same idea. Five characters keeps
-#: "analytics"/"analyst"/"analysis" together while keeping "support"/"supply" apart.
-STEM_PREFIX = 5
-#: When one word is a prefix of the other ("engineer" in "engineering") this is enough.
-CONTAINS_PREFIX = 4
+#: How much of a search term a title must cover to be worth scoring with the LLM.
+#: Discovery is deliberately generous here: the model scores each posting properly
+#: afterwards and skips anything below MATCH_THRESHOLD, so a near miss at this stage
+#: costs one cheap API call, while a wrongly dropped posting is never seen again.
+DEFAULT_TITLE_THRESHOLD = 0.45
 
 
-def _common_prefix(a: str, b: str) -> int:
-    n = 0
-    for x, y in zip(a, b):
-        if x != y:
-            break
-        n += 1
-    return n
+def title_relevance(title: str, queries: Iterable[str]) -> float:
+    """0 to 1: how well a posting title answers the user's search terms."""
+    return best_relevance(title, queries)
 
 
-def words_match(a: str, b: str) -> bool:
-    """Whether two title words mean the same thing.
+def title_matches(title: str, queries: Iterable[str], threshold: Optional[float] = None) -> bool:
+    """True when a title resembles at least one search term closely enough.
 
-    Job titles inflect constantly: a search for "Data Analytics" has to find
-    "Data Analyst" and "Data Analysis", and "Engineer" has to find "Engineering".
-    Exact word equality misses all of those, which made precise-looking searches
-    return nothing.
+    'Data Analytics' finds 'Data Analyst' (0.97) and 'Analytics Engineer Intern' (0.50),
+    but not 'Accounting Intern' (0.00). 'Backend Engineer' does not drag in
+    'Sales Engineer' (0.29), because `engineer` alone barely narrows a search.
     """
-    if a == b:
+    if not queries:
         return True
-    if len(a) >= CONTAINS_PREFIX and len(b) >= CONTAINS_PREFIX:
-        if a.startswith(b) or b.startswith(a):
-            return True
-    shared = _common_prefix(a, b)
-    return shared >= STEM_PREFIX and len(a) >= STEM_PREFIX and len(b) >= STEM_PREFIX
-
-
-def title_matches(title: str, token_sets: list[set[str]], ratio: float = TITLE_MATCH_RATIO) -> bool:
-    """True when the title carries most of the words of at least one configured query.
-
-    'Backend Engineer'          -> needs both words, so 'Sales Engineer' does not match
-    'Machine Learning Engineer' -> needs 2 of 3, so 'Machine Learning Scientist' matches
-    'Data Analytics'            -> matches 'Data Analyst' and 'Data Analysis' too
-    """
-    if not token_sets:
-        return True
-    words = [w for w in re.split(r"[^a-z0-9+#.]+", (title or "").lower()) if w]
-    for toks in token_sets:
-        needed = max(1, math.ceil(len(toks) * ratio))
-        hits = sum(1 for t in toks if any(words_match(t, w) for w in words))
-        if hits >= needed:
-            return True
-    return False
+    limit = DEFAULT_TITLE_THRESHOLD if threshold is None else threshold
+    return title_relevance(title, queries) >= limit
 
 
 #: Ashby sets `isRemote: true` on hybrid roles too (505 of OpenAI's 537 "remote" jobs are
@@ -368,7 +334,7 @@ class GreenhouseBoardSource(ApiJobSource):
                 for j in listing["jobs"]:
                     self.stats.seen += 1
                     title = j.get("title", "")
-                    if not title_matches(title, self.tokens):
+                    if not title_matches(title, self.tokens, self.s.title_match_threshold):
                         self.stats.dropped_title += 1
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
@@ -405,6 +371,8 @@ class GreenhouseBoardSource(ApiJobSource):
                         location=((detail.get("location") or {}).get("name") or "").strip(),
                         description=strip_html(detail.get("content", "")),
                         source=self.name, ats=GREENHOUSE,
+                        relevance=title_relevance(detail.get("title") or j.get("title") or "",
+                                                  self.tokens),
                     )
                     if self._new(job):
                         found.append(job)
@@ -439,7 +407,7 @@ class LeverBoardSource(ApiJobSource):
                     cats = p.get("categories") or {}
                     title = (p.get("text") or "").strip()
                     loc = cats.get("location") or ""
-                    if not title_matches(title, self.tokens):
+                    if not title_matches(title, self.tokens, self.s.title_match_threshold):
                         self.stats.dropped_title += 1
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
@@ -458,6 +426,7 @@ class LeverBoardSource(ApiJobSource):
                         apply_url=p.get("applyUrl") or (hosted.rstrip("/") + "/apply" if hosted else ""),
                         title=title, company=token.replace("-", " ").title(), location=loc,
                         description=description.strip(), source=self.name, ats=LEVER,
+                        relevance=title_relevance(title, self.tokens),
                     )
                     if self._new(job):
                         found.append(job)
@@ -494,7 +463,7 @@ class AshbyBoardSource(ApiJobSource):
                         continue
                     self.stats.seen += 1
                     title = (p.get("title") or "").strip()
-                    if not title_matches(title, self.tokens):
+                    if not title_matches(title, self.tokens, self.s.title_match_threshold):
                         self.stats.dropped_title += 1
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
@@ -516,6 +485,7 @@ class AshbyBoardSource(ApiJobSource):
                         location=(p.get("location") or "").strip(),
                         description=(p.get("descriptionPlain") or strip_html(p.get("descriptionHtml", ""))).strip(),
                         source=self.name, ats=ASHBY,
+                        relevance=title_relevance(title, self.tokens),
                     )
                     if self._new(job):
                         found.append(job)
@@ -622,7 +592,7 @@ class RemoteOKSource(AggregatorSource):
             self.stats.seen += len(rows)
             matched = []
             for d in rows:
-                if not title_matches(d.get("position", ""), self.tokens):
+                if not title_matches(d.get("position", ""), self.tokens, self.s.title_match_threshold):
                     self.stats.dropped_title += 1
                 elif not seniority_matches(d.get("position", ""), self.s.seniority_levels):
                     self.stats.dropped_seniority += 1
@@ -647,6 +617,8 @@ class RemoteOKSource(AggregatorSource):
                     title=(d.get("position") or "").strip(), company=(d.get("company") or "").strip(),
                     location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),
+                    relevance=title_relevance(
+                        d.get("position") or d.get("title") or "", self.tokens),
                 )
                 if self._new(job):
                     found.append(job)
@@ -668,7 +640,7 @@ class HimalayasSource(AggregatorSource):
             self.stats.seen += len(jobs)
             matched = []
             for d in jobs:
-                if not title_matches(d.get("title", ""), self.tokens):
+                if not title_matches(d.get("title", ""), self.tokens, self.s.title_match_threshold):
                     self.stats.dropped_title += 1
                 elif not seniority_matches(d.get("title", ""), self.s.seniority_levels):
                     self.stats.dropped_seniority += 1
@@ -693,6 +665,8 @@ class HimalayasSource(AggregatorSource):
                     title=(d.get("title") or "").strip(), company=(d.get("companyName") or "").strip(),
                     location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),
+                    relevance=title_relevance(
+                        d.get("position") or d.get("title") or "", self.tokens),
                 )
                 if self._new(job):
                     found.append(job)
@@ -758,6 +732,82 @@ class GoogleSearchSource(ApiJobSource):
         from job_search import extract_posting  # imported here to avoid a circular import
 
         return await extract_posting(self.b, page, job)
+
+
+BOARD_URL_PATTERNS: list[tuple[str, re.Pattern]] = [
+    (GREENHOUSE, re.compile(r"(?:job-boards|boards)\.greenhouse\.io/(?:embed/job_board\?for=)?([A-Za-z0-9_.-]+)", re.I)),
+    (GREENHOUSE, re.compile(r"boards-api\.greenhouse\.io/v1/boards/([A-Za-z0-9_.-]+)", re.I)),
+    (LEVER, re.compile(r"jobs\.(?:eu\.)?lever\.co/([A-Za-z0-9_.-]+)", re.I)),
+    (LEVER, re.compile(r"api\.lever\.co/v0/postings/([A-Za-z0-9_.-]+)", re.I)),
+    (ASHBY, re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)", re.I)),
+    (ASHBY, re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([A-Za-z0-9_.-]+)", re.I)),
+]
+BOARD_PROBE_URL = {
+    GREENHOUSE: "https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
+    LEVER: "https://api.lever.co/v0/postings/{token}?mode=json",
+    ASHBY: "https://api.ashbyhq.com/posting-api/job-board/{token}",
+}
+
+
+def parse_board_reference(text: str) -> tuple[Optional[str], str]:
+    """Pull an ATS and a board token out of anything the user pastes.
+
+    Accepts a job link, a board link, an API URL, `ashby:linear`, or a bare token.
+    Returns (ats or None, token); a bare token has to be probed to learn its ATS.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None, ""
+    for ats, pattern in BOARD_URL_PATTERNS:
+        m = pattern.search(raw)
+        if m:
+            return ats, m.group(1)
+    if ":" in raw and "//" not in raw:
+        prefix, _, rest = raw.partition(":")
+        if prefix.strip().lower() in BOARD_PROBE_URL:
+            return prefix.strip().lower(), rest.strip().strip("/")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+", raw):
+        return None, raw
+    return None, ""
+
+
+async def probe_board(client: httpx.AsyncClient, ats: str, token: str) -> Optional[dict[str, Any]]:
+    """Ask a board API whether this token exists, and how many roles are open."""
+    url = BOARD_PROBE_URL.get(ats, "").format(token=token)
+    if not url:
+        return None
+    try:
+        r = await client.get(url)
+        if r.status_code != 200:
+            return None
+        body = r.json()
+    except (httpx.HTTPError, json.JSONDecodeError):
+        return None
+    jobs = body if isinstance(body, list) else body.get("jobs", [])
+    if not isinstance(jobs, list):
+        return None
+    name = ""
+    for j in jobs[:1]:
+        name = j.get("company_name") or ""
+    return {"ats": ats, "token": token, "open_roles": len(jobs),
+            "company": name or token.replace("-", " ").title()}
+
+
+async def resolve_board(text: str, timeout: float = 20.0) -> dict[str, Any]:
+    """Identify and verify the board behind a pasted URL or token."""
+    ats, token = parse_board_reference(text)
+    if not token:
+        return {"ok": False, "input": text,
+                "detail": "Could not find a Greenhouse, Lever or Ashby board in that."}
+    candidates = [ats] if ats else list(BOARD_PROBE_URL)
+    async with httpx.AsyncClient(headers=HEADERS, timeout=timeout, follow_redirects=True) as client:
+        for candidate in candidates:
+            found = await probe_board(client, candidate, token)
+            if found:
+                return {"ok": True, **found, "input": text}
+    return {"ok": False, "input": text, "token": token, "ats": ats,
+            "detail": (f"No live {ats} board called {token!r}." if ats else
+                       f"No Greenhouse, Lever or Ashby board called {token!r}.")}
 
 
 def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:

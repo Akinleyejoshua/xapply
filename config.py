@@ -37,6 +37,7 @@ PERSISTED_KEYS = (
     "remote_only",
     "seniority_levels",
     "countries",
+    "title_match_threshold",
     "match_threshold",
     "auto_submit",
     "headless",
@@ -104,6 +105,9 @@ class Settings(BaseSettings):
     seniority_levels: Annotated[list[str], NoDecode] = []
     #: Country names from `countries.COUNTRIES`. Empty means anywhere.
     countries: Annotated[list[str], NoDecode] = []
+    #: 0-1. How closely a title must resemble a search term to be worth scoring.
+    #: Lower casts a wider net; the LLM still rejects poor fits afterwards.
+    title_match_threshold: float = Field(0.45, ge=0.0, le=1.0)
 
     # ---- Discovery (public board APIs + aggregators) ----
     company_file: Path = BASE_DIR / "companies.json"

@@ -92,6 +92,7 @@ class ConfigPatch(BaseModel):
     remote_only: Optional[bool] = None
     seniority_levels: Optional[list[Literal["intern", "junior", "mid", "senior", "lead"]]] = None
     countries: Optional[list[str]] = None
+    title_match_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
     auto_submit: Optional[bool] = None
     headless: Optional[bool] = None
@@ -124,6 +125,12 @@ class UrlCheck(BaseModel):
     """Job URLs pasted by hand, to be inspected before applying."""
 
     urls: list[str]
+
+
+class BoardLookup(BaseModel):
+    """Anything that might name a company board: a job link, a board link, or a token."""
+
+    text: str
 
 
 class DeleteRequest(BaseModel):
@@ -353,6 +360,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "known_seniority": list(SENIORITY_LEVELS),
             "countries": settings.countries,
             "known_countries": COUNTRIES,
+            "title_match_threshold": settings.title_match_threshold,
             "match_threshold": settings.match_threshold,
             "auto_submit": settings.auto_submit,
             "headless": settings.headless,
@@ -457,17 +465,73 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
         return load_company_tokens(settings.company_file)
 
+    def _write_companies(data: dict[str, Any]) -> dict[str, Any]:
+        settings.company_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return {k: v for k, v in data.items() if not k.startswith("_")}
+
+    def _read_companies() -> dict[str, Any]:
+        path = settings.company_file
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
     @app.post("/api/companies", dependencies=[Depends(auth)], tags=["data"])
     def add_company(body: CompanyAdd) -> dict[str, Any]:
-        path = settings.company_file
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data = _read_companies()
         data.setdefault(body.ats, [])
         token = body.token.strip()
         if token and token not in data[body.ats]:
             data[body.ats].append(token)
-            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             note(f"added company {body.ats}:{token}")
+            return _write_companies(data)
         return {k: v for k, v in data.items() if not k.startswith("_")}
+
+    @app.post("/api/companies/resolve", dependencies=[Depends(auth)], tags=["data"])
+    async def resolve_company(body: BoardLookup) -> dict[str, Any]:
+        """Identify the board behind a pasted job or board URL, and verify it is live."""
+        from discovery import resolve_board
+
+        found = await resolve_board(body.text)
+        if found.get("ok"):
+            existing = _read_companies().get(found["ats"], [])
+            found["already_added"] = found["token"] in existing
+        return found
+
+    @app.post("/api/companies/add-from-url", dependencies=[Depends(auth)], tags=["data"])
+    async def add_company_from_url(body: BoardLookup) -> dict[str, Any]:
+        """Add a board from anything the user pastes: a job link, a board link or a token."""
+        from discovery import resolve_board
+
+        found = await resolve_board(body.text)
+        if not found.get("ok"):
+            raise HTTPException(422, found.get("detail", "Could not identify that board"))
+        data = _read_companies()
+        data.setdefault(found["ats"], [])
+        if found["token"] not in data[found["ats"]]:
+            data[found["ats"]].append(found["token"])
+            _write_companies(data)
+            note(f"added {found['ats']}:{found['token']} ({found['open_roles']} open roles)")
+        return {"added": found, "companies": {k: v for k, v in data.items() if not k.startswith("_")}}
+
+    @app.get("/api/companies/probe", dependencies=[Depends(auth)], tags=["data"])
+    async def probe_companies() -> list[dict[str, Any]]:
+        """Open-role count for every configured board, so dead tokens are visible."""
+        import asyncio as _asyncio
+
+        import httpx as _httpx
+
+        from discovery import HEADERS, probe_board
+
+        tokens = [(ats, t) for ats, group in _read_companies().items() for t in group]
+        async with _httpx.AsyncClient(headers=HEADERS, timeout=25, follow_redirects=True) as client:
+            results = await _asyncio.gather(
+                *(probe_board(client, ats, t) for ats, t in tokens), return_exceptions=True)
+        out = []
+        for (ats, token), res in zip(tokens, results):
+            if isinstance(res, dict):
+                out.append({**res, "ok": True})
+            else:
+                out.append({"ats": ats, "token": token, "ok": False, "open_roles": 0,
+                            "company": token})
+        return out
 
     # NOTE: the path param is not called `token`; that name is taken by the auth query param.
     @app.delete("/api/companies/{ats}/{board_token}", dependencies=[Depends(auth)], tags=["data"])
