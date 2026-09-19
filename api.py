@@ -778,6 +778,12 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         note("human released the pause")
         return {"released": True}
 
+    @app.post("/admin/clear-blocker", dependencies=[Depends(auth)], tags=["control"])
+    def clear_blocker() -> dict[str, Any]:
+        """Dismiss the configuration problem reported by the last run."""
+        app.state.blocker = None
+        return {"cleared": True}
+
     @app.get("/api/run", dependencies=[Depends(auth)], tags=["control"])
     def run_status() -> dict[str, Any]:
         g = app.state.gate

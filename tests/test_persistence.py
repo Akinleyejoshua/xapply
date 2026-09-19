@@ -37,16 +37,17 @@ def _client(settings: Settings):
 
 
 def test_save_and_reload_in_a_new_process(settings: Settings) -> None:
+    chosen = "nvidia/nemotron-3-ultra-550b-a55b"          # deliberately not the default
     settings.llm_provider = "nvidia"
-    settings.nvidia_model = "openai/gpt-oss-20b"
+    settings.nvidia_model = chosen
     settings.seniority_levels = ["mid", "senior"]
     settings.save_overrides(["llm_provider", "nvidia_model", "seniority_levels"])
 
     fresh = Settings(overrides_path=settings.overrides_path)     # simulates a restart
-    assert fresh.llm_provider != "nvidia" or fresh.nvidia_model != "openai/gpt-oss-20b"
+    assert fresh.nvidia_model != chosen                          # the default, before loading
     applied = fresh.load_overrides()
     assert applied["llm_provider"] == "nvidia"
-    assert fresh.active_model == "openai/gpt-oss-20b"
+    assert fresh.active_model == chosen
     assert fresh.seniority_levels == ["mid", "senior"]
 
 

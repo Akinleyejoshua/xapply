@@ -698,8 +698,9 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               </div></label>
             <div class="row" style="margin:-6px 0 12px">
               <button class="sm" id="btnTestModel">Test this model</button>
-              <span class="model-note" id="modelNote"></span>
+              <button class="sm ghost" id="btnVerifyModels">Check which models work</button>
             </div>
+            <div class="model-note" id="modelNote" style="margin:-6px 0 12px"></div>
             <div class="dim mono" id="keyState" style="margin-bottom:6px"></div>
             <div id="savedNote"></div>
           </div>
@@ -1087,8 +1088,19 @@ async function poll(){
     if(el.textContent !== text){ el.textContent = text; if(atBottom) el.scrollTop = el.scrollHeight; }
   }
 
-  const g = st.gate || {};
+  // A configuration problem that stopped a run outranks the human-input banner.
   const bar = $('gatebar');
+  if(st.blocker){
+    bar.style.display = 'block';
+    bar.innerHTML = '<b>The run stopped: the model cannot be used.</b><br>' +
+      '<span class="mono">' + esc(st.blocker.model) + '</span> is listed by ' +
+      esc(st.blocker.provider) + ' but does not answer.' +
+      '<div class="row" style="margin-top:11px">' +
+      '<button class="sm primary" onclick="fixModel()">Find a model that works</button>' +
+      '<button class="sm ghost" onclick="dismissBlocker()">Dismiss</button></div>';
+    return;
+  }
+  const g = st.gate || {};
   if(g.paused){
     bar.style.display = 'block';
     bar.innerHTML = '<b>The agent is waiting for you.</b><br>' + esc(g.reason) +
@@ -1109,6 +1121,32 @@ async function poll(){
      st.auto_submit !== CONFIG.auto_submit) reloadConfig();
 }
 async function release(){ try { await call('/admin/continue', {method:'POST'}); } catch(e){ toast(e.message, true); } }
+/** Probe every listed model, switch to the first that answers, and say so. */
+async function fixModel(){
+  const bar = $('gatebar');
+  bar.innerHTML = '<b>Checking which models answer…</b><br>This takes a moment; ' +
+    'the provider lists more models than it actually serves.';
+  try{
+    const r = await call('/api/models/verify?provider=' +
+      encodeURIComponent(CONFIG.llm_provider), {method:'POST'});
+    MODEL_CACHE = {};
+    if(!r.working.length){
+      bar.innerHTML = '<b>No model answered.</b> Check that your API key is valid and has quota.';
+      return;
+    }
+    const patch = {};
+    patch[CONFIG.llm_provider === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = r.working[0];
+    await saveConfig(patch, true);
+    await dismissBlocker();
+    toast(`${r.working.length} of ${r.checked} models answered. Now using ${r.working[0]}`);
+    show('settings');
+  } catch(e){ bar.innerHTML = '<b>Could not check the models.</b><br>' + esc(e.message); }
+}
+async function dismissBlocker(){
+  try { await call('/admin/clear-blocker', {method:'POST'}); } catch(e){}
+  $('gatebar').style.display = 'none';
+}
+
 /** For a challenge that will not clear: give up on this posting and move on. */
 async function skipJob(){
   try { await call('/admin/skip', {method:'POST'}); toast('Skipping this job'); }
@@ -1426,6 +1464,23 @@ function saveCfgModel(value){
   $('modelNote').className = 'model-note';
   return saveConfig(patch);
 }
+
+/** Probe every model once so the picker can label them. */
+$('btnVerifyModels').onclick = async () => {
+  const b = $('btnVerifyModels'), note = $('modelNote');
+  b.disabled = true; b.textContent = 'Checking…';
+  note.className = 'model-note'; note.textContent =
+    'Calling each model in turn. The provider lists more than it serves, so this is the only reliable check.';
+  try{
+    const r = await call('/api/models/verify?provider=' + encodeURIComponent($('cfgProvider').value),
+                         {method:'POST'});
+    MODEL_CACHE = {};
+    note.className = 'model-note ' + (r.working.length ? 'ok' : 'bad');
+    note.textContent = `${r.working.length} of ${r.checked} models answered. `
+      + (r.working.length ? 'They are marked "works" in the list.' : 'Check your API key.');
+  } catch(e){ note.className = 'model-note bad'; note.textContent = e.message; }
+  b.disabled = false; b.textContent = 'Check which models work';
+};
 
 /** Settle whether a model works by actually calling it. */
 $('btnTestModel').onclick = async () => {
