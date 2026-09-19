@@ -148,6 +148,24 @@ def _numeric_option_match(n: float, options: list[str]) -> Optional[str]:
     return min(scored, key=lambda t: t[1])[0] if scored else None
 
 
+AFFIRMATIVE_RE = re.compile(
+    r"^\s*(yes|y|true|1|i (am|do|have|will|agree|consent|certify)|agree|accept|confirm|checked|"
+    r"fluent|native|proficient|advanced|authorized)\b", re.I
+)
+NEGATIVE_RE = re.compile(
+    r"^\s*(no|n|false|0|none|never|not? |i (am|do|have|will) ?n[o']t|decline|prefer not|"
+    r"unknown|n/?a)\b", re.I
+)
+
+
+def is_affirmative(answer: str) -> bool:
+    """Whether a free-form answer means 'tick this box'."""
+    a = (answer or "").strip()
+    if NEGATIVE_RE.match(a):
+        return False
+    return bool(AFFIRMATIVE_RE.match(a))
+
+
 def choose_option(answer: str, options: list[str]) -> Optional[str]:
     """Map a free-form answer onto one of the concrete options of a select/radio."""
     opts = [o for o in options if o and not is_placeholder_option(o)]
@@ -590,6 +608,7 @@ class FormFiller:
         only_errors: bool = False,
         force_ai: bool = False,
     ) -> StepResult:
+        """Fill every field in `scope`. Anything unanswerable is reported, never guessed."""
         result = StepResult()
         fields = await self.discover(scope)
         result.fields_seen = len(fields)
@@ -603,6 +622,8 @@ class FormFiller:
                     entry = await self._handle_checkbox(scope, f, ctx)
                     if entry:
                         result.filled.append(entry)
+                    elif f.required and not f.current_value:
+                        result.unresolved.append(f.label)
                     continue
                 if f.current_value and not f.has_error and not only_errors:
                     log.debug("Keeping prefilled %r = %r", f.label, f.current_value[:40])
@@ -680,6 +701,14 @@ class FormFiller:
         return None
 
     async def _handle_checkbox(self, scope: Locator, f: FormField, ctx: "ResolveContext") -> Optional[dict[str, Any]]:
+        """Tick a checkbox only when there is a truthful reason to.
+
+        A checkbox being `required` is NOT such a reason: application forms mark whole
+        groups required (spoken languages, for instance), and blanket-ticking them would
+        claim skills the candidate does not have. Anything that is not a consent box is
+        resolved like any other field, and left unticked when the answer is not clearly
+        affirmative.
+        """
         loc = self._loc(scope, f.idx)
         checked = bool(f.current_value)
         want: Optional[bool] = None
@@ -688,8 +717,11 @@ class FormFiller:
             want = self.s.follow_companies
         elif AGREE_RE.search(f.label):
             want = True
-        elif f.required:
-            want = True
+        else:
+            answer = await self.resolver.resolve(f, ctx)
+            if answer.value and not answer.needs_human:
+                want = is_affirmative(answer.value)
+                source = answer.source
         if want is None:
             return None
         if want != checked:
