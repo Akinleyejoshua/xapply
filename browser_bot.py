@@ -20,6 +20,7 @@ import difflib
 import logging
 import random
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,66 +210,124 @@ def choose_option(answer: str, options: list[str]) -> Optional[str]:
 class HumanGate:
     """Blocks the pipeline until a human says "continue".
 
-    mode="terminal": waits for Enter on stdin (falls back to a marker file when
-                     stdin is not interactive).
-    mode="api":      waits until `release()` is called (POST /admin/continue).
+    The release can arrive from any of three places, whichever happens first:
+      * Enter on the terminal (only when stdin is an interactive tty)
+      * `release()`, which is what POST /admin/continue and the dashboard button call
+      * a marker file appearing on disk, for supervised or containerised runs
+
+    They race, so a run started from the web UI is releasable from the web UI *and*
+    from the terminal it was launched in. Waiting on only one of them was a deadlock:
+    a server blocked on `input()` never sees the button.
     """
 
     def __init__(self, mode: str = "terminal", marker_file: Optional[Path] = None):
         self.mode = mode
-        self.marker_file = marker_file
+        self.marker_file = marker_file or Path("logs/CONTINUE")
         self._event = asyncio.Event()
         self.paused = False
         self.reason = ""
         self.paused_since: Optional[float] = None
         self.history: list[dict[str, Any]] = []
 
+    # ---- waiting ------------------------------------------------------
     async def wait(self, reason: str) -> None:
         self.paused, self.reason, self.paused_since = True, reason, time.time()
         self.history.append({"reason": reason, "at": time.time()})
-        banner = (
-            "\n" + "=" * 78 + "\n"
-            "  HUMAN INPUT NEEDED\n"
-            f"  {reason}\n"
-            + ("  -> POST /admin/continue (or press Enter here) to resume.\n" if self.mode == "api"
-               else "  -> Solve it in the browser window, then press Enter here to resume.\n")
-            + "=" * 78 + "\a"
-        )
-        print(banner, flush=True)
+        self._event.clear()
+        self._print_banner(reason)
         log.warning("Paused for human: %s", reason)
+        waiters = [asyncio.create_task(self._event.wait(), name="gate-release"),
+                   asyncio.create_task(self._wait_marker(), name="gate-marker")]
+        stdin_task = self._stdin_task()
+        if stdin_task is not None:
+            waiters.append(stdin_task)
         try:
-            if self.mode == "api":
-                self._event.clear()
-                await self._event.wait()
-            else:
-                await self._wait_terminal()
+            done, pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            released_by = next(iter(done)).get_name()
         finally:
             self.paused, self.reason, self.paused_since = False, "", None
             self._event.clear()
-        log.info("Human released the gate")
+            self.marker_file.unlink(missing_ok=True)
+        log.info("Human released the gate (%s)", released_by)
+        print("Continuing.\n", flush=True)
 
-    async def _wait_terminal(self) -> None:
-        loop = asyncio.get_running_loop()
-        prompt = "Press Enter after solving CAPTCHA / verifying form to continue... "
+    def _print_banner(self, reason: str) -> None:
+        interactive = self._stdin_is_tty()
+        how = []
+        if interactive:
+            how.append("press Enter here")
+        how.append("click Continue in the dashboard")
+        how.append(f"or create {self.marker_file}")
+        print(
+            "\n" + "=" * 78 + "\n"
+            "  HUMAN INPUT NEEDED\n"
+            f"  {reason}\n"
+            f"  -> Handle it in the browser window, then {', '.join(how)}.\n"
+            + "=" * 78 + "\a",
+            flush=True,
+        )
+
+    @staticmethod
+    def _stdin_is_tty() -> bool:
         try:
-            await loop.run_in_executor(None, input, prompt)
-        except (EOFError, OSError):
-            marker = self.marker_file or Path("logs/CONTINUE")
-            print(f"stdin is not interactive. Create the file {marker} (or POST /admin/continue) to resume.",
-                  flush=True)
-            while True:
-                if marker.exists():
-                    marker.unlink(missing_ok=True)
-                    return
-                if self._event.is_set():
-                    return
-                await asyncio.sleep(2)
+            return bool(sys.stdin) and sys.stdin.isatty()
+        except (ValueError, AttributeError):
+            return False
 
+    def _stdin_task(self) -> Optional[asyncio.Task]:
+        """A cancellable reader on stdin, or None when stdin is not interactive.
+
+        `add_reader` is used rather than a thread running `input()`, because a thread
+        blocked in `input()` cannot be cancelled when the release arrives elsewhere.
+        """
+        if not self._stdin_is_tty():
+            return None
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
+
+        def on_readable() -> None:
+            try:
+                sys.stdin.readline()
+            except Exception:
+                pass
+            if not future.done():
+                future.set_result(None)
+
+        try:
+            loop.add_reader(sys.stdin.fileno(), on_readable)
+        except (NotImplementedError, OSError, ValueError) as exc:
+            log.debug("stdin reader unavailable (%s); use the dashboard or the marker file", exc)
+            return None
+
+        async def waiter() -> None:
+            try:
+                await future
+            finally:
+                try:
+                    loop.remove_reader(sys.stdin.fileno())
+                except Exception:
+                    pass
+
+        return asyncio.create_task(waiter(), name="gate-stdin")
+
+    async def _wait_marker(self) -> None:
+        while True:
+            if self.marker_file.exists():
+                self.marker_file.unlink(missing_ok=True)
+                return
+            await asyncio.sleep(1.5)
+
+    # ---- releasing ----------------------------------------------------
     def release(self) -> None:
+        """Called from the API thread/loop. Safe whether or not anything is waiting."""
         self._event.set()
 
     def status(self) -> dict[str, Any]:
-        return {"paused": self.paused, "reason": self.reason, "paused_since": self.paused_since}
+        return {"paused": self.paused, "reason": self.reason, "paused_since": self.paused_since,
+                "waited": len(self.history)}
 
 
 # --------------------------------------------------------------------------
