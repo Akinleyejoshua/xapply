@@ -7,6 +7,19 @@
 <title>XApply</title>
 <style>
 /* ============================================================
+   Typeface
+   Bricolage Grotesque, served by this app rather than a CDN so the dashboard
+   works with no network and nothing is requested from a third party.
+   ============================================================ */
+@font-face{
+  font-family:"Bricolage Grotesque";
+  src:url("/assets/fonts/BricolageGrotesque.woff2") format("woff2"),
+      url("/assets/fonts/BricolageGrotesque.ttf") format("truetype");
+  font-weight:200 800;
+  font-display:swap;
+}
+
+/* ============================================================
    Design tokens
    ============================================================ */
 :root{
@@ -52,7 +65,8 @@
   --sh-lg:0 12px 32px rgba(0,0,0,.11), 0 2px 8px rgba(0,0,0,.05);
   --sh-xl:0 24px 64px rgba(0,0,0,.17);
 
-  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --sans:"Bricolage Grotesque",-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,
+         Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
 
   --sidebar:252px;
@@ -105,7 +119,8 @@ body{
   letter-spacing:-.006em;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
-h1,h2,h3,h4{margin:0; font-weight:640; letter-spacing:-.021em; line-height:1.25}
+h1,h2,h3,h4{margin:0; font-family:var(--sans); font-weight:650; letter-spacing:-.024em;
+  line-height:1.22; font-optical-sizing:auto}
 h1{font-size:22px}
 h2{font-size:15.5px}
 h3{font-size:13px}

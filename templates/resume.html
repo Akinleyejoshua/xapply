@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <title>{{ name }} - Resume</title>
 <style>
+  {{ font_face | safe }}{# generated CSS, not user input, so autoescaping must not mangle it #}
   @page { size: Letter; margin: 0.5in 0.6in; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10.2pt; line-height: 1.32; color: #111;
+  body { font-family: "Bricolage Grotesque", "Helvetica Neue", Helvetica, Arial, sans-serif;
+         font-size: 10.2pt; line-height: 1.32; color: #111;
          /* The renderer otherwise emits ligature glyphs, so "fi" is extracted as a single
             character an applicant tracking system may not match against "fi". */
          font-variant-ligatures: none; -webkit-font-variant-ligatures: none;

@@ -6,9 +6,11 @@ smaller scale until it fits (max 5 attempts).
 """
 from __future__ import annotations
 
+import base64
 import difflib
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +23,8 @@ from config import settings as default_settings
 from models import JobPosting, ats_text
 
 log = logging.getLogger(__name__)
+
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 
 SCALE_STEPS = (1.0, 0.95, 0.9, 0.85, 0.8)
 
@@ -172,11 +176,42 @@ class ResumeBuilder:
             "certifications": profile.get("certifications", []),
         }
 
+    #: One static instance per weight the resume uses. A variable font renders at its
+    #: lightest instance in a PDF, which left the whole document in ExtraLight, so the
+    #: weights are shipped separately and declared individually.
+    FONT_WEIGHTS = (("BricolageGrotesque-Regular.ttf", 400),
+                    ("BricolageGrotesque-SemiBold.ttf", 600),
+                    ("BricolageGrotesque-Bold.ttf", 700))
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def font_face() -> str:
+        """The project typeface as inline @font-face rules.
+
+        The PDF is rendered from a string with no base URL, and a resume should not
+        depend on a network fetch, so each weight is embedded outright. Returns an
+        empty string when the files are missing, and the template falls back to
+        Helvetica rather than failing.
+        """
+        rules = []
+        for name, weight in ResumeBuilder.FONT_WEIGHTS:
+            path = FONT_DIR / name
+            if not path.exists():
+                continue
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            rules.append("@font-face{font-family:'Bricolage Grotesque';"
+                         f"src:url(data:font/ttf;base64,{data}) format('truetype');"
+                         f"font-weight:{weight};font-style:normal;font-display:block;}}")
+        if not rules:
+            log.warning("No font files in %s; the resume will use the fallback face", FONT_DIR)
+        return "".join(rules)
+
     def render_html(self, profile: dict, analysis: JobAnalysis) -> str:
         template = self.env.get_template("resume.html")
         # Flatten typographic characters so an applicant tracking system reads the same
         # words a human does: "Full\u2011stack" must not hide from a search for "Full-stack".
-        return template.render(**ats_text(self.build_context(profile, analysis)))
+        return template.render(font_face=self.font_face(),
+                               **ats_text(self.build_context(profile, analysis)))
 
     # ---- PDF ------------------------------------------------------------
     def output_path(self, job: JobPosting, analysis: JobAnalysis) -> Path:
@@ -209,7 +244,9 @@ class ResumeBuilder:
         path = self.output_path(job, analysis)
         template = self.env.get_template("resume.html")
         context = ats_text(self.build_context(profile, analysis))
-        variants = [(name, template.render(**ctx)) for name, ctx in self._variants(context)]
+        face = self.font_face()
+        variants = [(name, template.render(font_face=face, **ctx))
+                    for name, ctx in self._variants(context)]
         used = await render_first_that_fits(variants, path)
         log.info("Resume written to %s (%s)", path, used)
         return path

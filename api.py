@@ -883,6 +883,18 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         return {"ok": True, "db": str(settings.db_path), "auto_submit": settings.auto_submit,
                 "provider": settings.llm_provider, "model": settings.active_model}
 
+    # ---- static assets ----------------------------------------------------
+    @app.get("/assets/fonts/{filename}", include_in_schema=False)
+    def font_file(filename: str) -> FileResponse:
+        """Serve the project typeface locally, so the dashboard needs no CDN."""
+        path = (ASSET_DIR / "fonts" / filename).resolve()
+        if not str(path).startswith(str((ASSET_DIR / "fonts").resolve())) or not path.exists():
+            raise HTTPException(404, "Font not found")
+        media = {"woff2": "font/woff2", "woff": "font/woff",
+                 "ttf": "font/ttf"}.get(path.suffix.lstrip("."), "application/octet-stream")
+        return FileResponse(path, media_type=media,
+                            headers={"Cache-Control": "public, max-age=604800"})
+
     # ---- dashboard --------------------------------------------------------
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> str:
@@ -895,6 +907,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
 
 STATIC_DIR = BASE_STATIC = Path(__file__).resolve().parent / "static"
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 app = None  # lazily created by main.py / uvicorn factory
 
