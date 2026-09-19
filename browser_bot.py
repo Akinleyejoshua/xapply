@@ -37,6 +37,7 @@ from playwright.async_api import (
 
 from ai_agent import AIAgent, JobAnalysis
 from config import Settings
+from matching import stem_equal, word_similarity
 from models import JobPosting, ats_text
 
 log = logging.getLogger(__name__)
@@ -1037,8 +1038,22 @@ TECH_AFTER_RE = re.compile(r"(?:with|in|using|of)\s+([A-Za-z0-9+#./ \-]+?)(?:\?|
 UNKNOWN_VALUES = {"", "unknown", "n/a", "na", "none", "null"}
 
 
+#: Words that carry no meaning when comparing a question to a form label.
+QUESTION_STOPWORDS = {
+    "do", "does", "did", "you", "your", "yours", "have", "has", "the", "a", "an", "of",
+    "with", "are", "is", "was", "be", "been", "to", "in", "on", "for", "and", "or", "any",
+    "will", "would", "can", "could", "please", "select", "choose", "what", "which", "how",
+    "many", "much", "us", "this", "that", "at", "by", "from", "if", "now", "future",
+}
+
+
 def _norm_text(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (s or "").lower()).strip()
+
+
+def _content_words(s: str) -> list[str]:
+    """The words worth comparing in a question or a field label."""
+    return [w for w in _norm_text(s).split() if len(w) > 1 and w not in QUESTION_STOPWORDS]
 
 
 class AnswerResolver:
@@ -1120,23 +1135,34 @@ class AnswerResolver:
         return ResolvedAnswer(format_number(float(best[2])), "profile.years", 0.95)
 
     def _from_predicted(self, f: FormField, analysis: Optional[JobAnalysis]) -> Optional[ResolvedAnswer]:
+        """Match a form label against the questions predicted for this job.
+
+        Comparison is stem-aware, because the model often answers in the vocabulary of
+        the profile rather than of the form: a predicted "Work authorization" has to
+        reach a field labelled "Are you legally authorized to work in the US?".
+        """
         if analysis is None or not analysis.answers:
             return None
-        label_n = _norm_text(f.label)
-        label_tokens = set(label_n.split())
+        label_tokens = _content_words(f.label)
+        if not label_tokens:
+            return None
         best_score, best_answer = 0.0, None
         for qa in analysis.answers:
             if qa.answer.strip().lower() in UNKNOWN_VALUES:
                 continue
-            q_n = _norm_text(qa.question)
-            ratio = difflib.SequenceMatcher(None, label_n, q_n).ratio()
-            q_tokens = set(q_n.split()) - {"do", "you", "have", "the", "a", "an", "of", "with", "your", "are", "is", "to", "in"}
-            l_tokens = label_tokens - {"do", "you", "have", "the", "a", "an", "of", "with", "your", "are", "is", "to", "in"}
-            jaccard = len(q_tokens & l_tokens) / len(q_tokens | l_tokens) if (q_tokens | l_tokens) else 0
-            score = max(ratio, jaccard)
+            q_tokens = _content_words(qa.question)
+            if not q_tokens:
+                continue
+            overlap = sum(1 for q in q_tokens
+                          if any(word_similarity(q, l) >= 0.85 for l in label_tokens))
+            # Scored against the shorter side, so a terse "Work authorization" can still
+            # answer a long sentence that contains the same idea.
+            coverage = overlap / min(len(q_tokens), len(label_tokens))
+            ratio = difflib.SequenceMatcher(None, _norm_text(f.label), _norm_text(qa.question)).ratio()
+            score = max(coverage, ratio)
             if score > best_score:
                 best_score, best_answer = score, qa.answer
-        if best_answer and best_score >= 0.55:
+        if best_answer and best_score >= 0.6:
             return ResolvedAnswer(best_answer.strip(), "ai_predicted", round(0.6 + 0.4 * best_score, 2))
         return None
 
