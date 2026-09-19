@@ -1877,6 +1877,45 @@ $('btnProfSave').onclick = async () => {
   catch(e){ toast(e.message, true); }
 };
 
+/* ---------- view state ----------
+   Settings live on the server and are saved to settings.local.json, so they already
+   survive a restart. These are the things that are not settings: which filter you were
+   looking through, what you had typed but not yet run. They belong to this browser, so
+   they are kept here, and a refresh puts you back where you were.
+   Every access is wrapped: private windows and blocked site data make this throw. */
+const VIEW_STATE = [
+  ['foundFilter', 'value'], ['appStatus', 'value'], ['appSearch', 'value'],
+  ['manualUrls', 'value'], ['delFiles', 'checked'],
+];
+
+function saveViewState(){
+  try {
+    const out = {};
+    for(const [id, prop] of VIEW_STATE){
+      const el = $(id);
+      if(el) out[id] = el[prop];
+    }
+    localStorage.setItem('xapply.view', JSON.stringify(out));
+  } catch(e) {}
+}
+
+function restoreViewState(){
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('xapply.view') || '{}') || {}; } catch(e) {}
+  for(const [id, prop] of VIEW_STATE){
+    const el = $(id);
+    if(el && saved[id] !== undefined && saved[id] !== null) el[prop] = saved[id];
+  }
+  // Wired after restoring, so putting a value back does not immediately save it again.
+  for(const [id] of VIEW_STATE){
+    const el = $(id);
+    if(!el) continue;
+    el.addEventListener('change', saveViewState);
+    el.addEventListener('input', saveViewState);
+  }
+  return saved;
+}
+
 /* ---------- boot ---------- */
 (async function(){
   try { await reloadConfig(); } catch(e){ toast('Could not load settings: ' + e.message, true); }
@@ -1886,7 +1925,11 @@ $('btnProfSave').onclick = async () => {
   let tab = 'dash';
   try { tab = localStorage.getItem('xapply.tab') || 'dash'; } catch(e) {}
   if(!document.getElementById('view-' + tab)) tab = 'dash';
+  const restored = restoreViewState();
   show(tab);
+  // The lists are drawn from what was restored, so a refresh shows the same rows.
+  if(restored.foundFilter) renderFound();
+  if(restored.appStatus || restored.appSearch) loadApps().catch(() => {});
   poll(); setInterval(poll, 2500); setInterval(() => loadStats().catch(() => {}), 15000);
 })();
 

@@ -45,6 +45,7 @@ PERSISTED_KEYS = (
     "fill_all_at_once",
     "verify_after_fill",
     "email_apply",
+    "reveal_on_challenge",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -128,6 +129,11 @@ class Settings(BaseSettings):
     #: field half-filled and the form looks finished until somebody reads it.
     verify_after_fill: bool = True
     headless: bool = False  # keep False so a human can take over on CAPTCHAs
+    #: Start with no window and only show one when a page actually needs you: a CAPTCHA,
+    #: a login wall, or a form waiting to be submitted. The window is opened by starting
+    #: the browser again, which the profile survives, so you keep whatever you were
+    #: signed into. Ignored when `headless` is on, which means never show a window.
+    reveal_on_challenge: bool = False
     human_gate_mode: Literal["terminal", "api"] = "terminal"
 
     # ---- Applying by email ----

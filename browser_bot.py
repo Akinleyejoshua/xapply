@@ -229,6 +229,14 @@ def choose_option(answer: str, options: list[str]) -> Optional[str]:
 # --------------------------------------------------------------------------
 
 
+class BrowserRevealed(RuntimeError):
+    """A window was opened part way through, so the page being worked on is gone.
+
+    Raised rather than handled quietly because the caller holds a page and locators
+    that no longer exist. Whoever catches this starts the posting again in the window.
+    """
+
+
 class HumanGate:
     """Blocks the pipeline until a human says "continue".
 
@@ -408,6 +416,15 @@ class StealthBrowser:
         self._pw: Optional[Playwright] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        #: Whether there is no window on screen at the moment.
+        self.hidden = bool(settings.headless or settings.reveal_on_challenge)
+        #: Set once a window has been opened, so it is not hidden again mid-run.
+        self.revealed = False
+
+    @property
+    def can_reveal(self) -> bool:
+        """Whether a window can still be opened. `headless` means never."""
+        return bool(self.s.reveal_on_challenge and not self.s.headless)
 
     async def __aenter__(self) -> "StealthBrowser":
         await self.start()
@@ -421,7 +438,7 @@ class StealthBrowser:
         self._pw = await async_playwright().start()
         kwargs: dict[str, Any] = dict(
             user_data_dir=str(self.s.user_data_dir),
-            headless=self.s.headless,
+            headless=self.hidden,
             viewport={"width": self.s.viewport_width, "height": self.s.viewport_height},
             user_agent=self.s.user_agent,
             locale=self.s.locale,
@@ -455,16 +472,52 @@ class StealthBrowser:
                 await self.page.goto(self.s.start_url, wait_until="domcontentloaded", timeout=15_000)
             except Exception as exc:
                 log.debug("start page %s did not load: %s", self.s.start_url, exc)
-        log.info("Browser started (profile: %s)", self.s.user_data_dir)
+        log.info("Browser started %s (profile: %s)",
+                 "with no window" if self.hidden else "on screen", self.s.user_data_dir)
         return self
+
+    async def reveal(self, reason: str = "") -> bool:
+        """Open a window, for a page that needs a person rather than a bot.
+
+        Playwright cannot give a headless browser a window, so the browser is started
+        again with one. The profile directory is the same, so cookies, logins and
+        anything solved earlier all survive; only the open tabs do not, which is why
+        the caller reloads the page it was on.
+
+        Returns True when a window is now on screen that was not before.
+        """
+        if not self.hidden or not self.can_reveal:
+            return False
+        url = ""
+        try:
+            url = self.page.url if self.page else ""
+        except Exception:
+            url = ""
+        log.warning("Opening a window%s. %s", f": {reason}" if reason else "",
+                    "The page will be reloaded in it.")
+        await self.close()
+        self.hidden = False
+        self.revealed = True
+        await self.start()
+        if url and not url.startswith("about:"):
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded")
+            except Exception as exc:
+                log.warning("Could not reopen %s in the window: %s", url, exc)
+        return True
 
     async def close(self) -> None:
         try:
             if self.context:
                 await self.context.close()
+        except Exception as exc:
+            log.debug("closing the browser: %s", exc)
         finally:
             if self._pw:
-                await self._pw.stop()
+                try:
+                    await self._pw.stop()
+                except Exception:
+                    pass
             self.context = self.page = self._pw = None
 
     # ---- human-like behaviour ------------------------------------------
@@ -621,6 +674,12 @@ class StealthBrowser:
                 reason = captcha
             if not reason:
                 return HumanGate.CONTINUE
+            if self.hidden and self.can_reveal:
+                # There is nothing on screen for a person to solve. A window is opened,
+                # which means starting the browser again, so this page is gone and the
+                # caller has to begin the posting afresh in the new one.
+                await self.reveal(reason)
+                raise BrowserRevealed(reason)
             outcome = await self.gate.wait(reason)
             if outcome == HumanGate.SKIP:
                 return HumanGate.SKIP

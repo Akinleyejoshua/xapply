@@ -15,7 +15,8 @@ from typing import Any, Optional
 
 from ai_agent import AIAgent, JobAnalysis
 from appliers import get_applier
-from browser_bot import AnswerResolver, FormFiller, HumanGate, StealthBrowser
+from browser_bot import (AnswerResolver, BrowserRevealed, FormFiller, HumanGate,
+                         StealthBrowser)
 from config import Settings
 from config import settings as default_settings
 from database import (
@@ -81,7 +82,22 @@ class Pipeline:
         self.stats[status] = self.stats.get(status, 0) + 1
 
     # ---- single job ----------------------------------------------------
-    async def process(self, browser: StealthBrowser, source: Any, job: JobPosting) -> str:
+    async def process(self, browser: StealthBrowser, source: Any, job: JobPosting,
+                      _retry: bool = False) -> str:
+        """Work one posting. Restarted once if a window has to be opened part way."""
+        try:
+            return await self._process(browser, source, job)
+        except BrowserRevealed as exc:
+            if _retry:
+                note = f"Still blocked after opening a window: {exc}"
+                self.db.record(job, STATUS_FAILED, notes=note)
+                self._bump(STATUS_FAILED)
+                log.error(note)
+                return STATUS_FAILED
+            log.info("Starting this posting again now there is a window: %s", job.url)
+            return await self.process(browser, source, job, _retry=True)
+
+    async def _process(self, browser: StealthBrowser, source: Any, job: JobPosting) -> str:
         page = browser.page
         log.info("=" * 70)
         log.info("Job %s | %s @ %s | %s", job.job_id, job.title or "?", job.company or "?", job.url)
