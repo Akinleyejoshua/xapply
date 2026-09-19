@@ -143,3 +143,107 @@ async def test_lazy_browser_gives_no_page_to_api_sources(settings: Settings) -> 
         assert await lazy.page_for(name) is None
     assert lazy.started is False
     await lazy.close()
+
+
+# ---- skipping a job you cannot get past ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_can_skip_instead_of_continue(tmp_path: Path) -> None:
+    """A Cloudflare challenge that never clears must not hold the whole run."""
+    gate = HumanGate("api", tmp_path / "CONTINUE")
+
+    async def decide() -> None:
+        await asyncio.sleep(0.15)
+        gate.skip()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("Challenge will not clear"), decide()), timeout=5)
+    assert outcome == HumanGate.SKIP
+
+
+@pytest.mark.asyncio
+async def test_gate_continue_is_the_default_outcome(tmp_path: Path) -> None:
+    gate = HumanGate("api", tmp_path / "CONTINUE")
+
+    async def decide() -> None:
+        await asyncio.sleep(0.15)
+        gate.release()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("CAPTCHA"), decide()), timeout=5)
+    assert outcome == HumanGate.CONTINUE
+
+
+@pytest.mark.asyncio
+async def test_skip_marker_file(tmp_path: Path) -> None:
+    gate = HumanGate("api", tmp_path / "CONTINUE")
+
+    async def touch() -> None:
+        await asyncio.sleep(0.2)
+        gate.skip_file.write_text("x")
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("challenge"), touch()), timeout=8)
+    assert outcome == HumanGate.SKIP
+    assert not gate.skip_file.exists()          # consumed, so the next pause is unaffected
+
+
+@pytest.mark.asyncio
+async def test_skip_can_be_disallowed(tmp_path: Path) -> None:
+    """Some pauses are not skippable, for instance a login the run depends on."""
+    gate = HumanGate("api", tmp_path / "CONTINUE")
+
+    async def decide() -> None:
+        await asyncio.sleep(0.15)
+        gate.skip()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("Log in first", allow_skip=False), decide()), timeout=5)
+    assert outcome == HumanGate.CONTINUE
+
+
+def test_gate_status_reports_skippability(tmp_path: Path) -> None:
+    gate = HumanGate("api", tmp_path / "CONTINUE")
+    assert "allow_skip" in gate.status()
+
+
+def test_api_exposes_skip() -> None:
+    from pathlib import Path as _P
+
+    api_src = (_P(__file__).resolve().parents[1] / "api.py").read_text()
+    assert '"/admin/skip"' in api_src
+    html = (_P(__file__).resolve().parents[1] / "static" / "index.html").read_text()
+    assert "skipJob()" in html and "/admin/skip" in html
+
+
+# ---- fill the form before worrying about the CAPTCHA -----------------------
+
+
+def test_guard_signature_allows_blocking_only() -> None:
+    """During navigation only a real wall should stop the agent."""
+    import inspect
+
+    from browser_bot import StealthBrowser
+
+    params = inspect.signature(StealthBrowser.guard).parameters
+    assert "blocking_only" in params
+    assert params["blocking_only"].default is False
+
+
+def test_goto_uses_the_lenient_guard() -> None:
+    from pathlib import Path as _P
+
+    src = (_P(__file__).resolve().parents[1] / "browser_bot.py").read_text()
+    goto = src[src.index("async def goto(self"):]
+    goto = goto[:goto.index("async def detect_captcha")]
+    assert "blocking_only=True" in goto, "navigation must not stop for an inline form CAPTCHA"
+
+
+def test_appliers_run_the_full_guard_before_submitting() -> None:
+    from pathlib import Path as _P
+
+    src = (_P(__file__).resolve().parents[1] / "appliers.py").read_text()
+    # the submit paths check the gate result so a skip is honoured
+    assert src.count("HumanGate.SKIP") >= 3
+    assert "await self.b.guard(page) == HumanGate.SKIP" in src

@@ -521,3 +521,67 @@ def test_api_delete_endpoints(settings: Settings, tmp_path: Path) -> None:
 
     assert client.post("/api/applications/delete", json={"all": True}).json()["deleted"] == 1
     assert client.get("/api/stats").json()["total"] == 0
+
+
+# ---- reaching the application form on company-hosted pages -----------------
+
+
+@pytest.mark.parametrize("job_id,url,apply_url,expected", [
+    # the board token and job id both come from the stable job_id
+    ("gh-stripe-8185294", "https://stripe.com/jobs/search?gh_jid=8185294",
+     "https://job-boards.greenhouse.io/stripe/jobs/8185294",
+     "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8185294"),
+    # a pasted board URL carries both
+    ("url-abc", "https://job-boards.greenhouse.io/airbnb/jobs/8184174",
+     "https://job-boards.greenhouse.io/airbnb/jobs/8184174",
+     "https://job-boards.greenhouse.io/embed/job_app?for=airbnb&token=8184174"),
+    # a company page supplies the id through gh_jid, the board comes from apply_url
+    ("url-def", "https://www.coinbase.com/careers/positions/8175363?gh_jid=8175363",
+     "https://job-boards.greenhouse.io/coinbase/jobs/8175363",
+     "https://job-boards.greenhouse.io/embed/job_app?for=coinbase&token=8175363"),
+    # not Greenhouse at all
+    ("lever-x", "https://jobs.lever.co/spotify/abc", "", None),
+])
+def test_greenhouse_embed_url(job_id, url, apply_url, expected) -> None:
+    from appliers import greenhouse_embed_url
+
+    job = JobPosting(job_id=job_id, url=url, apply_url=apply_url)
+    assert greenhouse_embed_url(job) == expected
+
+
+@pytest.mark.parametrize("src,is_ats", [
+    ("https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=1", True),
+    ("https://boards.greenhouse.io/embed/job_board?for=x", True),
+    ("https://jobs.lever.co/acme/x", True),
+    ("https://jobs.ashbyhq.com/acme/x", True),
+    # a Google API proxy carries the greenhouse domain in its query string and was
+    # being followed instead of the form
+    ("https://content.googleapis.com/static/proxy.html?parent=https%3A%2F%2Fjob-boards.greenhouse.io", False),
+    ("https://www.youtube.com/embed/abc", False),
+    ("", False),
+    (None, False),
+])
+def test_is_ats_iframe_matches_on_host(src, is_ats) -> None:
+    from appliers import is_ats_iframe
+
+    assert is_ats_iframe(src) is is_ats
+
+
+def test_greenhouse_tries_the_embed_form_first() -> None:
+    """Half of all Greenhouse boards redirect to a company page with no form on it."""
+    src = (ROOT / "appliers.py").read_text()
+    body = src[src.index("class GreenhouseApplier"):]
+    body = body[:body.index("class LeverApplier")]
+    open_form = body[body.index("async def open_form"):]
+    # the embed attempt must come before the posting URL
+    assert open_form.index("greenhouse_embed_url(job)") < open_form.index("self.apply_url(job)")
+
+
+def test_application_form_shape_rules() -> None:
+    """A search box or a newsletter signup must not be mistaken for an application."""
+    src = (ROOT / "appliers.py").read_text()
+    shape = src[src.index("async def is_application_form"):]
+    shape = shape[:shape.index("\n    async def ", 10)]
+    assert 'counts.get("password")' in shape       # sign-in forms rejected
+    assert 'counts.get("search")' in shape         # site search rejected
+    assert "total >= 6" in shape                   # a lone email box is not an application
