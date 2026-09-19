@@ -479,7 +479,12 @@ class GmailPage:
         self.ending = ending
         self.sent = False
         self.keys: list[str] = []
+        self.visited: list[str] = []
         self.keyboard = self._Keyboard(self)
+
+    async def goto(self, url: str, **_k) -> None:
+        """Gmail is asked what it actually sent, so the Sent view is navigated to."""
+        self.visited.append(url)
 
     class _Keyboard:
         def __init__(self, page: "GmailPage") -> None:
@@ -512,6 +517,8 @@ class GmailPage:
                 return 0 if (page.sent and page.ending == "sent") else 1
             if "Message sent" in sel or "Sending" in sel or "has-text" in sel:
                 return 0
+            if sel == "tr.zA":            # a row in the Sent list
+                return 1 if (page.sent and page.ending == "sent") else 0
             return 1
 
         async def is_visible(self) -> bool:
@@ -658,3 +665,59 @@ async def test_a_refusal_is_recorded_as_failed_not_submitted(settings, tmp_path:
 
     assert status == STATUS_FAILED
     assert "did not confirm" in db.list()[0]["notes"]
+
+
+def test_the_compose_window_must_really_be_open_before_anything_is_claimed() -> None:
+    """A compose that never opened looks exactly like one that closed after sending,
+    which is how a message that was never written got reported as sent."""
+    import inspect
+
+    from email_apply import GmailTransport
+
+    source = inspect.getsource(GmailTransport.send)
+    assert "_present(page, self.BODY)" in source
+    assert source.index("_present(page, self.BODY)") < source.index("self.SEND")
+
+
+def test_gmail_is_asked_what_it_actually_sent() -> None:
+    """Reading the compose window is not evidence. The Sent folder is."""
+    import inspect
+
+    from email_apply import GmailTransport
+
+    assert "verify_in_sent" in inspect.getsource(GmailTransport.send)
+    assert "in%3Asent" in GmailTransport.SENT_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_nothing_in_sent_means_it_was_not_sent(settings) -> None:
+    from email_apply import GmailTransport, SendRefused
+
+    page = GmailPage("sent")
+    page.sent = True
+
+    class Empty(GmailPage._Loc):
+        async def count(self):
+            return 0
+
+    page.locator = lambda sel: Empty(sel, page)
+    GmailTransport.SENT_TIMEOUT = 1.0
+    draft = EmailApplier(settings).compose(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        "careers@example.com", PROFILE, "Hello.", [])
+
+    with pytest.raises(SendRefused) as caught:
+        await GmailTransport(settings, GmailBrowser(page)).verify_in_sent(page, draft)
+
+    assert "nothing in Sent" in str(caught.value)
+
+
+def test_whether_to_ask_before_sending_is_yours_and_is_remembered() -> None:
+    from config import PERSISTED_KEYS
+
+    assert "email_auto_send" in PERSISTED_KEYS
+
+
+def test_asking_first_is_still_the_shipped_default() -> None:
+    """Your own choice is saved separately. Out of the box it stops and shows you."""
+    assert Settings(_env_file=None).email_auto_send is False

@@ -901,6 +901,11 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
                 <option value="gmail">My signed-in Gmail, in the browser</option>
                 <option value="smtp">A mail server (SMTP settings in .env)</option>
               </select></label>
+            <label class="check"><input type="checkbox" id="cfgAutoSend">
+              <span><b>Send without asking me first</b><span class="dim">On, an email
+                application goes as soon as it is written. Off, the run stops and shows
+                you the draft. Either way the whole message is saved to
+                <span class="mono">logs/emails/</span>.</span></span></label>
             <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgSearchX">
               <span><b>Also search X for these</b><span class="dim">X refuses anonymous
                 searches, so sign in once from Accounts below.</span></span></label>
@@ -1119,6 +1124,7 @@ function renderConfig(){
   setChecked('cfgEmail', CONFIG.email_apply);
   setVal('cfgTransport', CONFIG.email_transport || 'smtp');
   setChecked('cfgSearchX', CONFIG.search_x);
+  setChecked('cfgAutoSend', CONFIG.email_auto_send);
   setChecked('cfgHide', CONFIG.hide_browser);
   setVal('cfgChallenge', CONFIG.challenge_action || 'wait');
   const note = $('emailNote');
@@ -1926,7 +1932,7 @@ for(const [id, key] of [['cfgAuto','auto_submit'], ['cfgRemote','remote_only'],
                         ['cfgFollow','follow_companies'], ['cfgHeadless','headless'],
                         ['cfgAtOnce','fill_all_at_once'], ['cfgVerify','verify_after_fill'],
                         ['cfgEmail','email_apply'], ['cfgHide','hide_browser'],
-                        ['cfgSearchX','search_x']]){
+                        ['cfgSearchX','search_x'], ['cfgAutoSend','email_auto_send']]){
   $(id).onchange = () => {
     if(key === 'auto_submit' && $(id).checked &&
        !confirm('Auto-submit sends real applications without you clicking Submit, and is remembered until you turn it off. Continue?')){

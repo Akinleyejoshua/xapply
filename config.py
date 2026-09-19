@@ -46,6 +46,7 @@ PERSISTED_KEYS = (
     "verify_after_fill",
     "email_apply",
     "email_transport",
+    "email_auto_send",
     "search_x",
     "hide_browser",
     "challenge_action",
