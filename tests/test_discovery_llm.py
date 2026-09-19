@@ -402,3 +402,162 @@ async def test_ashby_source_respects_remote_and_seniority(monkeypatch, tmp_path:
 def test_settings_seniority_accepts_csv(monkeypatch) -> None:
     monkeypatch.setenv("SENIORITY_LEVELS", "mid, senior ,lead")
     assert Settings(_env_file=None).seniority_levels == ["mid", "senior", "lead"]
+
+
+# ---- word matching: the inflection bug --------------------------------------
+#
+# Regression: a search for "Data Analytics" returned nothing, because the matcher
+# compared whole words and "analytics" != "analyst". Of 2,146 live Greenhouse
+# postings, 94 had "data" in the title and only 4 survived.
+
+
+@pytest.mark.parametrize("a,b,same", [
+    ("analytics", "analyst", True),
+    ("analytics", "analysis", True),
+    ("analysis", "analyst", True),
+    ("engineer", "engineering", True),
+    ("developer", "development", True),
+    ("develop", "developer", True),
+    ("science", "scientist", True),
+    ("manager", "management", True),
+    ("design", "designer", True),
+    ("python", "pythonic", True),
+    ("data", "database", True),
+    # things that must stay apart
+    ("support", "supply", False),
+    ("backend", "frontend", False),
+    ("sales", "engineer", False),
+    ("data", "devops", False),
+    ("cloud", "clinical", False),
+])
+def test_words_match(a, b, same) -> None:
+    from discovery import words_match
+
+    assert words_match(a, b) is same
+    assert words_match(b, a) is same          # symmetric
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Data Analyst", True),
+    ("Data Analyst, Payments", True),
+    ("Senior Data Analyst", True),
+    ("Financial Data Analyst", True),
+    ("Staff Data Analyst", True),
+    ("Data Analytics Lead", True),
+    ("Data Analysis Specialist", True),
+    # related but genuinely different roles
+    ("Data Engineer", False),
+    ("Data Scientist, Fraud", False),
+    ("Software Engineer", False),
+    ("Marketing Analyst", False),
+    ("Account Executive, Product Sales (Data)", False),
+])
+def test_data_analytics_query_finds_analyst_titles(title, expected) -> None:
+    toks = query_tokens(["Data Analytics", "Data Analysis"])
+    assert title_matches(title, toks) is expected
+
+
+def test_engineering_query_finds_engineer_titles() -> None:
+    toks = query_tokens(["Backend Engineering"])
+    assert title_matches("Backend Engineer", toks) is True
+    assert title_matches("Senior Backend Engineer, Billing", toks) is True
+    assert title_matches("Frontend Engineer", toks) is False
+
+
+# ---- scan diagnostics -------------------------------------------------------
+
+
+def test_scan_stats_summary_and_reasons() -> None:
+    from discovery import ScanStats
+
+    s = ScanStats(seen=100, dropped_title=90, dropped_seniority=8, kept=2)
+    assert s.dropped == 98
+    assert dict(s.reasons()) == {"search terms": 90, "seniority": 8}
+    assert "2 kept of 100" in s.summary()
+
+    empty = ScanStats()
+    assert "no postings" in empty.summary()
+    assert empty.reasons() == []
+
+
+def test_scan_stats_add() -> None:
+    from discovery import ScanStats
+
+    total = ScanStats()
+    total += ScanStats(seen=10, dropped_title=8, kept=2)
+    total += ScanStats(seen=5, dropped_location=4, kept=1)
+    assert total.seen == 15 and total.kept == 3
+    assert total.dropped_title == 8 and total.dropped_location == 4
+
+
+def test_explain_empty_scan_names_the_responsible_filter(settings: Settings) -> None:
+    from discovery import ScanStats, explain_empty_scan
+
+    settings.search_queries = ["Data Analytics"]
+    settings.seniority_levels = ["intern"]
+    settings.countries = ["Nigeria"]
+
+    tips = explain_empty_scan(ScanStats(seen=2146, dropped_title=2136, dropped_seniority=10), settings)
+    assert any("Data Analytics" in t and "search terms" in t for t in tips)
+    assert any("intern" in t for t in tips)
+
+    tips = explain_empty_scan(ScanStats(seen=100, dropped_location=100), settings)
+    assert any("Nigeria" in t for t in tips)
+
+    # nothing to explain when the scan worked
+    assert explain_empty_scan(ScanStats(seen=10, kept=3), settings) == []
+    # or when no board answered at all
+    assert "companies --probe" in explain_empty_scan(ScanStats(), settings)[0]
+
+
+@pytest.mark.asyncio
+async def test_board_source_records_why_postings_dropped(monkeypatch, settings, db) -> None:
+    settings.search_queries = ["Data Analytics"]
+    settings.seniority_levels = ["senior"]
+    src = GreenhouseBoardSource(settings, db, None, tokens=["acme"])
+    patch_client(monkeypatch, src, {
+        "/boards/acme/jobs/1": {"id": 1, "title": "Senior Data Analyst", "company_name": "Acme",
+                                "location": {"name": "Remote"}, "content": "Own reporting. " * 30,
+                                "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"},
+        "/boards/acme/jobs": {"jobs": [
+            {"id": 1, "title": "Senior Data Analyst", "location": {"name": "Remote"},
+             "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"},
+            {"id": 2, "title": "Data Analyst", "location": {"name": "Remote"},       # wrong level
+             "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/2"},
+            {"id": 3, "title": "Office Manager", "location": {"name": "Remote"},     # wrong title
+             "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/3"},
+        ]},
+    })
+    jobs = await src.discover()
+    assert len(jobs) == 1
+    assert src.stats.seen == 3
+    assert src.stats.kept == 1
+    assert src.stats.dropped_title == 1
+    assert src.stats.dropped_seniority == 1
+
+
+@pytest.mark.asyncio
+async def test_stats_count_jobs_already_in_the_database(monkeypatch, settings, db) -> None:
+    settings.search_queries = ["Data Analytics"]
+    routes = {
+        "/boards/acme/jobs/1": {"id": 1, "title": "Data Analyst", "company_name": "Acme",
+                                "location": {"name": "Remote"}, "content": "Own reporting. " * 30,
+                                "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"},
+        "/boards/acme/jobs": {"jobs": [{"id": 1, "title": "Data Analyst", "location": {"name": "Remote"},
+                                        "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1"}]},
+    }
+    src = GreenhouseBoardSource(settings, db, None, tokens=["acme"])
+    patch_client(monkeypatch, src, routes)
+    first = await src.discover()
+    db.record(first[0], "submitted")
+
+    again = GreenhouseBoardSource(settings, db, None, tokens=["acme"])
+    patch_client(monkeypatch, again, routes)
+    assert await again.discover() == []
+    assert again.stats.dropped_seen_before == 1
+
+
+def test_dashboard_shows_scan_diagnostics() -> None:
+    html = (ROOT / "static" / "index.html").read_text()
+    for marker in ('id="scanDiag"', "function renderScanDiag()", "/api/scan-stats", "LAST_KIND"):
+        assert marker in html, marker

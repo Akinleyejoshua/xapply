@@ -223,6 +223,13 @@ ATS's own "remote" boolean: Ashby marks hybrid roles remote, so 505 of OpenAI's 
 jobs are actually hybrid. The `workplaceType` field is used when present, and the location text
 otherwise.
 
+**Search terms** match on word stems, not whole words, because job titles inflect constantly.
+"Data Analytics" finds *Data Analyst* and *Data Analysis*, "Backend Engineering" finds *Backend
+Engineer*. A majority of a query's words still has to be present, so "Backend Engineer" does not
+match a bare *Sales Engineer*, and "Data Analytics" does not match *Data Engineer*, which is a
+different job. Two words only count as the same idea when they share a five-character prefix, so
+*support* and *supply* stay apart.
+
 **Countries.** Pick any number from the dropdown on the scan card, or:
 
 ```bash
@@ -247,6 +254,29 @@ The filters stack. With **United Kingdom** and **Remote roles only** both set, a
 genuinely remote *and* name the UK, so "London (Hybrid)" is dropped and "Remote, United Kingdom"
 is kept. Choosing any country makes the free-text **Location** box inactive, so the two can never
 disagree.
+
+---
+
+## When a scan finds nothing
+
+Every scan counts what it examined and what each filter removed, so an empty result explains
+itself instead of leaving you guessing. The strip above the results reads like this:
+
+```
+examined 6739    kept 25    search terms 6714
+```
+
+and when nothing survives, it names the filter responsible and what to do:
+
+> **Nothing matched.**
+> 4789 of 4807 postings (100%) did not match your search terms (Data Analytics, Data Analysis).
+> Try fewer or broader terms.
+> 18 postings were the wrong seniority. You have intern selected; untick to allow any level.
+
+The same breakdown appears in the activity log, in `python main.py discover`, and at
+`GET /api/scan-stats`. The filters apply in this order, and each one reports separately: search
+terms, seniority, location and country, already-applied, missing description, and for aggregators,
+no application link behind the listing.
 
 ---
 
@@ -338,7 +368,7 @@ any other host with the default token is refused.
 | Overview | `GET /api/stats`, `/api/applications`, `/api/applications/{id}`, `PATCH /api/applications/{id}` |
 | Delete | `DELETE /api/applications/{id}`, `POST /api/applications/delete` |
 | Files | `GET /api/applications/{id}/resume`, `/screenshot`, `/api/export.csv`, `/api/audits` |
-| Discover | `POST /admin/discover`, `GET /api/discovered`, `POST /api/detect` |
+| Discover | `POST /admin/discover`, `GET /api/discovered`, `GET /api/scan-stats`, `POST /api/detect` |
 | Apply | `POST /admin/run`, `/admin/apply-selected`, `/admin/stop` |
 | Control | `GET /api/run`, `/api/gate`, `POST /admin/continue` |
 | Settings | `GET|PATCH /api/config`, `POST /api/config/reset`, `GET /api/models` |
@@ -447,7 +477,8 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A blank browser window opens | Fixed: board-API scans no longer launch a browser. If you tick `linkedin`, `google`, `remoteok` or `himalayas`, one is needed |
 | Clicking Continue does nothing | Fixed: the pause now accepts the terminal, the dashboard button and `logs/CONTINUE`, whichever comes first |
 | Every job is skipped | Lower `MATCH_THRESHOLD`, or read the rationale with `python main.py show <id>` |
-| A scan finds nothing | Your search terms need a majority of their words in the title. Try fewer, broader terms |
+| A scan finds nothing | Read the strip above the results. It names the filter that dropped everything |
+| A search finds far fewer than the board shows | Fixed: terms now match word stems, so "Data Analytics" finds "Data Analyst" |
 | A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |

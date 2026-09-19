@@ -385,6 +385,9 @@ class GreenhouseBoardSource(ApiJobSource):
                 for j in candidates:
                     job_id = str(j["id"])
                     if self.db.has_job(self.name, f"gh-{token}-{job_id}"):
+                        # Checked before the detail fetch to save a request; still counted,
+                        # so an empty scan can say "already applied" rather than nothing.
+                        self.stats.dropped_seen_before += 1
                         continue
                     detail = await self._json(client, self.DETAIL.format(token=token, job_id=job_id))
                     if not detail:

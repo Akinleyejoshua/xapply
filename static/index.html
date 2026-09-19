@@ -910,7 +910,11 @@ async function poll(){
       '<br><button class="sm" style="margin-top:9px" onclick="release()">I have handled it, continue</button>';
   } else bar.style.display = 'none';
 
-  if(st.discovered && st.discovered !== FOUND.length && st.kind !== 'discover') loadFound();
+  // Refresh when a scan finishes, even if it found nothing: an empty result still carries
+  // the diagnostics explaining which filter dropped everything.
+  if(LAST_KIND === 'discover' && st.kind !== 'discover') loadFound();
+  else if(st.discovered && st.discovered !== FOUND.length && st.kind !== 'discover') loadFound();
+  LAST_KIND = st.kind;
   // Another browser tab, or the CLI, may have changed settings underneath us.
   if(st.provider !== CONFIG.llm_provider || st.model !== CONFIG.active_model ||
      st.auto_submit !== CONFIG.auto_submit) reloadConfig();
@@ -963,7 +967,7 @@ $('btnScan').onclick = async () => {
     FOUND = []; SELECTED.clear(); renderFound();
   } catch(e){ toast(e.message, true); }
 };
-let SCAN_STATS = null;
+let SCAN_STATS = null, LAST_KIND = '';
 async function loadFound(){
   try {
     const [found, stats] = await Promise.all([
