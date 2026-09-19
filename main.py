@@ -451,6 +451,26 @@ def cmd_settings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_question(args: argparse.Namespace) -> int:
+    """Show which of the usual application questions a wording is recognised as."""
+    from question_bank import QuestionBank
+
+    bank = QuestionBank.load()
+    found = bank.explain(args.text)
+    print(f"\n  {args.text}\n")
+    if not found["matched"]:
+        print("  Not recognised. It will still be answered, just without the extra steer.")
+        print("  Add phrases to question_bank.json to teach it this wording.\n")
+    else:
+        print(f"  Recognised as: {found['matched']}\n")
+        print("  " + bank.guidance_for(args.text).replace("\n", "\n  ") + "\n")
+    print("  Scores:")
+    for name, score in found["scores"]:
+        print(f"    {name:24s} {score:5.2f}")
+    print()
+    return 0
+
+
 def cmd_saved(args: argparse.Namespace) -> int:
     """The postings scans have turned up, and a way to remove them.
 
@@ -676,6 +696,10 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("--files", action="store_true", help="also delete the generated PDF and screenshot")
     dl.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     dl.set_defaults(func=cmd_delete)
+
+    q = sub.add_parser("question", help="see how an application question is recognised")
+    q.add_argument("text", help="the question, in quotes")
+    q.set_defaults(func=cmd_question)
 
     sv = sub.add_parser("saved", help="postings scans have found, and how to remove them")
     sv.add_argument("--limit", type=int, default=50, help="how many to show")

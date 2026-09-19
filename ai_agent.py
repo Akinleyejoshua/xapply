@@ -22,6 +22,7 @@ from config import Settings
 from config import settings as default_settings
 from llm import LLMError, LLMProvider, build_provider
 from models import JobPosting
+from question_bank import QuestionBank
 
 log = logging.getLogger(__name__)
 
@@ -272,6 +273,9 @@ Options (choose exactly one, verbatim, if non-empty): {options}
 Current value: {current_value}
 Validation error shown by the form (if any): {error}
 
+WHAT THIS QUESTION IS ASKING
+{guidance}
+
 There are two kinds of field, and they are answered differently.
 
 1. A FACT about the candidate: name, email, location, years of experience, visa status,
@@ -327,9 +331,14 @@ field for the candidate to fill in.
 class AIAgent:
     """Prompting, schemas and guardrails. Transport lives in `llm.py`."""
 
-    def __init__(self, settings: Settings = default_settings, provider: Optional[LLMProvider] = None):
+    def __init__(self, settings: Settings = default_settings, provider: Optional[LLMProvider] = None,
+                 questions: Optional[QuestionBank] = None):
         self.settings = settings
         self.provider = provider or build_provider(settings)
+        #: Which of the usual application questions this one is, and what answers it.
+        #: Loaded once: a form asks a dozen questions and the file does not change
+        #: between them.
+        self.questions = questions or QuestionBank.load()
 
     @property
     def model(self) -> str:
@@ -395,6 +404,8 @@ class AIAgent:
             options=json.dumps(options or [], ensure_ascii=False),
             current_value=current_value or "(empty)",
             error=error or "(none)",
+            guidance=self.questions.guidance_for(label)
+            or "(not one the bank recognises; answer it from the rules below)",
         )
         answer = await self._generate(FieldAnswer, prompt, temperature=0.1)
         log.info("Gemini field answer for %r -> %r (conf %.2f, human=%s)",

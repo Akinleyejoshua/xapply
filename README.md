@@ -508,6 +508,23 @@ python main.py retry --status failed --yes    # every failed attempt
 python main.py retry --status pending_human_review
 ```
 
+### Open questions on a form
+
+Forms ask the same handful of things in a thousand wordings: how you work remotely,
+whether you have public code, why this company, tell us about a time. `question_bank.json`
+records those patterns, what each one is really asking, and which part of your profile
+answers it. The answer itself is composed from your own experience and projects every
+time, so the file cannot put words in your mouth or claim something you did not do.
+
+It is yours to edit. Add phrases to teach it a wording it does not know:
+
+```bash
+python main.py question "Tell us about a time you disagreed with a colleague"
+```
+
+That prints which archetype the wording matched, the guidance sent to the model, and the
+runner-up scores, so you can see why a question was read the way it was.
+
 ### Scan results
 
 What a scan finds is kept in the database, not in the browser, so a ten-minute scan survives a
