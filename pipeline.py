@@ -183,6 +183,12 @@ class Pipeline:
         if result.get("ok") or result.get("status") == 503:
             log.info("Model check passed: %s / %s", self.s.llm_provider, self.s.active_model)
             return
+        if result.get("transient"):
+            # The provider was never reached, so nothing was learned about the model.
+            # Stopping here would blame a model that may be perfectly fine.
+            log.warning("Could not verify the model: %s. Carrying on; a posting that "
+                        "cannot be scored will say so itself.", result.get("detail", ""))
+            return
         raise ModelUnavailable(
             f"{self.s.llm_provider} cannot use {self.s.active_model!r}, so nothing can be "
             f"scored.\n  {result.get('detail', '')}\n"

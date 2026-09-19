@@ -733,3 +733,78 @@ async def test_a_board_that_answers_in_time_is_untouched(settings, db) -> None:
 
     assert out == [{"text": "Data Analyst"}]
     assert src.slow_boards == []
+
+
+# ---- a broken connection is not a verdict on the model --------------------
+
+@pytest.mark.asyncio
+async def test_a_dropped_connection_is_retried_and_reported_as_the_network(
+        settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Seen live: an SSL record error during the pre-run check ended the whole run with
+    a stack trace. It is not an httpx exception, so it escaped the handler."""
+    import ssl
+
+    import llm
+
+    tries = {"n": 0}
+
+    class Dropping:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            tries["n"] += 1
+            raise ssl.SSLError("[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] decryption failed")
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", Dropping)
+    monkeypatch.setattr(llm, "CHECK_ATTEMPTS", 3)
+    monkeypatch.setattr(llm, "asyncio", __import__("asyncio"))
+    settings.nvidia_api_key = "x"
+
+    out = await llm.check_model(settings, "nvidia", "some/model")
+
+    assert tries["n"] == 3, "each attempt must get a fresh connection"
+    assert out["ok"] is False and out["transient"] is True
+    assert "network" in out["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_provider_does_not_condemn_the_model(
+        settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing was learned about the model, so blaming it would stop a run that could
+    have worked."""
+    import llm
+    import pipeline as pipeline_module
+
+    async def unreachable(*_a, **_k):
+        return {"ok": False, "transient": True, "detail": "Could not reach nvidia"}
+
+    monkeypatch.setattr(llm, "check_model", unreachable)
+    p = pipeline_module.Pipeline.__new__(pipeline_module.Pipeline)
+    p.s = settings
+
+    await p.preflight()          # must not raise
+
+
+@pytest.mark.asyncio
+async def test_a_model_the_provider_rejects_still_stops_the_run(
+        settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distinction that matters: the provider answered, and said no."""
+    import llm
+    import pipeline as pipeline_module
+
+    async def refused(*_a, **_k):
+        return {"ok": False, "status": 404, "detail": "No such model on this endpoint."}
+
+    monkeypatch.setattr(llm, "check_model", refused)
+    p = pipeline_module.Pipeline.__new__(pipeline_module.Pipeline)
+    p.s = settings
+
+    with pytest.raises(llm.ModelUnavailable):
+        await p.preflight()

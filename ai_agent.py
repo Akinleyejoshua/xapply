@@ -303,6 +303,19 @@ There are two kinds of field, and they are answered differently.
      with a number the candidate cannot defend in an interview is not.
    - Keep the candidate's real scale. Do not turn a personal project into company work, a
      contributor into a lead, or a small internal tool into a platform.
+   - When the question is about HOW the candidate works rather than what they built
+     (remote or async working, collaboration, code review, planning, handling
+     disagreement), the evidence is still in the profile: which roles were remote, who
+     they worked with, what the bullets say about reviewing, leading or delivering. Use
+     that as the setting, then describe the ordinary practices that work in it. Name a
+     real difficulty and what was done about it when the question asks for one; an
+     answer with no difficulty in it reads as evasion.
+   - When the question asks WHETHER the candidate has done something (open source, side
+     projects, writing, speaking, mentoring, a particular tool), look through the whole
+     profile before answering. A role, a project, a linked repository or a skill that
+     shows it is the answer, and the link belongs in the answer when the profile has
+     one. Say no plainly only when there is genuinely nothing, and never invent an
+     example to avoid saying no.
    - Answer every part of the question, in the order asked, in the first person, 3 to 6
      sentences. No headings, no bullets.
    - Set needs_human=true only when the profile holds nothing relevant at all.

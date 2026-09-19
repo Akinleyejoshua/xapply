@@ -20,6 +20,7 @@ import json
 import logging
 import random
 import re
+import ssl
 from typing import Any, Optional, TypeVar
 
 import httpx
@@ -32,6 +33,11 @@ log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+#: Connection faults, as opposed to anything the provider actually said. An SSL record
+#: error is not an httpx exception, so it escaped the handler and ended the run.
+TRANSPORT_FAULTS = (httpx.HTTPError, ssl.SSLError, ConnectionError, OSError)
+#: How many times a model check re-dials before giving up on the network.
+CHECK_ATTEMPTS = 3
 FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
 
 
@@ -553,11 +559,25 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
         headers = {"Content-Type": "application/json"}
         body = {"contents": [{"parts": [{"text": "Reply with OK."}]}],
                 "generationConfig": {"maxOutputTokens": 8}}
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(url, headers=headers, json=body)
-    except httpx.HTTPError as exc:
-        return {"ok": False, "model": model, "detail": f"Could not reach the provider: {exc}"}
+    # A connection can break mid-handshake or mid-stream. Those faults are not a verdict
+    # on the model, and one of them used to end the whole run with a stack trace, so each
+    # attempt gets a fresh connection.
+    last: Optional[Exception] = None
+    for attempt in range(1, CHECK_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(url, headers=headers, json=body)
+            break
+        except TRANSPORT_FAULTS as exc:
+            last = exc
+            log.warning("Model check attempt %d/%d could not reach %s: %s",
+                        attempt, CHECK_ATTEMPTS, provider, exc)
+            if attempt < CHECK_ATTEMPTS:
+                await asyncio.sleep(1.5 * attempt)
+    else:
+        return {"ok": False, "model": model, "transient": True,
+                "detail": f"Could not reach {provider} after {CHECK_ATTEMPTS} attempts: {last}. "
+                          f"This looks like the network rather than the model."}
     if r.status_code == 200:
         return {"ok": True, "model": model, "detail": "Answered a test prompt"}
     detail = r.text[:300]
