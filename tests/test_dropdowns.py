@@ -176,3 +176,143 @@ async def test_scrolling_settles_instead_of_twitching(form) -> None:
     await _browser.bring_into_view(loc)
 
     assert await page.evaluate("() => window.scrollY") == settled
+
+
+# ---- filling the whole form in one pass -----------------------------------
+
+class SlowResolver:
+    """Stands in for the model: every answer costs real time."""
+
+    def __init__(self, delay: float = 0.1) -> None:
+        self.delay = delay
+        self.in_flight = 0
+        self.peak = 0
+        self.calls: list[str] = []
+
+    async def resolve(self, f, ctx, force_ai: bool = False):
+        from browser_bot import ResolvedAnswer
+
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(self.delay)
+            self.calls.append(f.label)
+            return ResolvedAnswer(f"answer for {f.label}", "stub", 1.0)
+        finally:
+            self.in_flight -= 1
+
+
+def _text_fields(n: int) -> list:
+    from browser_bot import FormField
+
+    return [FormField(kind="text", label=f"Question {i}", idx=f"x{i}", order=i) for i in range(n)]
+
+
+@pytest.mark.asyncio
+async def test_answers_are_worked_out_together_not_one_after_another(settings) -> None:
+    """A dozen questions used to mean a dozen round trips in a row."""
+    from browser_bot import FormFiller
+
+    settings.fill_all_at_once = True
+    settings.fill_concurrency = 4
+    resolver = SlowResolver(delay=0.1)
+    filler = FormFiller(None, resolver, settings)
+
+    started = asyncio.get_event_loop().time()
+    done = await filler.prefetch(None, _text_fields(8), ctx=None)
+    took = asyncio.get_event_loop().time() - started
+
+    assert done == 8 and len(resolver.calls) == 8
+    assert took < 0.5, f"8 answers at 0.1s each took {took:.2f}s, so they ran in sequence"
+
+
+@pytest.mark.asyncio
+async def test_no_more_answers_run_at_once_than_you_allowed(settings) -> None:
+    """Unbounded concurrency is how you get rate limited by the model provider."""
+    from browser_bot import FormFiller
+
+    settings.fill_all_at_once = True
+    settings.fill_concurrency = 3
+    resolver = SlowResolver(delay=0.05)
+
+    await FormFiller(None, resolver, settings).prefetch(None, _text_fields(12), ctx=None)
+
+    assert resolver.peak <= 3
+
+
+@pytest.mark.asyncio
+async def test_a_forced_re_ask_is_never_served_from_the_cache(settings) -> None:
+    """Retrying a field the form rejected has to reach the model again."""
+    from browser_bot import FormFiller
+
+    settings.fill_all_at_once = True
+    resolver = SlowResolver(delay=0.01)
+
+    done = await FormFiller(None, resolver, settings).prefetch(
+        None, _text_fields(4), ctx=None, force_ai=True)
+
+    assert done == 0 and resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_field_that_is_already_filled_in_is_not_asked_about(settings) -> None:
+    from browser_bot import FormField, FormFiller
+
+    settings.fill_all_at_once = True
+    resolver = SlowResolver(delay=0.01)
+    fields = _text_fields(2) + [FormField(kind="text", label="Email", idx="x9",
+                                          current_value="you@example.com", order=9)]
+
+    await FormFiller(None, resolver, settings).prefetch(None, fields, ctx=None)
+
+    assert "Email" not in resolver.calls
+
+
+@pytest.mark.asyncio
+async def test_one_answer_failing_does_not_stop_the_others(settings) -> None:
+    """A failure is left for the filling pass, which reports it against its field."""
+    from browser_bot import FormFiller, ResolvedAnswer
+
+    settings.fill_all_at_once = True
+
+    class Flaky:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def resolve(self, f, ctx, force_ai: bool = False):
+            self.calls.append(f.label)
+            if f.label == "Question 1":
+                raise RuntimeError("the model refused")
+            return ResolvedAnswer("ok", "stub", 1.0)
+
+    flaky = Flaky()
+    done = await FormFiller(None, flaky, settings).prefetch(None, _text_fields(4), ctx=None)
+
+    assert done == 4 and len(flaky.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_the_whole_form_is_filled_in_one_pass(form, settings) -> None:
+    """End to end: the same answers reach the page, without typing them out."""
+    from browser_bot import ResolvedAnswer
+
+    browser, page, filler = form
+    settings.fill_all_at_once = True
+
+    class Answers:
+        async def resolve(self, f, ctx, force_ai: bool = False):
+            reply = {"First name": "Joshua", "Last name": "Ade",
+                     "Email": "j@example.com", "Work authorisation": "Yes",
+                     "How did you hear about us?": "LinkedIn",
+                     "Preferred work arrangement": "Fully remote",
+                     "Do you require visa sponsorship?": "No"}.get(f.label, "")
+            return ResolvedAnswer(reply or None, "stub", 1.0)
+
+    filler.resolver = Answers()
+    result = await filler.fill_step(page.locator("body"), ctx=None)
+
+    assert await page.input_value("#fn") == "Joshua"
+    assert await page.input_value("#em") == "j@example.com"
+    assert await page.inner_text("#btn") == "LinkedIn"
+    assert await page.inner_text("#dv") == "Fully remote"
+    assert result.unresolved == []
