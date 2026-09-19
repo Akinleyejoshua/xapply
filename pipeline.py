@@ -28,7 +28,7 @@ from database import (
 )
 from job_search import build_sources
 from llm import ModelUnavailable
-from models import JobPosting
+from models import JobPosting, best_title, known
 from resume_builder import ResumeBuilder
 
 log = logging.getLogger(__name__)
@@ -150,8 +150,8 @@ class Pipeline:
             return STATUS_SKIPPED
 
         analysis = await self.ai.analyze_job(self.profile, job)
-        job.title = job.title or analysis.job_title
-        job.company = job.company or analysis.company_name
+        job.title = best_title(job.title, analysis.job_title)
+        job.company = known(job.company) or known(analysis.company_name)
 
         if analysis.match_score < self.s.match_threshold:
             note = f"Match {analysis.match_score} < threshold {self.s.match_threshold}: {analysis.match_rationale}"
@@ -379,8 +379,8 @@ class Pipeline:
                     f"yourself if you know it.")
             job.title = job.title or "Role"
             analysis = await self.ai.analyze_job(self.profile, job)
-            job.title = job.title or analysis.job_title
-            job.company = job.company or analysis.company_name
+            job.title = best_title(job.title, analysis.job_title)
+            job.company = known(job.company) or known(analysis.company_name)
             resume = await self.resumes.build(self.profile, analysis, job)
             cover = self._cover_letter_factory(job)
             cover.cache["analysis"] = analysis

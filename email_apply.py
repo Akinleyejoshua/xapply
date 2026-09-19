@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from config import Settings
-from models import JobPosting, ats_text
+from models import JobPosting, ats_text, known
 
 log = logging.getLogger(__name__)
 
@@ -222,8 +222,13 @@ class SendRefused(RuntimeError):
 class EmailApplier:
     """Compose and send one application email."""
 
-    #: Subject lines recruiters expect. The role first, because that is what they filter on.
-    SUBJECT = "Application for {title}{company} - {name}"
+    #: Subject lines recruiters expect. The role first, because that is what they filter
+    #: on. Anything not actually known is left out rather than named, so a missing
+    #: company gives "Application for Data Analyst - Joshua Akinleye" and never
+    #: "Application for Data Analyst at Unknown - Joshua Akinleye".
+    SUBJECT = "Application for {title}{company}{name}"
+    #: How long a role may be before it stops being a role and starts being the advert.
+    MAX_TITLE = 70
 
     def __init__(self, settings: Settings, gate: Any = None, browser: Any = None):
         self.s = settings
@@ -259,10 +264,16 @@ class EmailApplier:
     def compose(self, job: JobPosting, to: str, profile: dict[str, Any],
                 letter_text: str, attachments: Iterable[Path]) -> Draft:
         """Build the message. Nothing here reaches the network."""
-        name = (profile.get("name") or "").strip()
-        company = f" at {job.company}" if job.company else ""
-        subject = self.SUBJECT.format(title=job.title or "your open role",
-                                      company=company, name=name or "application")
+        name = known(profile.get("name"))
+        title = known(job.title)
+        if len(title) > self.MAX_TITLE:
+            # A post scraped from social media puts the whole advert in the title.
+            title = title[: self.MAX_TITLE].rsplit(" ", 1)[0].rstrip(" ,:-") + "..."
+        company = known(job.company)
+        subject = self.SUBJECT.format(
+            title=title or "your open role",
+            company=f" at {company}" if company else "",
+            name=f" - {name}" if name else "")
         body = letter_text.strip()
         contact = self.signature(profile, job)
         if contact:

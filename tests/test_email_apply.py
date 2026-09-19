@@ -500,6 +500,9 @@ class GmailPage:
 
         async def press(self, key: str) -> None:
             self.page.keys.append(key)
+            # Gmail's own send shortcut, which is how the transport sends by default.
+            if key.endswith("+Enter"):
+                self.page.sent = True
 
     class _Loc:
         def __init__(self, sel: str, page: "GmailPage") -> None:

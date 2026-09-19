@@ -32,6 +32,50 @@ TYPOGRAPHIC = {
 _TYPO_RE = re.compile("|".join(map(re.escape, TYPOGRAPHIC)))
 
 
+#: Values that mean nothing was found. A model asked for a company name it cannot know
+#: answers with one of these, and repeating it puts "at Unknown" in a subject line and
+#: in a filename, which reads worse than saying nothing at all.
+PLACEHOLDERS = frozenset({
+    "", "-", "?", "??", "n/a", "na", "none", "null", "nil", "unknown", "unspecified",
+    "not specified", "not provided", "not stated", "not given", "untitled", "tbd",
+    "unnamed", "undisclosed", "confidential", "company", "role", "job", "position",
+})
+
+
+def known(value: Any) -> str:
+    """The value if it says something, or an empty string if it does not."""
+    text = str(value or "").strip()
+    return "" if text.lower().strip(".") in PLACEHOLDERS else text
+
+
+#: Past this, a title is not a job title any more. A page scraped from social media
+#: puts the whole advert in it.
+MAX_TITLE = 70
+#: What a social network calls a page rather than what the role is. "Yevgeniya's Post"
+#: is short and tidy and still tells a recruiter nothing.
+NOT_A_ROLE_RE = re.compile(
+    # "Someone's Post", and "Post" or "Profile" as the whole ending, but not the "Post"
+    # in "Data Analyst, Post Sales", which is a real role.
+    r"\b\w+['\u2019]s\s+(post|profile|timeline|update)\b"
+    r"|\b(post|posts|profile|timeline|tweet|feed)\s*$"
+    r"|\bon (x|twitter|linkedin|facebook|instagram|threads)\b"
+    r"|\|\s*(linkedin|x|twitter|facebook|indeed|glassdoor)\b", re.I)
+
+
+def best_title(scraped: Any, analysed: Any) -> str:
+    """The role, preferring a scraped title only while it still reads like one.
+
+    The page title of a recruiter's post is the post, links and all. The model reading
+    that post names the actual role, so where the scraped one has stopped being a title
+    the model's answer is the better one.
+    """
+    scraped, analysed = known(scraped), known(analysed)
+    unusable = (not scraped or len(scraped) > MAX_TITLE
+                or "http" in scraped.lower() or scraped.count(":") > 1
+                or bool(NOT_A_ROLE_RE.search(scraped)))
+    return (analysed or scraped) if unusable else scraped
+
+
 def ats_text(value: Any) -> Any:
     """Flatten typographic characters so a parser reads what a human reads.
 

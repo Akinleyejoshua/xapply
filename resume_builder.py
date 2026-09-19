@@ -20,7 +20,7 @@ from playwright.async_api import async_playwright
 from ai_agent import CoverLetter, JobAnalysis
 from config import Settings
 from config import settings as default_settings
-from models import JobPosting, ats_text
+from models import JobPosting, known, ats_text
 
 log = logging.getLogger(__name__)
 
@@ -245,15 +245,23 @@ class ResumeBuilder:
 
     # ---- PDF ------------------------------------------------------------
     def output_path(self, job: JobPosting, analysis: JobAnalysis) -> Path:
-        company = job.company or analysis.company_name
-        role = job.title or analysis.job_title
-        return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}.pdf"
+        return self.settings.output_dir / (self._stem(job, analysis) + ".pdf")
+
+    def _stem(self, job: JobPosting, analysis: Optional[JobAnalysis]) -> str:
+        """Company and role, leaving out whichever of them is not actually known.
+
+        A model asked for a company it cannot know answers "Unknown", and a social post
+        scraped for a role gives back the whole advert. Repeating either produces a file
+        called Unknown_Ganesh_Reddy_on_X_https_t_co_... which tells you nothing.
+        """
+        company = known(job.company) or known(analysis.company_name if analysis else "")
+        role = known(job.title) or known(analysis.job_title if analysis else "")
+        parts = [slugify(p) for p in (company, role) if p]
+        return "_".join(part for part in parts if part) or "application"
 
     # ---- cover letter ---------------------------------------------------
     def cover_letter_path(self, job: JobPosting, analysis: Optional[JobAnalysis] = None) -> Path:
-        company = job.company or (analysis.company_name if analysis else "")
-        role = job.title or (analysis.job_title if analysis else "")
-        return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}_cover_letter.pdf"
+        return self.settings.output_dir / (self._stem(job, analysis) + "_cover_letter.pdf")
 
     def render_cover_letter(self, profile: dict, letter: CoverLetter, job: JobPosting,
                             analysis: Optional[JobAnalysis] = None) -> str:
