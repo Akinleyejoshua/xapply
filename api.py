@@ -298,21 +298,43 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             note(f"settings updated: {', '.join(changed)}")
         return get_config()
 
+    GEMINI_FALLBACK = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
+
     @app.get("/api/models", dependencies=[Depends(auth)], tags=["settings"])
     async def list_models(provider: Optional[str] = None) -> dict[str, Any]:
+        """Live model list from whichever provider is asked for.
+
+        NVIDIA's /models is public. Gemini's ListModels needs the key but works even
+        when generateContent quota is exhausted, so it stays useful for diagnosis.
+        """
         which = (provider or settings.llm_provider).lower()
-        if which != "nvidia":
-            return {"provider": "gemini", "models": ["gemini-2.5-flash", "gemini-2.5-pro",
-                                                     "gemini-2.0-flash", "gemini-2.0-flash-lite"]}
-        url = settings.nvidia_base_url.rstrip("/") + "/models"
+        if which == "nvidia":
+            url = settings.nvidia_base_url.rstrip("/") + "/models"
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    r = await client.get(url)
+                    r.raise_for_status()
+                    ids = sorted(m["id"] for m in r.json().get("data", []))
+            except Exception as exc:
+                raise HTTPException(502, f"Could not reach {url}: {exc}")
+            return {"provider": "nvidia", "models": ids}
+
+        if not settings.gemini_api_key:
+            return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": "GEMINI_API_KEY not set"}
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.get(url)
+                r = await client.get("https://generativelanguage.googleapis.com/v1beta/models",
+                                     params={"key": settings.gemini_api_key, "pageSize": 200})
                 r.raise_for_status()
-                ids = sorted(m["id"] for m in r.json().get("data", []))
+                ids = sorted(
+                    m["name"].split("/")[-1] for m in r.json().get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                    and not any(x in m["name"] for x in ("-tts", "-image", "embed", "aqa"))
+                )
         except Exception as exc:
-            raise HTTPException(502, f"Could not reach {url}: {exc}")
-        return {"provider": "nvidia", "models": ids}
+            log.warning("Gemini ListModels failed: %s", exc)
+            return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": str(exc)[:160]}
+        return {"provider": "gemini", "models": ids or GEMINI_FALLBACK}
 
     @app.get("/api/profile", dependencies=[Depends(auth)], tags=["data"])
     def get_profile() -> dict[str, Any]:
@@ -350,14 +372,15 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             note(f"added company {body.ats}:{token}")
         return {k: v for k, v in data.items() if not k.startswith("_")}
 
-    @app.delete("/api/companies/{ats}/{token}", dependencies=[Depends(auth)], tags=["data"])
-    def remove_company(ats: str, token: str) -> dict[str, Any]:
+    # NOTE: the path param is not called `token`; that name is taken by the auth query param.
+    @app.delete("/api/companies/{ats}/{board_token}", dependencies=[Depends(auth)], tags=["data"])
+    def remove_company(ats: str, board_token: str) -> dict[str, Any]:
         path = settings.company_file
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if token in data.get(ats, []):
-            data[ats].remove(token)
+        if board_token in data.get(ats, []):
+            data[ats].remove(board_token)
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-            note(f"removed company {ats}:{token}")
+            note(f"removed company {ats}:{board_token}")
         return {k: v for k, v in data.items() if not k.startswith("_")}
 
     # ---- discover ---------------------------------------------------------

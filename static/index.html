@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XApply</title>
+<style>
+:root{
+  --bg:#0e1014; --panel:#151920; --panel2:#1b2029; --line:#262d39; --fg:#e7ebf2; --dim:#8b94a7;
+  --acc:#5b9dff; --ok:#3fb950; --warn:#e3b341; --err:#f85149; --skip:#6e7681; --radius:10px;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f5f7fa; --panel:#fff; --panel2:#f0f3f7; --line:#dfe4ec; --fg:#101520; --dim:#5b6473;}
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+h1,h2,h3{margin:0;font-weight:650}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.dim{color:var(--dim)}
+.sp{flex:1}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);
+  background:var(--panel);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.logo{font-size:16px;font-weight:700;letter-spacing:-.3px}
+.logo span{color:var(--acc)}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:1px solid transparent;color:var(--dim);padding:6px 13px;border-radius:99px;
+  cursor:pointer;font:inherit;font-weight:550}
+nav button:hover{color:var(--fg);background:var(--panel2)}
+nav button.on{background:var(--acc);color:#fff}
+.badge{font-size:11px;padding:3px 9px;border-radius:99px;font-weight:650;white-space:nowrap}
+.badge.auto{background:rgba(248,81,73,.16);color:var(--err)}
+.badge.assist{background:rgba(63,185,80,.16);color:var(--ok)}
+.badge.run{background:rgba(91,157,255,.16);color:var(--acc)}
+
+main{padding:20px;max-width:1500px;margin:0 auto}
+.view{display:none}.view.on{display:block}
+
+button,select,input,textarea{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+  border-radius:8px;padding:8px 11px;font:inherit}
+textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;width:100%}
+button{cursor:pointer;font-weight:550}
+button:hover:not(:disabled){border-color:var(--acc)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.primary:hover:not(:disabled){filter:brightness(1.1)}
+button.danger{background:var(--err);border-color:var(--err);color:#fff}
+button.ghost{background:none}
+button.sm{padding:5px 9px;font-size:12px}
+label.field{display:block;margin-bottom:12px}
+label.field > span{display:block;font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:550}
+label.field input,label.field select{width:100%}
+label.check{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;cursor:pointer}
+label.check input{width:auto;margin-top:3px}
+label.check b{display:block;font-weight:600}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.grid{display:grid;gap:14px}
+.stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:16px}
+.stat .n{font-size:27px;font-weight:700;line-height:1.1}
+.stat .l{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-top:3px}
+.cols{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.two{grid-template-columns:1.6fr 1fr}
+@media(max-width:900px){.two{grid-template-columns:1fr}}
+
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:9px 10px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--dim);border-bottom:1px solid var(--line);font-weight:650;white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--panel2)}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:650;white-space:nowrap}
+.submitted{background:rgba(63,185,80,.16);color:var(--ok)}
+.pending_human_review{background:rgba(227,179,65,.16);color:var(--warn)}
+.skipped{background:rgba(110,118,129,.18);color:var(--skip)}
+.failed{background:rgba(248,81,73,.16);color:var(--err)}
+.in_progress{background:rgba(91,157,255,.16);color:var(--acc)}
+.score{font-variant-numeric:tabular-nums;font-weight:650}
+
+#gatebar{display:none;background:rgba(227,179,65,.12);border:1px solid var(--warn);color:var(--warn);
+  padding:12px 16px;border-radius:var(--radius);margin-bottom:16px}
+#logbox{background:#0a0c10;color:#c8d3e0;border:1px solid var(--line);border-radius:8px;padding:12px;
+  height:230px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.7;white-space:pre-wrap}
+@media(prefers-color-scheme:light){#logbox{background:#11151c}}
+
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:14px;
+  max-width:960px;width:94%;padding:0}
+dialog::backdrop{background:rgba(0,0,0,.65)}
+.dh{padding:15px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;position:sticky;top:0;background:var(--panel)}
+.db{padding:16px 20px;max-height:72vh;overflow:auto}
+.sec{margin:16px 0 6px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);font-weight:650}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:5px 14px}
+.kv > div:nth-child(odd){color:var(--dim)}
+ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--panel);border:1px solid var(--acc);
+  border-radius:9px;padding:11px 16px;box-shadow:0 8px 28px rgba(0,0,0,.35);z-index:99;max-width:420px}
+.toast.err{border-color:var(--err)}
+.empty{padding:34px;text-align:center;color:var(--dim)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:12px;
+  display:flex;gap:6px;align-items:center}
+.chip button{background:none;border:0;color:var(--dim);cursor:pointer;padding:0;font-size:14px;line-height:1}
+.chip button:hover{color:var(--err)}
+.desc{white-space:pre-wrap;max-height:320px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">X<span>Apply</span></div>
+  <nav>
+    <button data-view="dash" class="on">Dashboard</button>
+    <button data-view="scan">Scan &amp; Apply</button>
+    <button data-view="apps">Applications</button>
+    <button data-view="settings">Settings</button>
+    <button data-view="profile">Profile</button>
+  </nav>
+  <div class="sp"></div>
+  <span id="modeBadge" class="badge assist">assisted</span>
+  <span id="runBadge" class="badge run" style="display:none">idle</span>
+  <span class="dim mono" id="llmBadge"></span>
+</header>
+
+<main>
+  <div id="gatebar"></div>
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="view on" id="view-dash">
+    <div class="grid stats" id="statCards"></div>
+    <div class="grid two">
+      <div class="card">
+        <div class="row"><h2>Run controls</h2><div class="sp"></div>
+          <span class="dim mono" id="ctlState">idle</span></div>
+        <p class="dim" style="margin:8px 0 14px">
+          Assisted mode fills the form and stops so you click Submit. Auto mode submits by itself and
+          still pauses on a CAPTCHA or a question it cannot answer truthfully.
+        </p>
+        <div class="row">
+          <button class="primary" id="btnRun">Scan and apply</button>
+          <button id="btnRunAuto">Run with auto-submit</button>
+          <button class="danger" id="btnStop" disabled>Stop</button>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="field" style="margin:0;flex:1;min-width:140px"><span>Applications this run</span>
+            <input type="number" id="runLimit" min="1" max="200" value="10"></label>
+          <label class="field" style="margin:0;flex:1;min-width:140px"><span>Match threshold</span>
+            <input type="number" id="runThreshold" min="0" max="100" value="65"></label>
+        </div>
+        <div class="row">
+          <label class="field" style="margin:0;flex:1;min-width:150px"><span>AI provider</span>
+            <select id="runProvider">
+              <option value="gemini">Google Gemini</option>
+              <option value="nvidia">NVIDIA NIM (free)</option>
+            </select></label>
+          <label class="field" style="margin:0;flex:2;min-width:200px"><span>Model</span>
+            <select id="runModel"></select></label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Activity</h2>
+        <div id="logbox" style="margin-top:10px"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="row"><h2>Recent applications</h2><div class="sp"></div>
+        <button class="sm ghost" data-view="apps">See all</button></div>
+      <table><thead><tr><th>Status</th><th>Score</th><th>Company</th><th>Role</th><th>ATS</th><th>Updated</th></tr></thead>
+        <tbody id="recentRows"></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ SCAN & APPLY ============ -->
+  <section class="view" id="view-scan">
+    <div class="grid two">
+      <div class="card">
+        <h2>Scan job boards</h2>
+        <p class="dim" style="margin:8px 0 14px">
+          Greenhouse, Lever and Ashby have public board APIs, so no login is needed and each posting
+          arrives with its full description. LinkedIn needs a signed-in browser session.
+        </p>
+        <label class="field"><span>Sources</span><div class="chips" id="srcChips"></div></label>
+        <label class="field"><span>Search terms, comma separated</span>
+          <input id="scanQueries" placeholder="Full Stack Developer, Backend Engineer"></label>
+        <label class="field"><span>Location</span><input id="scanLocation" placeholder="Remote"></label>
+        <div class="row">
+          <button class="primary" id="btnScan">Scan now</button>
+          <button class="danger" id="btnScanStop" disabled>Stop</button>
+          <span class="dim mono" id="scanState"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Activity</h2>
+        <div id="logbox2" style="margin-top:10px;height:300px;overflow:auto;background:#0a0c10;color:#c8d3e0;
+          border:1px solid var(--line);border-radius:8px;padding:12px;font-family:ui-monospace,Menlo,monospace;
+          font-size:11.5px;line-height:1.7;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="row">
+        <h2>Results <span class="dim" id="foundCount"></span></h2>
+        <div class="sp"></div>
+        <input id="foundFilter" placeholder="Filter company or role" style="width:210px">
+        <button class="sm" id="btnSelAll">Select all</button>
+        <button class="sm" id="btnSelNone">Clear</button>
+        <button class="primary" id="btnApplySel" disabled>Apply to selected</button>
+        <button id="btnApplySelAuto" disabled>Apply with auto-submit</button>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr><th style="width:34px"></th><th>Company</th><th>Role</th><th>Location</th><th>ATS</th><th>JD</th></tr></thead>
+        <tbody id="foundRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ APPLICATIONS ============ -->
+  <section class="view" id="view-apps">
+    <div class="card">
+      <div class="row">
+        <h2>Applications</h2><div class="sp"></div>
+        <input id="appSearch" placeholder="Search company, role or URL" style="width:230px">
+        <select id="appStatus">
+          <option value="">All statuses</option>
+          <option value="submitted">Submitted</option>
+          <option value="pending_human_review">Awaiting human</option>
+          <option value="skipped">Skipped</option>
+          <option value="failed">Failed</option>
+          <option value="in_progress">In progress</option>
+        </select>
+        <button class="sm" id="btnAppRefresh">Refresh</button>
+        <button class="sm" id="btnExport">Export CSV</button>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr><th>ID</th><th>Status</th><th>Score</th><th>Company</th><th>Role</th><th>ATS</th><th>Updated</th></tr></thead>
+        <tbody id="appRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="view-settings">
+    <div class="grid cols">
+      <div class="card">
+        <h2>AI model</h2>
+        <p class="dim" style="margin:8px 0 14px">NVIDIA offers a free key at
+          <a href="https://build.nvidia.com" target="_blank">build.nvidia.com</a>. Keys live in
+          <span class="mono">.env</span>, never in this page.</p>
+        <label class="field"><span>Provider</span>
+          <select id="cfgProvider"><option value="gemini">Google Gemini</option><option value="nvidia">NVIDIA NIM (free)</option></select></label>
+        <label class="field"><span>Model</span><select id="cfgModel"></select></label>
+        <div class="dim mono" id="keyState" style="margin-bottom:12px"></div>
+        <button class="primary" id="btnSaveAi">Save</button>
+      </div>
+
+      <div class="card">
+        <h2>Matching and submission</h2>
+        <label class="field"><span>Match threshold (skip anything below)</span>
+          <input type="number" id="cfgThreshold" min="0" max="100"></label>
+        <label class="field"><span>Max applications per run</span>
+          <input type="number" id="cfgMaxApps" min="1" max="200"></label>
+        <label class="field"><span>Max postings per company board</span>
+          <input type="number" id="cfgMaxCompany" min="1" max="200"></label>
+        <label class="check"><input type="checkbox" id="cfgAuto">
+          <span><b>Auto-submit</b><span class="dim">Bot clicks Submit. It still pauses on CAPTCHAs.</span></span></label>
+        <label class="check"><input type="checkbox" id="cfgRemote">
+          <span><b>Remote roles only</b><span class="dim">Drop postings that do not look remote.</span></span></label>
+        <label class="check"><input type="checkbox" id="cfgFollow">
+          <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box ticked.</span></span></label>
+        <label class="check"><input type="checkbox" id="cfgHeadless">
+          <span><b>Headless browser</b><span class="dim">Not recommended: you cannot take over on a CAPTCHA.</span></span></label>
+        <button class="primary" id="btnSaveMatch">Save</button>
+      </div>
+
+      <div class="card">
+        <h2>Company boards</h2>
+        <p class="dim" style="margin:8px 0 12px">Tokens for the public Greenhouse, Lever and Ashby APIs.
+          The token is the path segment in the board URL.</p>
+        <div class="row" style="margin-bottom:12px">
+          <select id="newAts" style="width:130px"><option>greenhouse</option><option>lever</option><option>ashby</option></select>
+          <input id="newToken" placeholder="company token" style="flex:1;min-width:130px">
+          <button id="btnAddCompany">Add</button>
+        </div>
+        <div id="companyList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROFILE ============ -->
+  <section class="view" id="view-profile">
+    <div class="card">
+      <div class="row"><h2>profile.json</h2><div class="sp"></div>
+        <span class="dim" id="profState"></span>
+        <button id="btnProfReload">Reload</button>
+        <button class="primary" id="btnProfSave">Save</button></div>
+      <p class="dim" style="margin:8px 0 12px">
+        The single source of truth. The model may reorder and reword what is here; it may never add to it.
+        Saving keeps the previous version as <span class="mono">profile.json.bak</span>.
+      </p>
+      <textarea id="profText" rows="30" spellcheck="false"></textarea>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg"><div class="dh"><b id="dlgTitle"></b><div class="sp"></div>
+  <button onclick="document.getElementById('dlg').close()">Close</button></div>
+  <div class="db" id="dlgBody"></div></dialog>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const LBL = {submitted:'Submitted', pending_human_review:'Awaiting human', skipped:'Skipped',
+             failed:'Failed', in_progress:'In progress'};
+const $ = id => document.getElementById(id);
+const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = p => p + (TOKEN ? (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN) : '');
+
+function ago(s){ if(!s) return '-';
+  const d = (Date.now() - new Date(s).getTime())/1000;
+  return d<60?`${d|0}s ago`:d<3600?`${d/60|0}m ago`:d<86400?`${d/3600|0}h ago`:`${d/86400|0}d ago`; }
+
+function toast(msg, isErr){
+  const t = document.createElement('div');
+  t.className = 'toast' + (isErr ? ' err' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 5200);
+}
+async function call(path, opts){
+  const r = await fetch(api(path), {headers:{'Content-Type':'application/json'}, ...opts});
+  const text = await r.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if(!r.ok) throw new Error((data && data.detail) || text || ('HTTP ' + r.status));
+  return data;
+}
+
+/* ---------- navigation ---------- */
+document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => show(b.dataset.view));
+function show(name){
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + name));
+  if(name === 'apps') loadApps();
+  if(name === 'settings') loadSettings();
+  if(name === 'profile') loadProfile();
+}
+
+/* ---------- state ---------- */
+let CONFIG = {}, FOUND = [], SELECTED = new Set();
+
+/* ---------- poll ---------- */
+async function poll(){
+  let st;
+  try { st = await call('/api/run'); } catch(e){ return; }
+  const running = st.running;
+  $('runBadge').style.display = running ? '' : 'none';
+  $('runBadge').textContent = running ? (st.kind === 'discover' ? 'scanning…' : 'applying…') : 'idle';
+  $('modeBadge').className = 'badge ' + (st.auto_submit ? 'auto' : 'assist');
+  $('modeBadge').textContent = st.auto_submit ? 'AUTO-SUBMIT' : 'assisted';
+  $('llmBadge').textContent = st.provider + ' / ' + st.model;
+  $('ctlState').textContent = running ? st.kind + ' running' : 'idle';
+  $('scanState').textContent = st.kind === 'discover' ? 'scanning…' : '';
+  $('btnRun').disabled = $('btnRunAuto').disabled = $('btnScan').disabled = running;
+  $('btnStop').disabled = $('btnScanStop').disabled = !running;
+
+  const text = (st.log || []).join('\n');
+  for(const id of ['logbox','logbox2']){
+    const el = $(id);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if(el.textContent !== text){ el.textContent = text; if(atBottom) el.scrollTop = el.scrollHeight; }
+  }
+
+  const g = st.gate || {};
+  const bar = $('gatebar');
+  if(g.paused){
+    bar.style.display = 'block';
+    bar.innerHTML = '<b>The bot is waiting for you.</b><br>' + esc(g.reason) +
+      '<br><button class="sm" style="margin-top:9px" onclick="release()">I have handled it, continue</button>';
+  } else bar.style.display = 'none';
+
+  if(st.discovered && st.discovered !== FOUND.length && st.kind !== 'discover') loadFound();
+}
+async function release(){ try { await call('/admin/continue', {method:'POST'}); } catch(e){ toast(e.message, true); } }
+
+/* ---------- dashboard ---------- */
+async function loadStats(){
+  const s = await call('/api/stats');
+  $('statCards').innerHTML = [
+    ['Total seen', s.total], ['Submitted', s.by_status.submitted],
+    ['Awaiting human', s.by_status.pending_human_review], ['Skipped', s.by_status.skipped],
+    ['Failed', s.by_status.failed], ['Avg match', s.avg_match_score ?? '-']
+  ].map(([l,n]) => `<div class="card stat"><div class="n">${esc(n ?? 0)}</div><div class="l">${l}</div></div>`).join('');
+  const rows = await call('/api/applications?limit=8');
+  $('recentRows').innerHTML = rows.map(r => `<tr class="click" onclick="detail(${r.id})">
+    <td><span class="pill ${r.status}">${LBL[r.status] || r.status}</span></td>
+    <td class="score">${r.match_score ?? '-'}</td><td>${esc(r.company)}</td>
+    <td>${esc(r.title)}</td><td class="dim">${esc(r.ats)}</td><td class="dim">${ago(r.updated_at)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">Nothing yet. Scan a board to get started.</td></tr>';
+}
+$('btnRun').onclick = () => startRun(false);
+$('btnRunAuto').onclick = () => { if(confirm('Auto-submit sends real applications without you clicking Submit. Continue?')) startRun(true); };
+$('btnStop').onclick = $('btnScanStop').onclick = async () => {
+  try { await call('/admin/stop', {method:'POST'}); toast('Stop requested'); } catch(e){ toast(e.message, true); } };
+async function startRun(auto){
+  try{
+    await call('/api/config', {method:'PATCH', body: JSON.stringify({
+      match_threshold: +$('runThreshold').value, max_applications_per_run: +$('runLimit').value})});
+    await call('/admin/run', {method:'POST', body: JSON.stringify({limit:+$('runLimit').value, auto_submit:auto})});
+    toast(auto ? 'Run started with auto-submit' : 'Run started in assisted mode');
+  } catch(e){ toast(e.message, true); }
+}
+
+/* ---------- scan ---------- */
+function renderSources(){
+  const known = CONFIG.known_sources || [];
+  const on = new Set(CONFIG.sources || []);
+  $('srcChips').innerHTML = known.map(s => `<label class="chip">
+    <input type="checkbox" value="${esc(s)}" ${on.has(s) ? 'checked' : ''}> ${esc(s)}</label>`).join('');
+}
+$('btnScan').onclick = async () => {
+  const sources = [...document.querySelectorAll('#srcChips input:checked')].map(i => i.value);
+  if(!sources.length) return toast('Pick at least one source', true);
+  const queries = $('scanQueries').value.split(',').map(s => s.trim()).filter(Boolean);
+  try{
+    await call('/admin/discover', {method:'POST', body: JSON.stringify(
+      {sources, queries: queries.length ? queries : null, location: $('scanLocation').value})});
+    toast('Scanning ' + sources.join(', '));
+    FOUND = []; SELECTED.clear(); renderFound();
+  } catch(e){ toast(e.message, true); }
+};
+async function loadFound(){
+  try { FOUND = await call('/api/discovered'); } catch(e){ return; }
+  renderFound();
+}
+function renderFound(){
+  const f = ($('foundFilter').value || '').toLowerCase();
+  const rows = FOUND.filter(j => !f ||
+    (j.company||'').toLowerCase().includes(f) || (j.title||'').toLowerCase().includes(f));
+  $('foundCount').textContent = FOUND.length ? `- ${rows.length} of ${FOUND.length}` : '';
+  $('foundRows').innerHTML = rows.map(j => {
+    const u = j.apply_url || j.url;
+    return `<tr><td><input type="checkbox" data-url="${esc(u)}" ${SELECTED.has(u) ? 'checked' : ''}
+        onchange="toggleSel(this)"></td>
+      <td>${esc(j.company)}</td>
+      <td>${esc(j.title)}<br><a class="mono dim" href="${esc(u)}" target="_blank">${esc(u.slice(0,70))}</a></td>
+      <td class="dim">${esc(j.location)}</td><td class="dim">${esc(j.ats)}</td>
+      <td class="dim mono">${j.description ? (j.description.length + 'c') : '-'}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">No results yet. Run a scan above.</td></tr>';
+  updateSelUi();
+}
+function toggleSel(cb){ cb.checked ? SELECTED.add(cb.dataset.url) : SELECTED.delete(cb.dataset.url); updateSelUi(); }
+function updateSelUi(){
+  const n = SELECTED.size;
+  $('btnApplySel').disabled = $('btnApplySelAuto').disabled = !n;
+  $('btnApplySel').textContent = n ? `Apply to ${n} selected` : 'Apply to selected';
+}
+$('foundFilter').oninput = renderFound;
+$('btnSelAll').onclick = () => { FOUND.forEach(j => SELECTED.add(j.apply_url || j.url)); renderFound(); };
+$('btnSelNone').onclick = () => { SELECTED.clear(); renderFound(); };
+$('btnApplySel').onclick = () => applySelected(false);
+$('btnApplySelAuto').onclick = () => { if(confirm(`Auto-submit ${SELECTED.size} real application(s)?`)) applySelected(true); };
+async function applySelected(auto){
+  try{
+    await call('/admin/apply-selected', {method:'POST',
+      body: JSON.stringify({urls:[...SELECTED], auto_submit:auto})});
+    toast(`Applying to ${SELECTED.size} posting(s)`);
+    show('dash');
+  } catch(e){ toast(e.message, true); }
+}
+
+/* ---------- applications ---------- */
+async function loadApps(){
+  const rows = await call(`/api/applications?limit=400&status=${encodeURIComponent($('appStatus').value)}&search=${encodeURIComponent($('appSearch').value)}`);
+  $('appRows').innerHTML = rows.map(r => `<tr class="click" onclick="detail(${r.id})">
+    <td class="dim mono">${r.id}</td><td><span class="pill ${r.status}">${LBL[r.status] || r.status}</span></td>
+    <td class="score">${r.match_score ?? '-'}</td><td>${esc(r.company)}</td><td>${esc(r.title)}</td>
+    <td class="dim">${esc(r.ats)}</td><td class="dim">${ago(r.updated_at)}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="empty">No applications match.</td></tr>';
+}
+$('btnAppRefresh').onclick = loadApps;
+$('appStatus').onchange = loadApps;
+$('appSearch').onkeyup = e => { if(e.key === 'Enter') loadApps(); };
+$('btnExport').onclick = () => location.href = api('/api/export.csv');
+
+async function detail(id){
+  const d = await call('/api/applications/' + id);
+  const a = d.analysis || {}, ans = d.answers || [];
+  $('dlgTitle').textContent = `#${d.id}  ${d.title || ''} @ ${d.company || ''}`;
+  $('dlgBody').innerHTML = `
+    <div class="kv">
+      <div>Status</div><div><span class="pill ${d.status}">${LBL[d.status] || d.status}</span> ${esc(d.notes || '')}</div>
+      <div>Match score</div><div class="score">${d.match_score ?? '-'}</div>
+      <div>ATS / source</div><div>${esc(d.ats)} (found via ${esc(d.source)})</div>
+      <div>Posting</div><div><a href="${esc(d.url)}" target="_blank">${esc(d.url)}</a></div>
+      ${d.apply_url && d.apply_url !== d.url ? `<div>Applied at</div><div><a href="${esc(d.apply_url)}" target="_blank">${esc(d.apply_url)}</a></div>` : ''}
+      <div>Resume</div><div>${d.resume_path ? `<a href="${api('/api/applications/'+d.id+'/resume')}" target="_blank">${esc(d.resume_path.split('/').pop())}</a>` : '-'}</div>
+      <div>Screenshot</div><div>${d.screenshot_path ? `<a href="${api('/api/applications/'+d.id+'/screenshot')}" target="_blank">open review screenshot</a>` : '-'}</div>
+      <div>Updated</div><div>${esc(d.updated_at)}</div>
+    </div>
+    ${a.match_rationale ? `<div class="sec">Why this score</div><div>${esc(a.match_rationale)}</div>` : ''}
+    ${(a.missing_requirements || []).length ? `<div class="sec">Requirements you do not meet</div><ul>${a.missing_requirements.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${a.tailored_summary ? `<div class="sec">Tailored summary</div><div>${esc(a.tailored_summary)}</div>` : ''}
+    ${(a.tailored_bullets || []).map(g => `<div class="sec">${esc(g.name)} (${esc(g.kind)})</div><ul>${(g.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`).join('')}
+    ${(a.answers || []).length ? `<div class="sec">Predicted screening answers</div><table>${a.answers.map(x => `<tr><td>${esc(x.question)}</td><td><b>${esc(x.answer)}</b></td></tr>`).join('')}</table>` : ''}
+    <div class="sec">Form fields the bot filled (${ans.length})</div>
+    ${ans.length ? `<table><thead><tr><th>Field</th><th>Value</th><th>Source</th><th>OK</th></tr></thead><tbody>
+      ${ans.map(x => `<tr><td>${esc(x.label)}</td><td>${esc(x.value)}</td>
+        <td class="dim mono">${esc(x.source)} ${x.confidence ?? ''}</td><td>${x.ok ? '✓' : '✗'}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="dim">None recorded</div>'}
+    <div class="sec">Job description</div><div class="desc mono">${esc(d.description || '(not stored)')}</div>`;
+  $('dlg').showModal();
+}
+
+/* ---------- settings ---------- */
+async function loadSettings(){
+  CONFIG = await call('/api/config');
+  $('cfgProvider').value = CONFIG.llm_provider;
+  $('cfgThreshold').value = CONFIG.match_threshold;
+  $('cfgMaxApps').value = CONFIG.max_applications_per_run;
+  $('cfgMaxCompany').value = CONFIG.max_jobs_per_company;
+  $('cfgAuto').checked = CONFIG.auto_submit;
+  $('cfgRemote').checked = CONFIG.remote_only;
+  $('cfgFollow').checked = CONFIG.follow_companies;
+  $('cfgHeadless').checked = CONFIG.headless;
+  $('runThreshold').value = CONFIG.match_threshold;
+  $('runLimit').value = CONFIG.max_applications_per_run;
+  $('scanQueries').value = (CONFIG.search_queries || []).join(', ');
+  $('scanLocation').value = CONFIG.search_location || '';
+  renderSources();
+  $('runProvider').value = CONFIG.llm_provider;
+  await Promise.all([loadModels(), loadRunModels()]);
+  const g = CONFIG.has_gemini_key, n = CONFIG.has_nvidia_key;
+  $('keyState').innerHTML = `GEMINI_API_KEY ${g ? 'set' : 'MISSING'} &nbsp;·&nbsp; NVIDIA_API_KEY ${n ? 'set' : 'MISSING'}`;
+  await loadCompanies();
+}
+async function loadModels(){
+  const p = $('cfgProvider').value;
+  const sel = $('cfgModel');
+  sel.innerHTML = '<option>loading…</option>';
+  try{
+    const d = await call('/api/models?provider=' + p);
+    const current = p === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
+    const models = d.models.includes(current) ? d.models : [current, ...d.models];
+    sel.innerHTML = models.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  } catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; }
+}
+$('cfgProvider').onchange = loadModels;
+
+/* the dashboard carries the same picker so you can switch model where you launch a run */
+async function loadRunModels(){
+  const p = $('runProvider').value, sel = $('runModel');
+  sel.innerHTML = '<option>loading…</option>';
+  try{
+    const d = await call('/api/models?provider=' + p);
+    const current = p === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
+    const models = d.models.includes(current) ? d.models : [current, ...d.models];
+    sel.innerHTML = models.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  } catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; }
+}
+$('runProvider').onchange = loadRunModels;
+$('runModel').onchange = saveRunModel;
+async function saveRunModel(){
+  const p = $('runProvider').value, body = {llm_provider: p};
+  body[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('runModel').value;
+  try { CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(body)}); toast('Using ' + p + ' / ' + $('runModel').value); }
+  catch(e){ toast(e.message, true); }
+}
+$('btnSaveAi').onclick = async () => {
+  const p = $('cfgProvider').value;
+  const body = {llm_provider: p};
+  body[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('cfgModel').value;
+  try { CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(body)}); toast('AI settings saved'); }
+  catch(e){ toast(e.message, true); }
+};
+$('btnSaveMatch').onclick = async () => {
+  try{
+    CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify({
+      match_threshold:+$('cfgThreshold').value, max_applications_per_run:+$('cfgMaxApps').value,
+      max_jobs_per_company:+$('cfgMaxCompany').value, auto_submit:$('cfgAuto').checked,
+      remote_only:$('cfgRemote').checked, follow_companies:$('cfgFollow').checked,
+      headless:$('cfgHeadless').checked})});
+    toast('Settings saved');
+  } catch(e){ toast(e.message, true); }
+};
+async function loadCompanies(){
+  const c = await call('/api/companies');
+  $('companyList').innerHTML = Object.entries(c).map(([ats, toks]) =>
+    `<div class="sec">${esc(ats)} (${toks.length})</div><div class="chips">${toks.map(t =>
+      `<span class="chip">${esc(t)}<button title="Remove" onclick="delCompany('${esc(ats)}','${esc(t)}')">×</button></span>`).join('')}</div>`).join('');
+}
+$('btnAddCompany').onclick = async () => {
+  const token = $('newToken').value.trim();
+  if(!token) return;
+  try{ await call('/api/companies', {method:'POST', body: JSON.stringify({ats:$('newAts').value, token})});
+    $('newToken').value = ''; await loadCompanies(); toast('Company added'); }
+  catch(e){ toast(e.message, true); }
+};
+async function delCompany(ats, token){
+  try{ await call(`/api/companies/${ats}/${encodeURIComponent(token)}`, {method:'DELETE'}); await loadCompanies(); }
+  catch(e){ toast(e.message, true); }
+}
+
+/* ---------- profile ---------- */
+async function loadProfile(){
+  try{
+    const p = await call('/api/profile');
+    $('profText').value = JSON.stringify(p, null, 2);
+    $('profState').textContent = `${(p.experience || []).length} roles, ${(p.projects || []).length} projects`;
+  } catch(e){ $('profText').value = ''; $('profState').textContent = e.message; }
+}
+$('btnProfReload').onclick = loadProfile;
+$('btnProfSave').onclick = async () => {
+  let parsed;
+  try { parsed = JSON.parse($('profText').value); }
+  catch(e){ return toast('Invalid JSON: ' + e.message, true); }
+  try { await call('/api/profile', {method:'PUT', body: JSON.stringify(parsed)}); toast('profile.json saved'); loadProfile(); }
+  catch(e){ toast(e.message, true); }
+};
+
+/* ---------- boot ---------- */
+(async function(){
+  try { await loadSettings(); } catch(e){ toast('Could not load settings: ' + e.message, true); }
+  await loadStats().catch(() => {});
+  await loadFound().catch(() => {});
+  poll(); setInterval(poll, 2500); setInterval(() => loadStats().catch(() => {}), 15000);
+})();
+</script>
+</body>
+</html>
