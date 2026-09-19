@@ -38,6 +38,16 @@ from models import JobPosting
 
 log = logging.getLogger(__name__)
 
+#: How many lines of activity to keep. A single application produces dozens.
+LOG_LINES = 900
+#: Modules whose logs belong in the activity feed. Playwright and httpx chatter does not.
+FEED_LOGGERS = frozenset({"pipeline", "appliers", "browser_bot", "discovery", "ai_agent",
+                          "resume_builder", "email_apply", "job_search", "llm"})
+#: Log level to the colour the dashboard gives it.
+LEVEL_KIND = {logging.DEBUG: "dim", logging.INFO: "info",
+              logging.WARNING: "warn", logging.ERROR: "error",
+              logging.CRITICAL: "error"}
+
 DEFAULT_TOKEN = "change-me"
 
 
@@ -220,13 +230,49 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     app.state.scan_stats = {}        # why the last scan kept or dropped what it did
     app.state.blocker = None         # a configuration problem that stopped the last run
 
-    def note(message: str) -> None:
-        stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        app.state.log.append(f"{stamp}  {message}")
-        del app.state.log[:-400]
+    def note(message: str, kind: str = "info") -> None:
+        """Add a line to the activity feed. `kind` decides how it is coloured."""
+        app.state.log.append({
+            "at": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "kind": kind,
+            "text": str(message),
+        })
+        del app.state.log[:-LOG_LINES]
         log.info(message)
 
     app.state.note = note
+
+    # Everything the run does is already logged by the module doing it, so the feed is
+    # fed from the logs rather than from calls sprinkled through the pipeline. That is
+    # what makes it show the whole flow, including each field as it is filled, instead
+    # of only the handful of moments the API happens to know about.
+    class FeedHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.name.split(".")[0] not in FEED_LOGGERS:
+                return
+            try:
+                text = record.getMessage()
+            except Exception:
+                return
+            app.state.log.append({
+                "at": datetime.fromtimestamp(record.created, timezone.utc).strftime("%H:%M:%S"),
+                "kind": LEVEL_KIND.get(record.levelno, "info"),
+                "text": text[:500],
+                "from": record.name.split(".")[0],
+            })
+            del app.state.log[:-LOG_LINES]
+
+    handler = FeedHandler(level=logging.INFO)
+    for name in FEED_LOGGERS:
+        module_log = logging.getLogger(name)
+        module_log.addHandler(handler)
+        # A logger filters by level before any handler is consulted, so without this
+        # every INFO line is dropped and the feed shows only warnings and failures,
+        # which is the opposite of showing the whole flow. An explicit DEBUG set
+        # elsewhere is left alone.
+        if module_log.getEffectiveLevel() > logging.INFO:
+            module_log.setLevel(logging.INFO)
+    app.state.feed_handler = handler
 
     def auth(request: Request, token: Optional[str] = Query(None)) -> None:
         expected = settings.admin_token
@@ -1095,7 +1141,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "provider": settings.llm_provider,
             "model": settings.active_model,
             "gate": g.status() if g else {"paused": False, "reason": "", "paused_since": None},
-            "log": app.state.log[-120:],
+            "log": app.state.log[-240:],
             "discovered": len(app.state.discovered),
             "blocker": app.state.blocker,
         }

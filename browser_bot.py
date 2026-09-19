@@ -1157,6 +1157,11 @@ class FormFiller:
                     "ok": applied is not None,
                 }
                 result.filled.append(entry)
+                # Logged one line per field, because this is the part of a run you
+                # actually want to read back: what went into the form, and where it
+                # came from.
+                log.info("Filled %s: %s  [%s]", f.label[:60],
+                         str(entry["value"])[:120], answer.source)
                 if applied is None and f.required:
                     result.unresolved.append(f.label)
             except PlaywrightTimeout as exc:
@@ -1387,6 +1392,8 @@ class FormFiller:
             return None
         if want != checked:
             await self._set_checkbox(scope, f, loc, want)
+        log.info("Filled %s: %s  [%s]", f.label[:60],
+                 "ticked" if want else "left unticked", source)
         return {"label": f.label, "kind": "checkbox", "value": "checked" if want else "unchecked",
                 "source": source, "confidence": 1.0, "ok": True}
 
