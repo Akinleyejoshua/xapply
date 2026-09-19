@@ -127,6 +127,13 @@ class UrlCheck(BaseModel):
     urls: list[str]
 
 
+class ModelTest(BaseModel):
+    """A model id to verify against the provider."""
+
+    model: str
+    provider: Optional[Literal["gemini", "nvidia"]] = None
+
+
 class BoardLookup(BaseModel):
     """Anything that might name a company board: a job link, a board link, or a token."""
 
@@ -422,7 +429,12 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                     ids = sorted(m["id"] for m in r.json().get("data", []))
             except Exception as exc:
                 raise HTTPException(502, f"Could not reach {url}: {exc}")
-            return {"provider": "nvidia", "models": ids}
+            from llm import is_chat_model
+
+            return {"provider": "nvidia", "models": ids,
+                    "chat_models": [i for i in ids if is_chat_model(i)],
+                    "note": "This is every model NVIDIA's OpenAI-compatible endpoint lists. "
+                            "You can also type an id that is not listed."}
 
         if not settings.gemini_api_key:
             return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": "GEMINI_API_KEY not set"}
@@ -439,7 +451,17 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         except Exception as exc:
             log.warning("Gemini ListModels failed: %s", exc)
             return {"provider": "gemini", "models": GEMINI_FALLBACK, "note": str(exc)[:160]}
-        return {"provider": "gemini", "models": ids or GEMINI_FALLBACK}
+        return {"provider": "gemini", "models": ids or GEMINI_FALLBACK,
+                "chat_models": ids or GEMINI_FALLBACK}
+
+    @app.post("/api/models/test", dependencies=[Depends(auth)], tags=["settings"])
+    async def test_model(body: ModelTest) -> dict[str, Any]:
+        """Send one tiny prompt so a model choice can be confirmed before a run."""
+        from llm import check_model
+
+        result = await check_model(settings, body.provider or settings.llm_provider, body.model)
+        note(f"model check {body.model}: {'ok' if result.get('ok') else result.get('detail', 'failed')[:80]}")
+        return result
 
     @app.get("/api/profile", dependencies=[Depends(auth)], tags=["data"])
     def get_profile() -> dict[str, Any]:

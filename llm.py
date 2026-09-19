@@ -335,6 +335,64 @@ class NvidiaProvider(LLMProvider):
 # --------------------------------------------------------------------------
 
 
+#: Model ids that cannot hold a chat conversation, so they can never produce the
+#: structured JSON this app needs. NVIDIA lists them alongside the chat models.
+NON_CHAT_MARKERS = (
+    "embed", "embedqa", "rerank", "nvclip", "-parse", "parse-", "nemotron-parse",
+    "guard", "safety", "reward", "content-safety", "topic-control",
+    "translate", "detector", "calibration", "ocr",
+)
+
+
+def is_chat_model(model_id: str) -> bool:
+    """Whether a model can answer a chat completion, and so be used here."""
+    lower = (model_id or "").lower()
+    return not any(marker in lower for marker in NON_CHAT_MARKERS)
+
+
+async def check_model(settings: Settings, provider: str, model: str) -> dict[str, Any]:
+    """Ask the provider to answer one tiny prompt, so a model choice can be verified.
+
+    A listed model can still be retired or overloaded, and an unlisted one can still
+    work, so the only reliable answer is to try it.
+    """
+    provider = (provider or settings.llm_provider).lower()
+    if provider == "nvidia":
+        if not settings.nvidia_api_key:
+            return {"ok": False, "detail": "NVIDIA_API_KEY is not set in .env"}
+        url = settings.nvidia_base_url.rstrip("/") + "/chat/completions"
+        headers = {"Authorization": f"Bearer {settings.nvidia_api_key}",
+                   "Content-Type": "application/json"}
+        body = {"model": model, "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 8, "temperature": 0}
+    else:
+        if not settings.gemini_api_key:
+            return {"ok": False, "detail": "GEMINI_API_KEY is not set in .env"}
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+               f"?key={settings.gemini_api_key}")
+        headers = {"Content-Type": "application/json"}
+        body = {"contents": [{"parts": [{"text": "Reply with OK."}]}],
+                "generationConfig": {"maxOutputTokens": 8}}
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        return {"ok": False, "model": model, "detail": f"Could not reach the provider: {exc}"}
+    if r.status_code == 200:
+        return {"ok": True, "model": model, "detail": "Answered a test prompt"}
+    detail = r.text[:300]
+    hint = {
+        404: "No such model on this endpoint.",
+        410: "This model has been retired by the provider.",
+        401: "The API key was rejected.",
+        403: "The API key is not allowed to use this model.",
+        429: "Rate limited or out of quota.",
+        503: "The model exists but is overloaded right now. Try again shortly.",
+    }.get(r.status_code, "")
+    return {"ok": False, "model": model, "status": r.status_code,
+            "detail": f"{hint} {detail}".strip()}
+
+
 PROVIDERS: dict[str, type[LLMProvider]] = {
     "gemini": GeminiProvider,
     "nvidia": NvidiaProvider,

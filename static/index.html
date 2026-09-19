@@ -378,6 +378,31 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
 .desc{white-space:pre-wrap; max-height:330px; overflow:auto; background:var(--surface-2);
   border:1px solid var(--line-soft); padding:15px 17px; border-radius:var(--r-md); line-height:1.7}
 
+.combo{position:relative}
+.combo input{width:100%; padding-right:34px}
+.combo .caret{position:absolute; right:11px; top:50%; transform:translateY(-50%);
+  pointer-events:none; color:var(--fg-3); font-size:11px}
+.combo-list{
+  position:absolute; z-index:40; left:0; right:0; top:calc(100% + 5px); display:none;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  box-shadow:var(--sh-lg); max-height:320px; overflow:auto; padding:5px;
+}
+.combo-list.open{display:block}
+.combo-opt{
+  padding:7px 10px; border-radius:var(--r-xs); cursor:pointer; font-size:13px;
+  font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.combo-opt:hover,.combo-opt.active{background:var(--accent-soft); color:var(--accent-text)}
+.combo-opt.current{font-weight:700}
+.combo-opt mark{background:var(--accent-glow); color:inherit; border-radius:3px; padding:0 1px}
+.combo-head{padding:7px 10px 6px; font-size:11px; color:var(--fg-3); display:flex;
+  gap:8px; align-items:center; border-bottom:1px solid var(--line-soft); margin-bottom:4px}
+.combo-head label{display:flex; gap:5px; align-items:center; cursor:pointer; font-size:11px}
+.combo-head input{width:auto; box-shadow:none; accent-color:var(--accent)}
+.combo-empty{padding:12px 10px; color:var(--fg-3); font-size:12.5px; line-height:1.55}
+.model-note{font-size:12px; color:var(--fg-3); margin-top:7px; line-height:1.55}
+.model-note.ok{color:var(--ok)} .model-note.bad{color:var(--err)}
+
 .toast{
   position:fixed; bottom:26px; right:26px; z-index:99; max-width:430px;
   background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent);
@@ -479,8 +504,13 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
                   <option value="gemini">Google Gemini</option>
                   <option value="nvidia">NVIDIA NIM (free)</option>
                 </select></label>
-              <label class="field" style="margin:0; flex:2; min-width:220px"><span>Model</span>
-                <select id="runModel"></select></label>
+              <label class="field" style="margin:0; flex:2; min-width:240px"><span>Model</span>
+                <div class="combo">
+                  <input id="runModel" autocomplete="off" spellcheck="false"
+                         placeholder="Type to search models">
+                  <span class="caret">&#9662;</span>
+                  <div class="combo-list" id="runModelList"></div>
+                </div></label>
             </div>
           </div>
 
@@ -653,7 +683,17 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
                 <option value="gemini">Google Gemini</option>
                 <option value="nvidia">NVIDIA NIM (free)</option>
               </select></label>
-            <label class="field"><span>Model</span><select id="cfgModel"></select></label>
+            <label class="field"><span>Model</span>
+              <div class="combo">
+                <input id="cfgModel" autocomplete="off" spellcheck="false"
+                       placeholder="Type to search, or paste any model id">
+                <span class="caret">&#9662;</span>
+                <div class="combo-list" id="cfgModelList"></div>
+              </div></label>
+            <div class="row" style="margin:-6px 0 12px">
+              <button class="sm" id="btnTestModel">Test this model</button>
+              <span class="model-note" id="modelNote"></span>
+            </div>
             <div class="dim mono" id="keyState" style="margin-bottom:6px"></div>
             <div id="savedNote"></div>
           </div>
@@ -872,20 +912,105 @@ function setVal(id, v){
 }
 function setChecked(id, v){ const el = $(id); if(el) el.checked = !!v; }
 
-/** Fill both model dropdowns for the provider each one is showing. */
+/* ---------- searchable model picker ----------
+   A plain <select> is unusable with 82 entries, and the provider's list can never be
+   complete: a model may be listed and retired, or usable and unlisted. So this is a
+   filter over the list that also accepts anything you type, with a Test button that
+   settles the question by actually calling the model. */
+
+/** Fetch a provider's models once, then reuse. */
+async function modelsFor(provider){
+  if(MODEL_CACHE[provider]) return MODEL_CACHE[provider];
+  const d = await call('/api/models?provider=' + provider);
+  MODEL_CACHE[provider] = {all: d.models || [], chat: d.chat_models || d.models || [], note: d.note || ''};
+  return MODEL_CACHE[provider];
+}
+
+class ModelPicker {
+  constructor(inputId, listId, providerId, onPick){
+    this.input = $(inputId); this.list = $(listId);
+    this.providerId = providerId; this.onPick = onPick;
+    this.showAll = false; this.active = -1; this.items = [];
+    this.input.addEventListener('focus', () => { this.input.dataset.editing = '1'; this.open(); });
+    this.input.addEventListener('input', () => this.open());
+    this.input.addEventListener('keydown', e => this.onKey(e));
+    this.input.addEventListener('blur', () => setTimeout(() => {
+      delete this.input.dataset.editing; this.close(); this.commit();
+    }, 180));
+  }
+  get provider(){ return $(this.providerId).value || CONFIG.llm_provider; }
+  async open(){
+    let data;
+    try { data = await modelsFor(this.provider); }
+    catch(e){ this.list.innerHTML = `<div class="combo-empty">${esc(e.message)}</div>`;
+              this.list.classList.add('open'); return; }
+    const q = this.input.value.trim().toLowerCase();
+    const pool = this.showAll ? data.all : data.chat;
+    this.items = pool.filter(m => !q || m.toLowerCase().includes(q));
+    const current = this.input.value.trim();
+    const hidden = data.all.length - data.chat.length;
+    const head = `<div class="combo-head">
+      <span>${this.items.length} of ${pool.length}</span>
+      <span class="sp"></span>
+      ${hidden > 0 ? `<label><input type="checkbox" ${this.showAll ? 'checked' : ''}
+        onmousedown="event.preventDefault()"
+        onclick="MODEL_PICKERS['${this.input.id}'].toggleAll(this.checked)">
+        show ${hidden} non-chat</label>` : ''}</div>`;
+    const rows = this.items.map((m, i) => {
+      const at = q ? m.toLowerCase().indexOf(q) : -1;
+      const label = at < 0 ? esc(m)
+        : esc(m.slice(0, at)) + '<mark>' + esc(m.slice(at, at + q.length)) + '</mark>' + esc(m.slice(at + q.length));
+      return `<div class="combo-opt ${i === this.active ? 'active' : ''} ${m === current ? 'current' : ''}"
+        onmousedown="event.preventDefault(); MODEL_PICKERS['${this.input.id}'].pick(${i})">${label}</div>`;
+    }).join('');
+    const empty = this.items.length ? '' : `<div class="combo-empty">
+      Nothing matches <b>${esc(q)}</b>. This provider does not list it, but you can still use
+      the id you typed and press <b>Test this model</b> to see whether it answers.</div>`;
+    this.list.innerHTML = head + rows + empty;
+    this.list.classList.add('open');
+  }
+  close(){ this.list.classList.remove('open'); this.active = -1; }
+  toggleAll(on){ this.showAll = on; this.open(); this.input.focus(); }
+  pick(i){
+    const m = this.items[i];
+    if(m === undefined) return;
+    this.input.value = m; this.close(); this.commit();
+  }
+  commit(){
+    const v = this.input.value.trim();
+    if(!v || v === this.lastCommitted) return;
+    this.lastCommitted = v;
+    this.onPick(v);
+  }
+  onKey(e){
+    if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      this.active = Math.max(0, Math.min(this.items.length - 1,
+        this.active + (e.key === 'ArrowDown' ? 1 : -1)));
+      this.open().then(() => {
+        const el = this.list.querySelector('.combo-opt.active');
+        if(el) el.scrollIntoView({block:'nearest'});
+      });
+    } else if(e.key === 'Enter'){
+      e.preventDefault();
+      if(this.active >= 0) this.pick(this.active); else { this.close(); this.commit(); }
+    } else if(e.key === 'Escape'){ this.close(); this.input.blur(); }
+  }
+  setValue(v){
+    if(document.activeElement === this.input) return;
+    if(this.input.value !== v){ this.input.value = v || ''; this.lastCommitted = v; }
+  }
+}
+
+const MODEL_PICKERS = {};
+function currentModel(provider){
+  return provider === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
+}
+/** Show the model each picker's provider is on. */
 async function renderModels(){
-  for(const [provId, modelId] of [['runProvider','runModel'], ['cfgProvider','cfgModel']]){
-    const provider = $(provId).value || CONFIG.llm_provider;
-    const current = provider === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
-    const sel = $(modelId);
-    let models = MODEL_CACHE[provider];
-    if(!models){
-      sel.innerHTML = '<option>loading…</option>';
-      try { models = (await call('/api/models?provider=' + provider)).models; MODEL_CACHE[provider] = models; }
-      catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; continue; }
-    }
-    const list = models.includes(current) ? models : [current, ...models];
-    sel.innerHTML = list.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  for(const id of ['runModel', 'cfgModel']){
+    const picker = MODEL_PICKERS[id];
+    if(picker) picker.setValue(currentModel(picker.provider));
   }
 }
 
@@ -1243,22 +1368,49 @@ $('scanLocation').oninput = debounced(() => saveConfig({search_location: $('scan
 // dashboard
 $('runLimit').onchange = () => saveConfig({max_applications_per_run: +$('runLimit').value}, true);
 $('runThreshold').onchange = () => saveConfig({match_threshold: +$('runThreshold').value}, true);
-$('runProvider').onchange = async () => { await renderModels(); saveRunModel(); };
-$('runModel').onchange = saveRunModel;
-function saveRunModel(){
+MODEL_PICKERS['runModel'] = new ModelPicker('runModel', 'runModelList', 'runProvider', saveRunModel);
+$('runProvider').onchange = async () => {
+  const p = $('runProvider').value;
+  MODEL_PICKERS['runModel'].setValue(currentModel(p));
+  await saveConfig({llm_provider: p}, true);
+};
+function saveRunModel(value){
   const p = $('runProvider').value, patch = {llm_provider: p};
-  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('runModel').value;
+  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = value;
   return saveConfig(patch);
 }
 
 // settings page
-$('cfgProvider').onchange = async () => { await renderModels(); saveCfgModel(); };
-$('cfgModel').onchange = saveCfgModel;
-function saveCfgModel(){
+MODEL_PICKERS['cfgModel'] = new ModelPicker('cfgModel', 'cfgModelList', 'cfgProvider', saveCfgModel);
+$('cfgProvider').onchange = async () => {
+  const p = $('cfgProvider').value;
+  MODEL_PICKERS['cfgModel'].setValue(currentModel(p));
+  $('modelNote').textContent = '';
+  await saveConfig({llm_provider: p}, true);
+};
+function saveCfgModel(value){
   const p = $('cfgProvider').value, patch = {llm_provider: p};
-  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('cfgModel').value;
+  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = value;
+  $('modelNote').textContent = '';
+  $('modelNote').className = 'model-note';
   return saveConfig(patch);
 }
+
+/** Settle whether a model works by actually calling it. */
+$('btnTestModel').onclick = async () => {
+  const model = $('cfgModel').value.trim();
+  if(!model) return toast('Pick or type a model first', true);
+  const note = $('modelNote');
+  note.className = 'model-note'; note.textContent = 'Testing…';
+  $('btnTestModel').disabled = true;
+  try{
+    const r = await call('/api/models/test', {method:'POST',
+      body: JSON.stringify({model, provider: $('cfgProvider').value})});
+    note.className = 'model-note ' + (r.ok ? 'ok' : 'bad');
+    note.textContent = r.ok ? `${model} answered a test prompt.` : r.detail;
+  } catch(e){ note.className = 'model-note bad'; note.textContent = e.message; }
+  $('btnTestModel').disabled = false;
+};
 $('cfgLevels').addEventListener('change', () => saveConfig(
   {seniority_levels: [...document.querySelectorAll('#cfgLevels input:checked')].map(i => i.value)}, true));
 for(const [id, key] of [['cfgThreshold','match_threshold'], ['cfgMaxApps','max_applications_per_run'],
