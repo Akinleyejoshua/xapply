@@ -352,6 +352,37 @@ class BaseApplier:
                 "value": text[:120] + ("..." if len(text) > 120 else ""),
                 "source": "cover_letter", "confidence": 1.0, "ok": True}
 
+    @staticmethod
+    def what_was_done(documents: list[dict[str, Any]], filled: list[dict[str, Any]]) -> str:
+        """A plain account of what the agent actually managed to do on this form."""
+        parts = []
+        if filled:
+            parts.append(f"filled {len(filled)} field{'s' if len(filled) != 1 else ''}")
+        if documents:
+            parts.append("attached " + ", ".join(d["value"] for d in documents))
+        return " and ".join(parts) if parts else "filled nothing"
+
+    def review_prompt(self, documents: list[dict[str, Any]],
+                      filled: list[dict[str, Any]]) -> str:
+        """What to tell you at the review step.
+
+        This used to say "Form filled." every time, including when the agent had filled
+        nothing at all and only attached a resume. Being told a form is ready when it is
+        empty wastes the trip to the browser and makes every other message less worth
+        believing, so it now says what actually happened.
+        """
+        if filled:
+            # Only the first letter: capitalize() would lowercase the filenames too.
+            done = self.what_was_done(documents, filled)
+            return (f"{done[:1].upper()}{done[1:]}. Check it in the browser and press "
+                    "Submit yourself, then continue.")
+        if documents:
+            return (f"Attached {', '.join(d['value'] for d in documents)}, but no other field "
+                    "on this form could be filled. Fill the rest in the browser, then press "
+                    "Submit yourself and continue.")
+        return ("Nothing on this form could be filled. Fill it in the browser, then press "
+                "Submit yourself and continue.")
+
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:  # pragma: no cover
         raise NotImplementedError
@@ -506,6 +537,37 @@ class LinkedInEasyApplyApplier(BaseApplier):
                     pass
         except Exception as exc:
             log.debug("discard failed: %s", exc)
+
+    @staticmethod
+    def what_was_done(documents: list[dict[str, Any]], filled: list[dict[str, Any]]) -> str:
+        """A plain account of what the agent actually managed to do on this form."""
+        parts = []
+        if filled:
+            parts.append(f"filled {len(filled)} field{'s' if len(filled) != 1 else ''}")
+        if documents:
+            parts.append("attached " + ", ".join(d["value"] for d in documents))
+        return " and ".join(parts) if parts else "filled nothing"
+
+    def review_prompt(self, documents: list[dict[str, Any]],
+                      filled: list[dict[str, Any]]) -> str:
+        """What to tell you at the review step.
+
+        This used to say "Form filled." every time, including when the agent had filled
+        nothing at all and only attached a resume. Being told a form is ready when it is
+        empty wastes the trip to the browser and makes every other message less worth
+        believing, so it now says what actually happened.
+        """
+        if filled:
+            # Only the first letter: capitalize() would lowercase the filenames too.
+            done = self.what_was_done(documents, filled)
+            return (f"{done[:1].upper()}{done[1:]}. Check it in the browser and press "
+                    "Submit yourself, then continue.")
+        if documents:
+            return (f"Attached {', '.join(d['value'] for d in documents)}, but no other field "
+                    "on this form could be filled. Fill the rest in the browser, then press "
+                    "Submit yourself and continue.")
+        return ("Nothing on this form could be filled. Fill it in the browser, then press "
+                "Submit yourself and continue.")
 
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:
@@ -791,6 +853,37 @@ class SinglePageApplier(BaseApplier):
                         return el
         return None
 
+    @staticmethod
+    def what_was_done(documents: list[dict[str, Any]], filled: list[dict[str, Any]]) -> str:
+        """A plain account of what the agent actually managed to do on this form."""
+        parts = []
+        if filled:
+            parts.append(f"filled {len(filled)} field{'s' if len(filled) != 1 else ''}")
+        if documents:
+            parts.append("attached " + ", ".join(d["value"] for d in documents))
+        return " and ".join(parts) if parts else "filled nothing"
+
+    def review_prompt(self, documents: list[dict[str, Any]],
+                      filled: list[dict[str, Any]]) -> str:
+        """What to tell you at the review step.
+
+        This used to say "Form filled." every time, including when the agent had filled
+        nothing at all and only attached a resume. Being told a form is ready when it is
+        empty wastes the trip to the browser and makes every other message less worth
+        believing, so it now says what actually happened.
+        """
+        if filled:
+            # Only the first letter: capitalize() would lowercase the filenames too.
+            done = self.what_was_done(documents, filled)
+            return (f"{done[:1].upper()}{done[1:]}. Check it in the browser and press "
+                    "Submit yourself, then continue.")
+        if documents:
+            return (f"Attached {', '.join(d['value'] for d in documents)}, but no other field "
+                    "on this form could be filled. Fill the rest in the browser, then press "
+                    "Submit yourself and continue.")
+        return ("Nothing on this form could be filled. Fill it in the browser, then press "
+                "Submit yourself and continue.")
+
     async def apply(self, page: Page, job: JobPosting, analysis: JobAnalysis,
                     resume_path: Path, profile: dict[str, Any]) -> ApplyResult:
         url = self.apply_url(job)
@@ -802,7 +895,8 @@ class SinglePageApplier(BaseApplier):
                 shot = await self.b.screenshot(page, f"noform_{self.ats}_{job.job_id}")
                 return self._result(STATUS_FAILED, "Application form not found", answers, shot, url)
             ctx = ResolveContext(profile, job, analysis)
-            answers.extend(await self.attach_documents(page, scope, resume_path))
+            documents = await self.attach_documents(page, scope, resume_path)
+            answers.extend(documents)
             await self.b.human_scroll(page, 700)
 
             if not self.s.fills_every_field:
@@ -810,7 +904,7 @@ class SinglePageApplier(BaseApplier):
                 watcher = SubmissionWatcher(self.b, page)
                 await watcher.start()
                 shot = await self.b.screenshot(page, f"documents_{self.ats}_{job.job_id}")
-                attached = ", ".join(a["value"] for a in answers) or "nothing"
+                attached = ", ".join(a["value"] for a in documents) or "nothing"
                 outcome = await self.gate.wait(
                     f"Attached {attached}. Fill in the rest of the form and submit it yourself, "
                     "then continue.")
@@ -861,8 +955,7 @@ class SinglePageApplier(BaseApplier):
                 # yourself is recorded even if this site words its confirmation oddly.
                 watcher = SubmissionWatcher(self.b, page)
                 await watcher.start()
-                outcome = await self.gate.wait(
-                    "Form filled. Check it in the browser and press Submit yourself, then continue.")
+                outcome = await self.gate.wait(self.review_prompt(documents, res.filled))
                 evidence = await watcher.stop()
                 if evidence.submitted:
                     shot = await self.b.screenshot(page, f"submitted_{self.ats}_{job.job_id}") or shot
@@ -870,8 +963,10 @@ class SinglePageApplier(BaseApplier):
                                         f"You submitted it: {evidence.describe()}", answers, shot, url)
                 if outcome == HumanGate.SKIP:
                     return self._result(STATUS_SKIPPED, "Skipped by you", answers, shot, url)
-                return self._result(STATUS_PENDING, "Filled and left for you; no submission seen",
-                                    answers, shot, url)
+                return self._result(
+                    STATUS_PENDING,
+                    f"{self.what_was_done(documents, res.filled)}; left for you, no submission seen",
+                    answers, shot, url)
             for attempt in range(1, 4):
                 await self.b.human_click(submit)
                 if await self.confirmed(page, timeout=15_000):

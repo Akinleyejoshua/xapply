@@ -4,6 +4,7 @@ No network: HTTP is stubbed, so these run in CI and on a plane.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -680,3 +681,55 @@ def test_dashboard_refreshes_while_a_scan_runs() -> None:
     assert "st.discovered !== FOUND.length" in poll, "results must refresh as the count moves"
     assert "found so far" in html
     assert "still scanning" in html
+
+
+# ---- a board that is too slow to download ---------------------------------
+
+
+class _SlowClient:
+    """A board that streams steadily but never finishes in time."""
+
+    async def get(self, url: str):
+        await asyncio.sleep(30)
+        raise AssertionError("the deadline should have fired long before this")
+
+
+class _QuickClient:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+
+    async def get(self, url: str):
+        class R:
+            status_code = 200
+
+            def json(_self):
+                return self.payload
+        return R()
+
+
+@pytest.mark.asyncio
+async def test_one_oversized_board_cannot_hold_the_whole_scan(settings, db) -> None:
+    """httpx's timeout is per read, so a slow 41 MB board never triggers it. One real
+    Lever board takes 147 seconds, and the scan looks frozen for all of it."""
+    from discovery import LeverBoardSource
+
+    settings.board_fetch_timeout_s = 0.05
+    src = LeverBoardSource(settings, db, None, tokens=["huge"])
+
+    out = await asyncio.wait_for(src._json(_SlowClient(), "https://api.lever.co/x"), timeout=5)
+
+    assert out is None
+    assert src.slow_boards == ["https://api.lever.co/x"]
+
+
+@pytest.mark.asyncio
+async def test_a_board_that_answers_in_time_is_untouched(settings, db) -> None:
+    from discovery import LeverBoardSource
+
+    settings.board_fetch_timeout_s = 5.0
+    src = LeverBoardSource(settings, db, None, tokens=["fine"])
+
+    out = await src._json(_QuickClient([{"text": "Data Analyst"}]), "https://api.lever.co/y")
+
+    assert out == [{"text": "Data Analyst"}]
+    assert src.slow_boards == []

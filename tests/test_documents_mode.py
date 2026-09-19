@@ -238,3 +238,45 @@ async def test_documents_mode_is_honest_when_you_do_not_submit(settings) -> None
     result, _ = await _run(settings, FORM.format(cover=COVER_UPLOAD), act)
     assert result.status == "pending_human_review"
     assert "the rest is yours" in result.note
+
+
+# ---- saying what actually happened ----------------------------------------
+
+DOCS = [{"label": "Resume", "value": "Joshua_Resume.pdf"},
+        {"label": "Cover letter", "value": "cover_letter.pdf"}]
+FIELDS = [{"label": "Email"}, {"label": "First name"}]
+
+
+def test_the_review_prompt_says_what_was_actually_filled() -> None:
+    """It used to say "Form filled." even when the agent had filled nothing at all."""
+    from appliers import BaseApplier as B
+
+    both = B.review_prompt(B, DOCS, FIELDS)
+    assert "Filled 2 fields" in both and "Joshua_Resume.pdf" in both
+
+    docs_only = B.review_prompt(B, DOCS, [])
+    assert "no other field" in docs_only
+    assert "Form filled" not in docs_only and "Filled 0" not in docs_only
+
+    nothing = B.review_prompt(B, [], [])
+    assert "Nothing on this form could be filled" in nothing
+
+
+def test_the_review_prompt_keeps_the_filename_as_it_is() -> None:
+    from appliers import BaseApplier as B
+
+    assert "Joshua_Resume.pdf" in B.review_prompt(B, DOCS, FIELDS)
+
+
+def test_one_filled_field_is_not_described_as_fields() -> None:
+    from appliers import BaseApplier as B
+
+    assert "filled 1 field and" in B.what_was_done(DOCS, [{"label": "Email"}])
+
+
+def test_the_saved_note_records_what_was_done() -> None:
+    from appliers import BaseApplier as B
+
+    assert B.what_was_done(DOCS, FIELDS).startswith("filled 2 fields and attached")
+    assert B.what_was_done(DOCS, []) == "attached Joshua_Resume.pdf, cover_letter.pdf"
+    assert B.what_was_done([], []) == "filled nothing"

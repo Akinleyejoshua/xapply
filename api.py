@@ -795,6 +795,11 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                                 note(f"added {len(fresh)} new {ats} board(s) to your company "
                                      f"list: {', '.join(fresh[:8])}"
                                      + (" and more" if len(fresh) > 8 else ""))
+                        slow = getattr(src, "slow_boards", None)
+                        if slow:
+                            note(f"skipped {len(slow)} board(s) that were too slow to "
+                                 f"download. Raise BOARD_FETCH_TIMEOUT_S in .env to wait "
+                                 f"longer for them.")
                         refused = getattr(src, "blocked_searches", 0)
                         if refused:
                             note(f"Google refused {refused} search(es) with its bot check. "

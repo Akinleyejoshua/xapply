@@ -267,6 +267,9 @@ class ApiJobSource:
         #: Called with each batch of postings as they are found, so a long scan shows
         #: results while it runs and a stopped scan keeps what it already had.
         self.on_batch: Optional[Callable[[str, list[JobPosting]], None]] = None
+        #: Boards abandoned for taking too long, so the scan can say so rather than
+        #: appearing to freeze and then silently returning nothing for them.
+        self.slow_boards: list[str] = []
 
     def _report(self, batch: list[JobPosting]) -> None:
         if batch and self.on_batch:
@@ -281,11 +284,20 @@ class ApiJobSource:
 
     async def _json(self, client: httpx.AsyncClient, url: str) -> Any:
         try:
-            r = await client.get(url)
+            # A total deadline, not a per-read one. Without it a board that streams
+            # tens of megabytes slowly holds the whole scan with nothing on screen.
+            r = await asyncio.wait_for(client.get(url),
+                                       timeout=self.s.board_fetch_timeout_s)
             if r.status_code != 200:
                 log.debug("%s -> HTTP %s", url, r.status_code)
                 return None
             return r.json()
+        except asyncio.TimeoutError:
+            self.slow_boards.append(url)
+            log.warning("%s: gave up after %.0fs. Some boards return tens of megabytes; "
+                        "raise BOARD_FETCH_TIMEOUT_S in .env to wait longer for them.",
+                        url, self.s.board_fetch_timeout_s)
+            return None
         except (httpx.HTTPError, json.JSONDecodeError) as exc:
             log.debug("%s -> %s", url, exc)
             return None
@@ -1030,6 +1042,7 @@ class GoogleSearchSource(ApiJobSource):
                     continue
                 finally:
                     self.stats += source.stats
+                self.slow_boards.extend(source.slow_boards)
                 if source.stats.seen:
                     confirmed.setdefault(ats, set()).add(token)
         self.found_boards = confirmed

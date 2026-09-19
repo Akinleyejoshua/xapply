@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     company_file: Path = BASE_DIR / "companies.json"
     max_jobs_per_company: int = 10     # cap per company board / aggregator feed
     discovery_timeout_s: float = 25.0
+    #: A total deadline for one board request. `discovery_timeout_s` is httpx's
+    #: per-operation timeout, which never fires on a slow but steady download: one
+    #: Lever aggregator board returns 41 MB and takes over two minutes, during which
+    #: the scan looks frozen. This bounds the whole request, not each read.
+    board_fetch_timeout_s: float = 45.0
     discovery_delay_s: float = 0.35    # pause between API calls, to stay polite
     aggregator_page_size: int = 100
     max_browser_resolutions: int = 8   # aggregator links resolved through the browser per run
