@@ -766,15 +766,20 @@ def tokens_from_cites(cites: Iterable[str]) -> dict[str, set[str]]:
     """
     out: dict[str, set[str]] = {}
     for text in cites:
-        match = CITE_RE.match((text or "").strip())
+        clean = (text or "").strip()
+        match = CITE_RE.match(clean)
         if not match:
             continue
         ats = BOARD_HOSTS.get(match.group(1).lower())
         token = match.group(2)
         if not ats or token.lower() in NOT_A_TOKEN or len(token) < 2:
             continue
-        if "…" in token or token.endswith("..."):
-            continue                       # Google truncated it; a partial slug is useless
+        # Google shortens a long address with an ellipsis. An ellipsis is not a word
+        # character, so it never reaches `token`; the only way to tell that the slug
+        # was cut short is to look at what follows it.
+        rest = clean[match.end(2):].lstrip()
+        if rest.startswith("…") or rest.startswith("..."):
+            continue
         out.setdefault(ats, set()).add(token)
     return out
 
