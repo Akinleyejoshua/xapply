@@ -37,6 +37,33 @@ ERROR_SELECTOR = (
     '.artdeco-inline-feedback--error, [role="alert"], [class*="error-message" i], [class*="form-error" i], '
     '[class*="field-error" i], [class*="errorMessage" i], .error-text, [class*="_error" i]:not(input)'
 )
+FORM_CONTAINER_JS = r"""
+() => {
+  const sel = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select';
+  const visible = el => {
+    const st = getComputedStyle(el);
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0 || el.type === 'file';
+  };
+  const inputs = [...document.querySelectorAll(sel)].filter(visible);
+  if (inputs.length < 2) return 0;
+  // Climb from the first input until the ancestor holds (almost) all of them,
+  // then stop: that is the tightest wrapper around the application.
+  let el = inputs[0], best = null;
+  while (el && el !== document.body) {
+    el = el.parentElement;
+    if (!el) break;
+    const n = [...el.querySelectorAll(sel)].filter(visible).length;
+    if (n >= Math.max(2, Math.ceil(inputs.length * 0.8))) { best = el; break; }
+  }
+  best = best || document.body;
+  document.querySelectorAll('[data-xapply-form]').forEach(e => e.removeAttribute('data-xapply-form'));
+  best.setAttribute('data-xapply-form', '1');
+  return [...best.querySelectorAll(sel)].filter(visible).length;
+}
+"""
+
 RESUME_FILE_INPUTS = (
     'input[type="file"][name*="resume" i], input[type="file"][id*="resume" i], '
     'input[type="file"][name*="cv" i], input[type="file"][id*="cv" i], '
@@ -140,6 +167,7 @@ class LinkedInEasyApplyApplier(BaseApplier):
     APPLIED_RE = re.compile(r"^\s*applied\b", re.I)
 
     async def modal(self, page: Page) -> Optional[Locator]:
+        """The Easy Apply dialog, by its known ids and then by role."""
         for sel in (".jobs-easy-apply-modal", 'div[data-test-modal-id*="easy-apply" i]', 'div[role="dialog"]'):
             loc = page.locator(sel).filter(has=page.locator("form, input, select, textarea, button"))
             n = await loc.count()
@@ -323,14 +351,33 @@ class SinglePageApplier(BaseApplier):
         return job.apply_url or job.url
 
     async def find_form(self, page: Page, timeout: int = 15_000) -> Optional[Locator]:
+        """Locate the form scope, falling back to the DOM when no selector matches.
+
+        Not every ATS wraps its application in a `<form>`: Ashby renders plain divs.
+        So after the configured selectors, the smallest element that still contains
+        every visible input is tagged and used as the scope.
+        """
+        per_selector = max(2000, timeout // max(1, len(self.form_selectors)))
         for sel in self.form_selectors:
             loc = page.locator(sel).filter(has=page.locator('input:not([type="hidden"]), textarea, select'))
             try:
-                await loc.first.wait_for(state="visible", timeout=timeout)
+                await loc.first.wait_for(state="visible", timeout=per_selector)
                 return loc.first
             except PlaywrightTimeout:
                 continue
-        return None
+        return await self.find_form_container(page)
+
+    async def find_form_container(self, page: Page) -> Optional[Locator]:
+        """Tag the smallest element holding most of the page's inputs and return it."""
+        try:
+            found = await page.evaluate(FORM_CONTAINER_JS)
+        except Exception as exc:
+            log.debug("container fallback failed: %s", exc)
+            return None
+        if not found:
+            return None
+        log.info("Using DOM fallback for the form scope (%s inputs)", found)
+        return page.locator("[data-xapply-form]").first
 
     async def find_submit(self, scope: Locator, page: Page) -> Optional[Locator]:
         for root in (scope, page.locator("body")):
@@ -443,7 +490,9 @@ class LeverApplier(SinglePageApplier):
 
 class AshbyApplier(SinglePageApplier):
     ats = ASHBY
-    form_selectors = ("form", "div[class*='applicationForm' i]", "main")
+    # Ashby renders no <form> element; the application lives in a plain div#form.
+    form_selectors = ("div#form", ".ashby-job-posting-right-pane",
+                      "[class*='ashby-application-form' i]", "form", "main")
     submit_re = re.compile(r"submit application|submit", re.I)
 
     def apply_url(self, job: JobPosting) -> str:
