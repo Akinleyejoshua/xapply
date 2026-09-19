@@ -1002,13 +1002,24 @@ class ModelPicker {
     if(m === undefined) return;
     this.input.value = m; this.dirty = true; this.close(); this.commit();
   }
+  /** A half-typed filter is not a choice. Only a real model id is saved. */
+  looksLikeModelId(v){
+    const data = MODEL_CACHE[this.provider];
+    if(data && data.all.includes(v)) return true;       // exactly one of the provider's models
+    if(this.provider === 'nvidia') return /^[\w.-]+\/[\w.\-:+]+$/.test(v);   // vendor/model
+    return /^(models\/)?[\w.\-:]+$/.test(v) && v.length > 3;                  // a gemini id
+  }
   commit(){
     const v = this.input.value.trim();
     const current = currentModel(this.provider);
-    if(!this.dirty){ this.setValue(current, true); return; }   // nothing was chosen
+    // Nothing was chosen, the box was emptied, or what is in it is a filter rather than
+    // a model id: in all three cases put the current model back and save nothing.
+    if(!this.dirty || !v || !this.looksLikeModelId(v)){
+      this.setValue(current, true);
+      return;
+    }
     this.dirty = false;
-    if(!v){ this.setValue(current, true); return; }            // never save an empty model
-    if(v === current) return;                                  // unchanged
+    if(v === current) return;
     this.lastCommitted = v;
     this.onPick(v);
   }
@@ -1023,7 +1034,9 @@ class ModelPicker {
       });
     } else if(e.key === 'Enter'){
       e.preventDefault();
-      if(this.active >= 0) this.pick(this.active); else { this.close(); this.commit(); }
+      if(this.active >= 0) this.pick(this.active);
+      else if(this.items.length === 1) this.pick(0);   // one result: that is the choice
+      else { this.close(); this.commit(); }
     } else if(e.key === 'Escape'){ this.close(); this.input.blur(); }
   }
   setValue(v, force){

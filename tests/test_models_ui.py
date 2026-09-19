@@ -153,3 +153,145 @@ def test_picker_opens_unfiltered() -> None:
     picker = picker[:picker.index("const MODEL_PICKERS")]
     assert "this.typed = false" in picker
     assert "this.typed ? this.input.value" in picker
+
+
+# ---- the picker must never change the model by itself ----------------------
+#
+# Regression: making the dropdown searchable introduced a blur handler that saved
+# whatever text was in the box. Opening the list and clicking away selected
+# "01-ai/yi-large", the first entry alphabetically, which NVIDIA lists but has never
+# deployed. Every posting in the next run then failed with a 404.
+
+
+def _picker_source() -> str:
+    html = (ROOT / "static" / "index.html").read_text()
+    start = html.index("class ModelPicker")
+    return html[start:html.index("const MODEL_PICKERS")]
+
+
+def test_picker_only_saves_a_deliberate_choice() -> None:
+    src = _picker_source()
+    assert "this.dirty = false" in src, "the picker must track whether a choice was made"
+    commit = src[src.index("commit(){"):]
+    commit = commit[:commit.index("\n  onKey")]
+    assert "if(!this.dirty" in commit, "blurring without choosing must not save"
+    assert "!this.looksLikeModelId(v)" in commit, "a half-typed filter must not be saved"
+    assert "setValue(current, true)" in commit, "the current model must be put back"
+
+
+def test_picker_accepts_an_unlisted_model_id() -> None:
+    """Typing a full id the provider does not list must still work."""
+    src = _picker_source()
+    check = src[src.index("looksLikeModelId(v){"):]
+    check = check[:check.index("\n  commit()")]
+    assert "data.all.includes(v)" in check       # anything in the list
+    assert "/" in check                           # or anything shaped like vendor/model
+
+
+def test_changing_provider_does_not_save_a_model() -> None:
+    html = (ROOT / "static" / "index.html").read_text()
+    for handler in ("$('runProvider').onchange", "$('cfgProvider').onchange"):
+        block = html[html.index(handler):]
+        block = block[:block.index("};") + 2]
+        assert "llm_provider: p" in block
+        assert "nvidia_model" not in block and "gemini_model" not in block, \
+            f"{handler} must change the provider only"
+
+
+def test_picker_labels_verified_and_undeployed_models() -> None:
+    src = _picker_source()
+    assert "data.verified" in src and "data.broken" in src
+    assert "works" in src and "not deployed" in src
+
+
+# ---- a model that cannot be used stops the run -----------------------------
+
+
+def test_model_unavailable_is_its_own_error() -> None:
+    from llm import LLMError, ModelUnavailable
+
+    assert issubclass(ModelUnavailable, LLMError)
+
+
+def test_pipeline_checks_the_model_before_any_posting() -> None:
+    src = (ROOT / "pipeline.py").read_text()
+    run = src[src.index("async def run(self"):]
+    run = run[:run.index("async def analyze_only")]
+    assert "await self.preflight()" in run
+    # and the check has to come before the browser and the sources
+    assert run.index("await self.preflight()") < run.index("StealthBrowser")
+    # a mid-run failure must stop rather than record one failure per posting
+    assert "except ModelUnavailable:" in run
+    assert "raise" in run[run.index("except ModelUnavailable:"):]
+
+
+def test_a_404_raises_model_unavailable_not_a_generic_error() -> None:
+    src = (ROOT / "llm.py").read_text()
+    assert "raise ModelUnavailable(" in src
+    block = src[src.index("if r.status_code in (404, 410)"):]
+    block = block[:block.index("if r.status_code in RETRYABLE_STATUS")]
+    assert "has not deployed" in block and "has retired" in block
+
+
+def test_api_reports_a_model_blocker_at_run_level() -> None:
+    src = (ROOT / "api.py").read_text()
+    assert "app.state.blocker" in src
+    assert '"/admin/clear-blocker"' in src
+    html = (ROOT / "static" / "index.html").read_text()
+    assert "st.blocker" in html and "fixModel()" in html
+
+
+def test_verify_endpoint_exists() -> None:
+    src = (ROOT / "api.py").read_text()
+    assert '"/api/models/verify"' in src
+    html = (ROOT / "static" / "index.html").read_text()
+    assert 'id="btnVerifyModels"' in html
+
+
+@pytest.mark.asyncio
+async def test_verify_models_records_what_it_learned(monkeypatch, settings) -> None:
+    from llm import verified_table, verify_models
+
+    async def fake_check(s, provider, model):
+        return {"ok": model.endswith("-good"), "status": 200 if model.endswith("-good") else 404}
+
+    monkeypatch.setattr("llm.check_model", fake_check)
+    out = await verify_models(settings, "nvidia", ["a/x-good", "b/y-bad"])
+    assert out == {"a/x-good": True, "b/y-bad": False}
+    assert verified_table("nvidia")["a/x-good"] is True
+    assert verified_table("nvidia")["b/y-bad"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_busy_model_still_counts_as_usable(monkeypatch, settings) -> None:
+    """503 means deployed but overloaded, which is a wait rather than a wrong choice."""
+    from llm import verify_models
+
+    async def fake_check(s, provider, model):
+        return {"ok": False, "status": 503, "detail": "overloaded"}
+
+    monkeypatch.setattr("llm.check_model", fake_check)
+    assert (await verify_models(settings, "nvidia", ["busy/model"]))["busy/model"] is True
+
+
+#: What a real credential looks like, as opposed to a comment describing one.
+SECRET_SHAPES = (
+    r"nvapi-[A-Za-z0-9_\-]{20,}",      # NVIDIA
+    r"AIza[A-Za-z0-9_\-]{20,}",        # Google
+    r"sk-[A-Za-z0-9_\-]{20,}",         # OpenAI style
+)
+
+
+@pytest.mark.parametrize("path", [".env.example", "README.md", "companies.json", "profile.example.json"])
+def test_committed_files_hold_no_secrets(path) -> None:
+    """These files are meant to be committed, so a real key must never reach them."""
+    import re
+
+    text = (ROOT / path).read_text()
+    for shape in SECRET_SHAPES:
+        found = re.search(shape, text)
+        assert not found, f"{path} contains something shaped like a real key: {found.group(0)[:12]}..."
+    for line in text.splitlines():
+        m = re.match(r"^\s*(GEMINI_API_KEY|NVIDIA_API_KEY|ADMIN_TOKEN)\s*=\s*(\S+)", line)
+        if m:
+            assert m.group(2) in ("", "change-me"), f"a real value is in {path}: {m.group(1)}"
