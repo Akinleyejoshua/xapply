@@ -100,6 +100,7 @@ def _count_pages(path: Path) -> Optional[int]:
 class ResumeBuilder:
     def __init__(self, settings: Settings = default_settings):
         self.settings = settings
+        self.last_trim = "nothing trimmed"   # what the most recent render gave up
         self.env = Environment(
             loader=FileSystemLoader(str(settings.template_dir)),
             autoescape=select_autoescape(["html", "xml"]),
@@ -251,58 +252,47 @@ class ResumeBuilder:
     def _variants(self, context: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         """Progressively shorter versions of the same truthful content, longest first.
 
-        Nothing is invented or reworded here; entries are only dropped, least relevant first,
-        so a dense profile still fits on one ATS-friendly page.
+        Nothing is invented or reworded; content is only reduced. The order matters:
+        shortening bullets costs the least, dropping projects costs more, and dropping a
+        job costs most of all, so work history is touched last and only when allowed.
+        Each variant carries a plain-English note of what it gave up.
         """
-        out: list[tuple[str, dict[str, Any]]] = [("full", context)]
-        n_proj, n_exp = len(context["projects"]), len(context["experience"])
-        for keep_proj in (5, 4, 3, 2, 1):
-            if keep_proj < n_proj:
-                out.append((f"projects<={keep_proj}", {**context, "projects": context["projects"][:keep_proj]}))
+        out: list[tuple[str, dict[str, Any]]] = [("nothing trimmed", context)]
+        experience, projects = context["experience"], context["projects"]
+
+        def with_bullets(ctx: dict[str, Any], cap: int) -> dict[str, Any]:
+            return {**ctx,
+                    "experience": [{**e, "bullets": e["bullets"][:cap]} for e in ctx["experience"]],
+                    "projects": [{**p, "bullets": p["bullets"][:cap]} for p in ctx["projects"]]}
+
+        # 1. fewer bullets per entry: every role and project still appears
+        for cap in (4, 3):
+            if any(len(e["bullets"]) > cap for e in experience + projects):
+                out.append((f"at most {cap} bullets per entry", with_bullets(context, cap)))
+
         base = out[-1][1]
-        for keep_exp in (4, 3):
-            if keep_exp < n_exp:
-                out.append((f"experience<={keep_exp}",
-                            {**base, "experience": base["experience"][:keep_exp]}))
-        trimmed = out[-1][1]
-        out.append(("no-projects", {**trimmed, "projects": []}))
+        # 2. fewer projects, least relevant first
+        for keep in (5, 4, 3, 2, 1, 0):
+            if keep < len(base["projects"]):
+                label = "projects removed" if keep == 0 else f"only the top {keep} project(s)"
+                out.append((label, {**base, "projects": base["projects"][:keep]}))
+
+        base = out[-1][1]
+        if any(len(e["bullets"]) > 2 for e in base["experience"]):
+            out.append(("at most 2 bullets per role", with_bullets(base, 2)))
+
+        # 3. last resort, and only if allowed: drop the oldest roles
+        if self.settings.resume_may_drop_experience:
+            base = out[-1][1]
+            for keep in (4, 3, 2):
+                if keep < len(base["experience"]):
+                    dropped = [e["company"] for e in base["experience"][keep:]]
+                    out.append((f"dropped {', '.join(dropped)}",
+                                {**base, "experience": base["experience"][:keep]}))
         return out
 
-    # ---- cover letter ---------------------------------------------------
-    def cover_letter_path(self, job: JobPosting, analysis: Optional[JobAnalysis] = None) -> Path:
-        company = job.company or (analysis.company_name if analysis else "")
-        role = job.title or (analysis.job_title if analysis else "")
-        return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}_cover_letter.pdf"
-
-    def render_cover_letter(self, profile: dict, letter: "CoverLetter", job: JobPosting,
-                            analysis: Optional[JobAnalysis] = None) -> str:
-        template = self.env.get_template("cover_letter.html")
-        context = {
-            "name": profile.get("name", ""),
-            "headline": profile.get("headline", ""),
-            "email": profile.get("email", ""),
-            "phone": profile.get("phone", ""),
-            "location": profile.get("location", ""),
-            "links": self._links(profile),
-            "role": job.title or (analysis.job_title if analysis else ""),
-            "company": job.company or (analysis.company_name if analysis else ""),
-            "greeting": letter.greeting,
-            "paragraphs": letter.paragraphs,
-            "signature": letter.signature,
-        }
-        return template.render(font_face=self.font_face(), **ats_text(context))
-
-    async def build_cover_letter(self, profile: dict, letter: "CoverLetter", job: JobPosting,
-                                 analysis: Optional[JobAnalysis] = None) -> Path:
-        """Render a cover letter to its own single-page PDF."""
-        self.settings.output_dir.mkdir(parents=True, exist_ok=True)
-        path = self.cover_letter_path(job, analysis)
-        html = self.render_cover_letter(profile, letter, job, analysis)
-        await render_first_that_fits([("cover", html)], path)
-        log.info("Cover letter written to %s", path)
-        return path
-
     async def build(self, profile: dict, analysis: JobAnalysis, job: JobPosting) -> Path:
+        """Render the tailored resume, and record anything it had to leave out."""
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
         path = self.output_path(job, analysis)
         template = self.env.get_template("resume.html")
@@ -310,17 +300,28 @@ class ResumeBuilder:
         face = self.font_face()
         variants = [(name, template.render(font_face=face, **ctx))
                     for name, ctx in self._variants(context)]
-        used = await render_first_that_fits(variants, path)
-        log.info("Resume written to %s (%s)", path, used)
+        used = await render_first_that_fits(variants, path, self.settings.resume_max_pages)
+        self.last_trim = used
+        if used == "nothing trimmed":
+            log.info("Resume written to %s (everything fits in %d page(s))",
+                     path, self.settings.resume_max_pages)
+        elif used == "overflow":
+            log.warning("Resume %s still exceeds %d page(s) even after trimming",
+                        path, self.settings.resume_max_pages)
+        else:
+            log.warning("Resume %s had to be shortened to fit %d page(s): %s. "
+                        "Raise RESUME_MAX_PAGES to keep more.",
+                        path.name, self.settings.resume_max_pages, used)
         return path
 
 
-async def render_first_that_fits(variants: list[tuple[str, str]], path: Path) -> str:
-    """Render each HTML variant until one lands on a single page; shrink the last one if needed.
+async def render_first_that_fits(variants: list[tuple[str, str]], path: Path,
+                                 max_pages: int = 2) -> str:
+    """Render each variant until one fits, and say which one was used.
 
-    Strategy, in order: full content at 100% scale, then progressively trimmed content, then
-    scale reduction on the shortest variant. `page.pdf` only works in headless Chromium, so a
-    dedicated headless browser is used even when the applier runs headed.
+    Order: the full content at 100% scale, then progressively trimmed content, then a
+    scale reduction on the shortest variant. `page.pdf` only works in headless Chromium,
+    so a dedicated headless browser is used even when the applier runs headed.
     """
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -332,23 +333,23 @@ async def render_first_that_fits(variants: list[tuple[str, str]], path: Path) ->
                 await page.pdf(path=str(path), format="Letter", print_background=True,
                                prefer_css_page_size=True, scale=1.0)
                 pages = _count_pages(path)
-                if pages is None or pages <= 1:
+                if pages is None or pages <= max_pages:
                     return name
                 log.debug("Variant %r is %d pages, trimming further", name, pages)
             for scale in SCALE_STEPS[1:]:  # shortest variant is still loaded
                 await page.pdf(path=str(path), format="Letter", print_background=True,
                                prefer_css_page_size=True, scale=scale)
                 pages = _count_pages(path)
-                if pages is None or pages <= 1:
+                if pages is None or pages <= max_pages:
                     return f"{variants[-1][0]} @ {scale:.2f}"
                 log.info("Resume is %d pages at scale %.2f, shrinking", pages, scale)
         finally:
             await browser.close()
-    log.warning("Resume still exceeds one page at minimum scale: %s", path)
+    log.warning("Resume still exceeds %d page(s) at minimum scale: %s", max_pages, path)
     return "overflow"
 
 
-async def html_to_pdf(html: str, path: Path, single_page: bool = True) -> Path:
-    """Render a single HTML string to PDF (kept for ad-hoc use and tests)."""
-    await render_first_that_fits([("single", html)], path)
+async def html_to_pdf(html: str, path: Path, max_pages: int = 1) -> Path:
+    """Render one HTML string to PDF (kept for ad-hoc use and tests)."""
+    await render_first_that_fits([("single", html)], path, max_pages)
     return path

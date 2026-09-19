@@ -769,6 +769,15 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <input type="number" id="cfgMaxApps" min="1" max="200"></label>
             <label class="field"><span>Max postings per company board</span>
               <input type="number" id="cfgMaxCompany" min="1" max="200"></label>
+            <label class="field"><span>Resume length</span>
+              <select id="cfgPages">
+                <option value="1">One page, trimmed to fit</option>
+                <option value="2">Up to two pages (recommended)</option>
+                <option value="3">Up to three pages</option>
+              </select></label>
+            <label class="check"><input type="checkbox" id="cfgDropExp">
+              <span><b>May drop older roles to fit</b><span class="dim">Off by default. Projects and
+                bullet counts are always trimmed first; work history is the substance of a CV.</span></span></label>
             <label class="field"><span>Default seniority &mdash; none ticked means any level</span>
               <div class="chips" id="cfgLevels"></div></label>
             <label class="field"><span>Default countries &mdash; none chosen means anywhere</span>
@@ -935,6 +944,8 @@ function renderConfig(){
   setChecked('cfgAuto', CONFIG.auto_submit);
   setChecked('cfgRemote', CONFIG.remote_only);
   setChecked('cfgFollow', CONFIG.follow_companies);
+  setVal('cfgPages', CONFIG.resume_max_pages);
+  setChecked('cfgDropExp', CONFIG.resume_may_drop_experience);
   setChecked('cfgHeadless', CONFIG.headless);
   $('keyState').innerHTML =
     `GEMINI ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
@@ -1483,7 +1494,8 @@ async function detail(id){
     ${(a.answers || []).length ? `<div class="sec">Predicted screening answers</div><table>${a.answers.map(x => `<tr><td>${esc(x.question)}</td><td><b>${esc(x.answer)}</b></td></tr>`).join('')}</table>` : ''}
     <div class="sec">Form fields the bot filled (${ans.length})</div>
     ${ans.length ? `<table><thead><tr><th>Field</th><th>Value</th><th>Source</th><th>OK</th></tr></thead><tbody>
-      ${ans.map(x => `<tr><td>${esc(x.label)}</td><td>${esc(x.value)}</td>
+      ${ans.map(x => `<tr${x.kind === 'note' ? ' style="background:var(--warn-soft)"' : ''}>
+        <td>${esc(x.label)}</td><td>${esc(x.value)}</td>
         <td class="dim mono">${esc(x.source)} ${x.confidence ?? ''}</td><td>${x.ok ? '✓' : '✗'}</td></tr>`).join('')}
       </tbody></table>` : '<div class="dim">None recorded</div>'}
     <div class="sec">Job description</div><div class="desc mono">${esc(d.description || '(not stored)')}</div>`;
@@ -1645,6 +1657,8 @@ $('btnTestModel').onclick = async () => {
 };
 $('cfgLevels').addEventListener('change', () => saveConfig(
   {seniority_levels: [...document.querySelectorAll('#cfgLevels input:checked')].map(i => i.value)}, true));
+$('cfgPages').onchange = () => saveConfig({resume_max_pages: +$('cfgPages').value}, true);
+$('cfgDropExp').onchange = () => saveConfig({resume_may_drop_experience: $('cfgDropExp').checked}, true);
 for(const [id, key] of [['cfgThreshold','match_threshold'], ['cfgMaxApps','max_applications_per_run'],
                         ['cfgMaxCompany','max_jobs_per_company']]){
   $(id).onchange = () => saveConfig({[key]: +$(id).value}, true);

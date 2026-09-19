@@ -112,6 +112,8 @@ class ConfigPatch(BaseModel):
     max_applications_per_run: Optional[int] = Field(None, ge=1, le=200)
     max_jobs_per_company: Optional[int] = Field(None, ge=1, le=200)
     follow_companies: Optional[bool] = None
+    resume_max_pages: Optional[int] = Field(None, ge=1, le=3)
+    resume_may_drop_experience: Optional[bool] = None
 
 
 class DiscoverRequest(BaseModel):
@@ -393,6 +395,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "max_applications_per_run": settings.max_applications_per_run,
             "max_jobs_per_company": settings.max_jobs_per_company,
             "follow_companies": settings.follow_companies,
+            "resume_max_pages": settings.resume_max_pages,
+            "resume_may_drop_experience": settings.resume_may_drop_experience,
             "known_sources": ["greenhouse", "ashby", "lever", "remoteok", "himalayas",
                               "google", "linkedin", "urls"],
             # Which of the values above came from settings.local.json rather than .env,

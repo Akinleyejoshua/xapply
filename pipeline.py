@@ -70,6 +70,7 @@ class Pipeline:
             "analysis": analysis.model_dump() if analysis else None,
             "answers_submitted": answers,
             "resume_path": resume_path,
+            "resume_trimmed": getattr(self.resumes, "last_trim", ""),
             "screenshot_path": shot,
             "auto_submit": self.s.auto_submit,
         }
@@ -124,12 +125,18 @@ class Pipeline:
             return STATUS_SKIPPED
 
         resume_path = await self.resumes.build(self.profile, analysis, job)
+        trimmed = self.resumes.last_trim
         if applier.cover_letter is not None:
             applier.cover_letter.cache["analysis"] = analysis
         mode = {"documents": "attaching documents only", "assisted": "filling the form",
                 "auto": "filling and submitting"}[self.s.fill_mode]
         log.info("Match %d -> %s via %s", analysis.match_score, mode, job.ats)
         result = await applier.apply(page, job, analysis, resume_path, self.profile)
+        # Record what the resume had to leave out, so a shortened CV is never a surprise.
+        if trimmed not in ("nothing trimmed", "overflow"):
+            result.answers.insert(0, {
+                "label": "Resume shortened", "kind": "note", "value": trimmed,
+                "source": f"fits {self.s.resume_max_pages} page(s)", "confidence": 1.0, "ok": True})
         audit = self.write_audit(job, analysis, result.status, result.note, result.answers,
                                  str(resume_path), result.screenshot_path)
         self.db.record(

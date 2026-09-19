@@ -46,6 +46,8 @@ PERSISTED_KEYS = (
     "max_applications_per_run",
     "max_jobs_per_company",
     "follow_companies",
+    "resume_max_pages",
+    "resume_may_drop_experience",
 )
 
 
@@ -162,6 +164,12 @@ class Settings(BaseSettings):
     # ---- Storage ----
     db_path: Path = BASE_DIR / "applications.db"
     output_dir: Path = BASE_DIR / "output_resumes"
+    #: How many pages a generated resume may run to. One page forces heavy trimming and
+    #: can cost you whole roles; two is normal for anyone past a few years' experience.
+    resume_max_pages: int = Field(2, ge=1, le=3)
+    #: Work history is the substance of a CV, so it is only ever dropped as a last resort,
+    #: and only when this allows it. Projects and bullet counts are trimmed first.
+    resume_may_drop_experience: bool = False
     profile_path: Path = BASE_DIR / "profile.json"
     template_dir: Path = BASE_DIR / "templates"
     log_dir: Path = BASE_DIR / "logs"
