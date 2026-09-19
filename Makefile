@@ -46,12 +46,25 @@ install: deps browsers env dirs check  ## Full setup: venv, deps, browsers, .env
 	@echo ""
 	@echo "Setup complete. Next steps:"
 	@echo "  1. Edit profile.json with your real profile"
-	@echo "  2. make login      (log in to LinkedIn once; the session is persisted)"
-	@echo "  3. make run        (assisted mode)  or  make run-auto"
-	@echo "  4. make serve      (admin dashboard at http://127.0.0.1:8000)"
+	@echo "  2. make serve      web dashboard: scan boards, apply, review (no login needed)"
+	@echo "     or make scan    preview postings in the terminal"
+	@echo "     or make run     assisted mode in the terminal"
+	@echo "  3. make login      only if you want the LinkedIn source"
 
-login: dirs  ## Open the persistent browser so you can log in to LinkedIn once
+login: dirs  ## Open the persistent browser so you can log in to LinkedIn once (LinkedIn only)
 	$(PY) main.py login
+
+scan: dirs  ## Preview what the configured sources would find (applies to nothing)
+	$(PY) main.py discover
+
+scan-save: dirs  ## Scan and write the URLs to jobs.txt
+	$(PY) main.py discover --save jobs.txt
+
+models: ## List the models the current provider offers
+	$(PY) main.py models
+
+companies: ## Show the company board tokens and count their open roles
+	$(PY) main.py companies --probe
 
 run: dirs  ## Run the pipeline in assisted mode (you click Submit)
 	$(PY) main.py run
@@ -62,15 +75,17 @@ run-auto: dirs  ## Run the pipeline with AUTO_SUBMIT (bot clicks Submit)
 analyze: dirs  ## Dry-run one posting: make analyze URL=https://www.linkedin.com/jobs/view/123/
 	$(PY) main.py analyze --url "$(URL)"
 
-serve: dirs  ## Start the FastAPI admin dashboard
+serve: dirs  ## Start the web dashboard (scan, apply, review, settings) at http://127.0.0.1:8000
 	$(PY) main.py serve
+
+ui: serve  ## Alias for `make serve`
 
 db-init:  ## Create the SQLite schema
 	$(PY) main.py init-db
 
 check: deps  ## Byte-compile and import-check every module
 	$(PY) -m compileall -q .
-	$(PY) -c "import config, models, database, ai_agent, resume_builder, browser_bot, job_search, pipeline, api, main; print('imports OK')"
+	$(PY) -c "import config, models, database, llm, ai_agent, resume_builder, browser_bot, appliers, job_search, discovery, pipeline, reports, api, main; print('imports OK')"
 
 test: deps  ## Run the offline test-suite
 	$(PY) -m pytest -q tests
@@ -82,4 +97,5 @@ clean:  ## Remove caches (keeps DB, resumes and browser session)
 reset: clean  ## DANGER: remove venv, DB, generated resumes, logs and browser session
 	rm -rf $(VENV) applications.db output_resumes/*.pdf logs/*.log .browser_profile
 
-.PHONY: help venv deps browsers env dirs install login run run-auto analyze serve db-init check test clean reset
+.PHONY: help venv deps browsers env dirs install login scan scan-save models companies run run-auto \
+	analyze serve ui db-init check test clean reset

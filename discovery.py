@@ -28,6 +28,7 @@ import asyncio
 import html as html_lib
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -85,12 +86,26 @@ def query_tokens(queries: Iterable[str]) -> list[set[str]]:
     return out
 
 
-def title_matches(title: str, token_sets: list[set[str]]) -> bool:
-    """True when the title shares a meaningful word with any configured search query."""
+#: A single shared word is far too loose: "Machine Learning Engineer" would match every
+#: posting containing "Engineer". Require a majority of a query's words instead.
+TITLE_MATCH_RATIO = 0.6
+
+
+def title_matches(title: str, token_sets: list[set[str]], ratio: float = TITLE_MATCH_RATIO) -> bool:
+    """True when the title carries most of the words of at least one configured query.
+
+    'Backend Engineer'         -> needs both words
+    'Machine Learning Engineer'-> needs 2 of 3, so 'Machine Learning Scientist' still matches
+                                  but a bare 'Sales Engineer' does not
+    """
     if not token_sets:
         return True
     words = set(re.split(r"[^a-z0-9+#.]+", (title or "").lower()))
-    return any(toks & words for toks in token_sets)
+    for toks in token_sets:
+        needed = max(1, math.ceil(len(toks) * ratio))
+        if len(toks & words) >= needed:
+            return True
+    return False
 
 
 def location_matches(text: str, wanted: str, remote_only: bool, is_remote: Optional[bool] = None) -> bool:

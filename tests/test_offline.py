@@ -304,3 +304,103 @@ def test_admin_api_requires_token(settings: Settings) -> None:
     assert client.get("/api/stats").status_code == 401
     assert client.get("/api/stats", headers={"X-Admin-Token": "s3cret"}).status_code == 200
     assert client.get("/api/stats?token=s3cret").status_code == 200
+
+
+# ---- admin api: control + settings endpoints ------------------------------
+
+
+def test_api_config_roundtrip(settings: Settings) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+
+    cfg = client.get("/api/config").json()
+    assert cfg["llm_provider"] in ("gemini", "nvidia")
+    assert "greenhouse" in cfg["known_sources"] and "linkedin" in cfg["known_sources"]
+
+    patched = client.patch("/api/config", json={
+        "llm_provider": "nvidia", "nvidia_model": "nvidia/test-model",
+        "match_threshold": 80, "auto_submit": True,
+        "sources": ["greenhouse", "ashby"], "search_queries": ["Backend Engineer"],
+    }).json()
+    assert patched["llm_provider"] == "nvidia"
+    assert patched["active_model"] == "nvidia/test-model"
+    assert patched["match_threshold"] == 80
+    assert patched["auto_submit"] is True
+    assert patched["sources"] == ["greenhouse", "ashby"]
+    assert settings.auto_submit is True      # the live Settings object really changed
+
+    assert client.patch("/api/config", json={"match_threshold": 500}).status_code == 422
+    assert client.patch("/api/config", json={"llm_provider": "hal9000"}).status_code == 422
+
+
+def test_api_profile_read_write(settings: Settings, tmp_path: Path, profile: dict) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    settings.profile_path = tmp_path / "profile.json"
+    settings.profile_path.write_text(json.dumps(profile), encoding="utf-8")
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+
+    assert client.get("/api/profile").json()["name"] == "Jane Doe"
+    updated = {**profile, "headline": "Staff Engineer"}
+    assert client.put("/api/profile", json=updated).json()["saved"] is True
+    assert json.loads(settings.profile_path.read_text())["headline"] == "Staff Engineer"
+    assert (tmp_path / "profile.json.bak").exists()           # previous version kept
+    assert client.put("/api/profile", json={"name": ""}).status_code == 400
+
+
+def test_api_companies_crud(settings: Settings, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    settings.company_file = tmp_path / "companies.json"
+    settings.company_file.write_text(json.dumps({"greenhouse": ["acme"]}), encoding="utf-8")
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+
+    assert client.get("/api/companies").json() == {"greenhouse": ["acme"]}
+    after_add = client.post("/api/companies", json={"ats": "ashby", "token": "widgets"}).json()
+    assert after_add["ashby"] == ["widgets"]
+    assert client.post("/api/companies", json={"ats": "ashby", "token": "widgets"}).json()["ashby"] == ["widgets"]
+    assert client.delete("/api/companies/ashby/widgets").json()["ashby"] == []
+    assert client.post("/api/companies", json={"ats": "workday", "token": "x"}).status_code == 422
+
+
+def test_api_run_status_and_stop(settings: Settings) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+    st = client.get("/api/run").json()
+    assert st["running"] is False and st["kind"] == ""
+    assert "provider" in st and "model" in st and isinstance(st["log"], list)
+    assert client.post("/admin/stop").json()["stopped"] is False
+    assert client.get("/api/gate").json()["paused"] is False
+    assert client.get("/api/discovered").json() == []
+    assert client.post("/admin/apply-selected", json={"urls": []}).status_code == 400
+
+
+def test_dashboard_is_served(settings: Settings) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    html = TestClient(create_app(settings, db)).get("/").text
+    for marker in ('id="view-dash"', 'id="view-scan"', 'id="view-settings"',
+                   'id="runModel"', 'id="cfgModel"', "/admin/discover"):
+        assert marker in html, marker
