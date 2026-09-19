@@ -687,9 +687,21 @@ ASCII: a model writes "Full\u2011stack" with a non-breaking hyphen freely, and a
 for "Full-stack" would never find it. Font ligatures are switched off for the same reason, so "fi"
 is not extracted as a single glyph. A generated resume contains no character above U+007F.
 
-**Single-page resumes.** The PDF is rendered, its page count measured, and if it overflows, the
-least relevant project is dropped and it is rendered again, then older experience, then the scale
-is reduced. Nothing is invented or reworded to make it fit; entries are only dropped.
+**Resume length.** Two pages by default. The PDF is rendered, its page count measured, and if it
+overflows the content is reduced and rendered again, cheapest first: fewer bullets per entry, then
+fewer projects, then fewer bullets again. Nothing is invented or reworded to make it fit.
+
+Work history is never dropped unless you allow it, under **Settings**. Losing a job from a CV is
+not a formatting decision. Whatever was left out is written onto the application as a note, so a
+shortened resume is never a surprise:
+
+| Setting | A six-year, five-role profile |
+| --- | --- |
+| Two pages *(default)* | 5 of 5 roles, 8 of 8 projects, nothing trimmed |
+| One page | 5 of 5 roles, projects removed, and it says so |
+
+Before this, one page was forced on every resume and it silently cost 2 of the 5 roles and 7 of
+the 8 projects.
 
 ---
 
@@ -721,6 +733,7 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |
 | Stopping a scan lost the results | Fixed: results are published board by board and survive a stop |
 | A cover letter came out truncated | Fixed: long prose is entered at once rather than typed key by key, which hit the action timeout |
+| The resume is missing roles or projects | It was trimmed to fit. Raise **Resume length** under Settings; the application records what was left out |
 | No cover letter was produced | One is written only when the form asks for it. Check the form has a cover letter field |
 | `make: *** [serve] Terminated: 15` | Something sent the server SIGTERM. Usually a `pkill` matching `main.py serve`, or a second copy starting on the same port. `make serve PORT=8001` runs another one safely |
 | Port already in use | The dashboard now says so and suggests the next port instead of raising |

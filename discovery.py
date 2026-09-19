@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 import httpx
 
@@ -692,17 +692,55 @@ class HimalayasSource(AggregatorSource):
 # --------------------------------------------------------------------------
 
 
-class GoogleSearchSource(ApiJobSource):
-    """`site:job-boards.greenhouse.io "Full Stack Developer" "Remote"` through Playwright.
+#: Google's bot wall. It does not say "captcha", so the usual detection missed it and the
+#: search looked as though it had simply found nothing.
+SEARCH_BLOCKED_RE = re.compile(
+    r"unusual traffic|detected unusual|automated queries|are you a robot|"
+    r"before you continue to google|verify you.re human|/sorry/", re.I)
 
-    Least reliable of the five: Google challenges automation aggressively. It runs
-    through the same human gate as everything else, so a challenge pauses rather
-    than crashes. Prefer the board APIs; use this to find companies you do not
-    already have tokens for.
+
+def unwrap_result_link(href: Optional[str]) -> Optional[str]:
+    """Search engines wrap their results; return the destination URL."""
+    if not href:
+        return None
+    if href.startswith("//"):
+        href = "https:" + href
+    try:
+        parsed = urlparse(href)
+    except ValueError:
+        return None
+    if "google." in (parsed.hostname or "") and parsed.path == "/url":
+        return parse_qs(parsed.query).get("q", [None])[0]
+    if "duckduckgo.com" in (parsed.hostname or "") and parsed.path.startswith("/l/"):
+        return parse_qs(parsed.query).get("uddg", [None])[0]
+    if (parsed.hostname or "").endswith("bing.com") and parsed.path.startswith("/ck/"):
+        return parse_qs(parsed.query).get("u", [None])[0]
+    return href
+
+
+class GoogleSearchSource(ApiJobSource):
+    """`site:job-boards.greenhouse.io "Backend Engineer"` driven through Playwright.
+
+    The least reliable of the sources, and it says so. Google answers an automated
+    browser with its "unusual traffic" page rather than results, which is why a search
+    that works in your own Chrome finds nothing here. When that happens the run pauses
+    so you can clear the check in the visible browser window, because you are the only
+    one who can. Prefer the board APIs, which need no search engine at all.
     """
 
     name = "google"
     SITES = ("job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com")
+
+    async def blocked(self, page: Any) -> bool:
+        """Whether the search engine served a bot check instead of results."""
+        try:
+            if "/sorry/" in page.url:
+                return True
+            text = await page.evaluate(
+                "() => document.body ? document.body.innerText.slice(0, 1500) : ''")
+            return bool(SEARCH_BLOCKED_RE.search(text or ""))
+        except Exception:
+            return False
 
     async def discover(self, page: Any = None) -> list[JobPosting]:
         if page is None:
@@ -710,8 +748,11 @@ class GoogleSearchSource(ApiJobSource):
             return []
         found: list[JobPosting] = []
         seen: set[str] = set()
+        blocked_queries = 0
+        total_queries = 0
         for site in self.SITES:
             for query in self.s.search_queries:
+                total_queries += 1
                 terms = f'site:{site} "{query}"'
                 if self.s.search_location and self.s.search_location.lower() not in ("", "anywhere"):
                     terms += f' "{self.s.search_location}"'
@@ -722,160 +763,66 @@ class GoogleSearchSource(ApiJobSource):
                 except Exception as exc:
                     log.warning("google search failed: %s", exc)
                     continue
-                await self.b.guard(page)  # consent wall / CAPTCHA -> pause for a human
-                try:
-                    hrefs = await page.eval_on_selector_all(
-                        "a[href]", "els => els.map(e => e.href)"
-                    )
-                except Exception:
-                    hrefs = []
-                hits = {h for h in hrefs if ATS_URL_RE.fullmatch(h.split("?")[0])}
-                log.info("google: %d ATS links on the results page", len(hits))
+                if await self.blocked(page):
+                    blocked_queries += 1
+                    log.warning("Google served its bot check instead of results")
+                    outcome = await self.gate_for_block(page)
+                    if outcome == "skip":
+                        log.info("google: skipped by you; the board APIs need no search engine")
+                        return found
+                    if await self.blocked(page):
+                        continue        # still blocked, move to the next query
+                    blocked_queries -= 1
+                hits = await self.links_on(page)
+                log.info("google: %d ATS link(s) on the results page", len(hits))
                 for link in hits:
                     if link in seen:
                         continue
                     seen.add(link)
                     job = JobPosting.from_url(link, source=self.name)
-                    if not self.db.has_job(self.name, job.job_id):
-                        found.append(job)
+                    self.stats.seen += 1
+                    if self.db.has_job(self.name, job.job_id):
+                        self.stats.dropped_seen_before += 1
+                        continue
+                    self.stats.kept += 1
+                    found.append(job)
+                self._report(found[-len(hits):] if hits else [])
                 await self.b.sleep(4.0, 1.5)
+        if blocked_queries:
+            log.warning("Google blocked %d of %d searches, so this source found little or nothing. "
+                        "The Greenhouse, Lever and Ashby board APIs are not rate limited and need "
+                        "no search engine.", blocked_queries, total_queries)
+            self.blocked_queries = blocked_queries
         return found
+
+    async def links_on(self, page: Any) -> list[str]:
+        """Every application URL on a results page, unwrapped from the engine's redirect."""
+        try:
+            hrefs = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => e.getAttribute('href'))")
+        except Exception:
+            return []
+        out: list[str] = []
+        for href in hrefs:
+            target = unwrap_result_link(href)
+            if target and ATS_URL_RE.fullmatch(target.split("?")[0]):
+                out.append(target.split("?")[0])
+        return sorted(set(out))
+
+    async def gate_for_block(self, page: Any) -> str:
+        """Ask the person to clear the check, since only a human can."""
+        from browser_bot import HumanGate
+
+        return await self.b.gate.wait(
+            "Google is showing its 'unusual traffic' check instead of search results. "
+            "Clear it in the browser window, then continue. "
+            "Skipping is fine: the Greenhouse, Lever and Ashby board APIs cover the same "
+            "boards without a search engine.")
 
     async def hydrate(self, page: Any, job: JobPosting) -> JobPosting:
         from job_search import extract_posting  # imported here to avoid a circular import
 
         return await extract_posting(self.b, page, job)
-
-
-BOARD_URL_PATTERNS: list[tuple[str, re.Pattern]] = [
-    (GREENHOUSE, re.compile(r"(?:job-boards|boards)\.greenhouse\.io/(?:embed/job_board\?for=)?([A-Za-z0-9_.-]+)", re.I)),
-    (GREENHOUSE, re.compile(r"boards-api\.greenhouse\.io/v1/boards/([A-Za-z0-9_.-]+)", re.I)),
-    (LEVER, re.compile(r"jobs\.(?:eu\.)?lever\.co/([A-Za-z0-9_.-]+)", re.I)),
-    (LEVER, re.compile(r"api\.lever\.co/v0/postings/([A-Za-z0-9_.-]+)", re.I)),
-    (ASHBY, re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)", re.I)),
-    (ASHBY, re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([A-Za-z0-9_.-]+)", re.I)),
-]
-BOARD_PROBE_URL = {
-    GREENHOUSE: "https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
-    LEVER: "https://api.lever.co/v0/postings/{token}?mode=json",
-    ASHBY: "https://api.ashbyhq.com/posting-api/job-board/{token}",
-}
-
-
-def parse_board_reference(text: str) -> tuple[Optional[str], str]:
-    """Pull an ATS and a board token out of anything the user pastes.
-
-    Accepts a job link, a board link, an API URL, `ashby:linear`, or a bare token.
-    Returns (ats or None, token); a bare token has to be probed to learn its ATS.
-    """
-    raw = (text or "").strip()
-    if not raw:
-        return None, ""
-    for ats, pattern in BOARD_URL_PATTERNS:
-        m = pattern.search(raw)
-        if m:
-            return ats, m.group(1)
-    if ":" in raw and "//" not in raw:
-        prefix, _, rest = raw.partition(":")
-        if prefix.strip().lower() in BOARD_PROBE_URL:
-            return prefix.strip().lower(), rest.strip().strip("/")
-    if re.fullmatch(r"[A-Za-z0-9_.-]+", raw):
-        return None, raw
-    return None, ""
-
-
-async def probe_board(client: httpx.AsyncClient, ats: str, token: str) -> Optional[dict[str, Any]]:
-    """Ask a board API whether this token exists, and how many roles are open."""
-    url = BOARD_PROBE_URL.get(ats, "").format(token=token)
-    if not url:
-        return None
-    try:
-        r = await client.get(url)
-        if r.status_code != 200:
-            return None
-        body = r.json()
-    except (httpx.HTTPError, json.JSONDecodeError):
-        return None
-    jobs = body if isinstance(body, list) else body.get("jobs", [])
-    if not isinstance(jobs, list):
-        return None
-    name = ""
-    for j in jobs[:1]:
-        name = j.get("company_name") or ""
-    return {"ats": ats, "token": token, "open_roles": len(jobs),
-            "company": name or token.replace("-", " ").title()}
-
-
-async def resolve_board(text: str, timeout: float = 20.0) -> dict[str, Any]:
-    """Identify and verify the board behind a pasted URL or token."""
-    ats, token = parse_board_reference(text)
-    if not token:
-        return {"ok": False, "input": text,
-                "detail": "Could not find a Greenhouse, Lever or Ashby board in that."}
-    candidates = [ats] if ats else list(BOARD_PROBE_URL)
-    async with httpx.AsyncClient(headers=HEADERS, timeout=timeout, follow_redirects=True) as client:
-        for candidate in candidates:
-            found = await probe_board(client, candidate, token)
-            if found:
-                return {"ok": True, **found, "input": text}
-    return {"ok": False, "input": text, "token": token, "ats": ats,
-            "detail": (f"No live {ats} board called {token!r}." if ats else
-                       f"No Greenhouse, Lever or Ashby board called {token!r}.")}
-
-
-#: Below this many results a scan is worth explaining, even though it is not empty.
-FEW_RESULTS = 5
-
-
-def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
-    """Name the filter responsible when a scan returns nothing, or very little.
-
-    Advice used to appear only for an empty result, which left the more common case
-    unexplained: a scan that returns one posting out of two thousand looks like the
-    search terms were too narrow, when it is usually the country filter.
-    """
-    if not stats.seen:
-        return ["No board returned any postings. Check the company tokens with "
-                "`python main.py companies --probe`."]
-    if stats.kept > FEW_RESULTS:
-        return []
-
-    tips: list[str] = []
-    if stats.kept:
-        tips.append(f"Only {stats.kept} of {stats.seen} postings survived every filter. "
-                    f"Here is where the rest went.")
-    for label, n in sorted(stats.reasons(), key=lambda kv: -kv[1])[:3]:
-        share = round(100 * n / stats.seen)
-        if label == "search terms":
-            tips.append(f"{n} ({share}%) did not resemble your search terms "
-                        f"({', '.join(settings.search_queries)}). Most backend roles are titled "
-                        f"'Software Engineer, <team>' rather than 'Backend Engineer', so lower "
-                        f"Match sensitivity or add a broader term.")
-        elif label == "seniority":
-            tips.append(f"{n} ({share}%) were the wrong seniority. You have "
-                        f"{', '.join(settings.seniority_levels)} selected; untick to allow any level.")
-        elif label == "location or country":
-            where = ", ".join(settings.countries) if settings.countries else settings.search_location
-            detail = f"{n} ({share}%) were outside {where or 'your location filter'}"
-            if settings.countries and settings.remote_only:
-                detail += (". Remote-only and a country together are strict: a posting has to be "
-                           "genuinely remote AND name that country. Most company boards are based "
-                           "in the US and Europe, so try Anywhere / Worldwide, or clear the country "
-                           "and keep remote-only")
-            elif settings.countries:
-                detail += (". These boards are mostly US and European, so a country outside that "
-                           "returns very little. Anywhere / Worldwide keeps fully remote roles")
-            elif settings.remote_only:
-                detail += " because remote-only drops hybrid and on-site postings"
-            tips.append(detail + ".")
-        elif label == "already applied":
-            tips.append(f"{n} are already in your database. "
-                        "`python main.py delete --status failed` frees them up.")
-        elif label == "no description":
-            tips.append(f"{n} came back with no usable description.")
-        elif label == "no application link":
-            tips.append(f"{n} aggregator listings had no Greenhouse, Lever or Ashby link behind them.")
-    return tips
 
 
 SOURCE_REGISTRY: dict[str, type[ApiJobSource]] = {
