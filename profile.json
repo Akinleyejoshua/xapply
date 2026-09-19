@@ -6,7 +6,6 @@
     "screening_defaults: work authorization, sponsorship, salary and notice period are assumptions - correct them",
     "location: portfolio says 'Available Worldwide (Remote)'; set city/country to your real base for address fields"
   ],
-
   "name": "Joshua Akinleye",
   "first_name": "Joshua",
   "last_name": "Akinleye",
@@ -25,18 +24,112 @@
   "website": "https://joshuapro.netlify.app",
   "x/twitter": "https://x.com/yeshuaakinleye",
   "summary": "Full stack developer, data analyst and AI/ML engineer with 6 years of experience building production web platforms, machine learning systems and data products. Ships end-to-end: Next.js and React front ends, Node.js/FastAPI/Django back ends, MongoDB and PostgreSQL data layers, and deep learning models with PyTorch and TensorFlow.",
-
   "skills": {
-    "frontend": ["Next.js", "React", "React Native", "TypeScript", "JavaScript", "HTML", "CSS", "Tailwind CSS"],
-    "backend": ["Node.js", "Express", "NestJS", "FastAPI", "Django", "Flask", "Laravel (API)", "REST API design", "gRPC", "WebRTC", "Socket.io", "JWT authentication"],
-    "database": ["PostgreSQL", "MongoDB", "MySQL", "SQLite", "Redis"],
-    "ai_ml": ["PyTorch", "TensorFlow", "TensorFlow.js", "Scikit-Learn", "Keras", "OpenCV", "Pandas", "NumPy", "LangChain", "OpenAI API", "Gemini API", "NLP", "Computer Vision", "YOLOv8", "CNNs"],
-    "data_analytics": ["SQL", "Power BI", "Excel", "Data visualization", "Business intelligence", "Recharts"],
-    "mobile": ["Flutter", "Dart", "React Native"],
-    "languages_tools": ["Python", "TypeScript", "JavaScript", "PHP", "Dart", "Solidity", "Docker", "Kubernetes", "Git", "Figma", "Prometheus", "OpenAPI/Swagger"],
-    "web3": ["Solidity", "ethers.js", "Hardhat", "MetaMask", "Smart contracts"]
+    "frontend": [
+      "Next.js",
+      "React",
+      "React Native",
+      "TypeScript",
+      "JavaScript",
+      "HTML",
+      "CSS",
+      "Tailwind CSS"
+    ],
+    "backend": [
+      "Node.js",
+      "Express",
+      "NestJS",
+      "FastAPI",
+      "Django",
+      "Flask",
+      "Laravel (API)",
+      "REST API design",
+      "gRPC",
+      "WebRTC",
+      "Socket.io",
+      "JWT authentication"
+    ],
+    "database": [
+      "PostgreSQL",
+      "MongoDB",
+      "MySQL",
+      "SQLite",
+      "Redis"
+    ],
+    "ai_ml": [
+      "PyTorch",
+      "TensorFlow",
+      "TensorFlow.js",
+      "Scikit-Learn",
+      "Keras",
+      "OpenCV",
+      "Pandas",
+      "NumPy",
+      "LangChain",
+      "OpenAI API",
+      "Gemini API",
+      "NLP",
+      "Computer Vision",
+      "YOLOv8",
+      "CNNs"
+    ],
+    "data_analytics": [
+      "SQL",
+      "Power BI",
+      "Excel",
+      "Data visualization",
+      "Business intelligence",
+      "Recharts"
+    ],
+    "mobile": [
+      "Flutter",
+      "Dart",
+      "React Native"
+    ],
+    "languages_tools": [
+      "Python",
+      "TypeScript",
+      "JavaScript",
+      "PHP",
+      "Dart",
+      "Solidity",
+      "Docker",
+      "Kubernetes",
+      "Git",
+      "Figma",
+      "Prometheus",
+      "OpenAPI/Swagger"
+    ],
+    "web3": [
+      "Solidity",
+      "ethers.js",
+      "Hardhat",
+      "MetaMask",
+      "Smart contracts"
+    ],
+    "ai-ml": [
+      "Scikit-Learn",
+      "Pytorch",
+      "Tensorflow",
+      "Pandas",
+      "Numpy"
+    ],
+    "tools": [
+      "JavaScript",
+      "TypeScript",
+      "Python",
+      "PHP"
+    ],
+    "other": [
+      "Solidity (Web3)",
+      "Figma"
+    ],
+    "data-analytics": [
+      "Excel",
+      "PowerBI",
+      "SQL"
+    ]
   },
-
   "years_of_experience": {
     "software engineering": 6,
     "backend development": 6,
@@ -75,7 +168,6 @@
     "Power BI": 3,
     "REST API": 6
   },
-
   "experience": [
     {
       "company": "Corvendra",
@@ -141,13 +233,19 @@
       ]
     }
   ],
-
   "projects": [
     {
       "name": "xMachine",
       "url": "https://xmachinepro.netlify.app/",
       "github": "https://github.com/Akinleyejoshua/xmachine",
-      "tech": ["TensorFlow.js", "WebGPU", "Next.js", "Node.js", "MongoDB", "React"],
+      "tech": [
+        "TensorFlow.js",
+        "WebGPU",
+        "Next.js",
+        "Node.js",
+        "MongoDB",
+        "React"
+      ],
       "bullets": [
         "Built an end-to-end browser-based deep learning platform where users import datasets, train models and run real-time inference client-side.",
         "Used WebGPU hardware acceleration with backend synchronization, removing local environment setup and cloud compute cost for users."
@@ -156,7 +254,15 @@
     {
       "name": "DataBI",
       "url": "https://databipro.netlify.app/",
-      "tech": ["Next.js", "Node.js", "MongoDB", "TypeScript", "Groq/OpenAI", "Recharts", "Tailwind CSS"],
+      "tech": [
+        "Next.js",
+        "Node.js",
+        "MongoDB",
+        "TypeScript",
+        "Groq/OpenAI",
+        "Recharts",
+        "Tailwind CSS"
+      ],
       "bullets": [
         "Built an AI-powered business intelligence and financial automation platform that turns raw financial documents into dashboards.",
         "Generated AI summaries for stakeholder reporting and 'chart grade' scores that evaluate data quality and trend strength."
@@ -165,7 +271,14 @@
     {
       "name": "xRec",
       "url": "https://x-recpro.vercel.app/",
-      "tech": ["Next.js", "Node.js", "Express", "MongoDB", "WebRTC", "NLP"],
+      "tech": [
+        "Next.js",
+        "Node.js",
+        "Express",
+        "MongoDB",
+        "WebRTC",
+        "NLP"
+      ],
       "bullets": [
         "Built an AI recruitment platform that runs autonomous interviews over WebRTC and evaluates candidate responses in real time.",
         "Generated objective performance scorecards for HR teams using natural language processing and video analysis."
@@ -175,7 +288,15 @@
       "name": "Cloud Gallery",
       "url": "https://media-gallery.free.nf/",
       "github": "https://github.com/Akinleyejoshua/custom-storage-php",
-      "tech": ["PHP", "Docker", "Kubernetes", "MongoDB", "gRPC", "Prometheus", "OpenAPI"],
+      "tech": [
+        "PHP",
+        "Docker",
+        "Kubernetes",
+        "MongoDB",
+        "gRPC",
+        "Prometheus",
+        "OpenAPI"
+      ],
       "bullets": [
         "Built a cloud storage gateway with a PSR-7 streaming architecture that removes the PHP memory bottleneck on large file transfers.",
         "Shipped a microservices deployment with REST API, container orchestration and Prometheus monitoring."
@@ -185,7 +306,14 @@
       "name": "Facial Expression Detector V2",
       "url": "https://facialanalyser.netlify.app/",
       "github": "https://github.com/Akinleyejoshua/facial-analysis-yolo",
-      "tech": ["Python", "PyTorch", "TensorFlow", "OpenCV", "YOLOv8", "CNN"],
+      "tech": [
+        "Python",
+        "PyTorch",
+        "TensorFlow",
+        "OpenCV",
+        "YOLOv8",
+        "CNN"
+      ],
       "bullets": [
         "Trained a deep learning model for real-time facial expression recognition and emotion classification.",
         "Deployed the model behind a web interface for live inference on webcam input."
@@ -194,7 +322,13 @@
     {
       "name": "Ultra GPT - Virtual HR",
       "url": "https://ultragpt-pro.vercel.app/",
-      "tech": ["Python", "FastAPI", "OpenAI", "LangChain", "React"],
+      "tech": [
+        "Python",
+        "FastAPI",
+        "OpenAI",
+        "LangChain",
+        "React"
+      ],
       "bullets": [
         "Built an LLM-powered virtual HR assistant handling employee queries, onboarding and HR process automation.",
         "Served the model through a FastAPI backend with a React front end."
@@ -204,7 +338,12 @@
       "name": "Ultra Share Pro",
       "url": "https://ultrasharepro.vercel.app/",
       "github": "https://github.com/Akinleyejoshua/webRTC-Nextjs",
-      "tech": ["WebRTC", "Next.js", "Node.js", "Socket.io"],
+      "tech": [
+        "WebRTC",
+        "Next.js",
+        "Node.js",
+        "Socket.io"
+      ],
       "bullets": [
         "Built peer-to-peer file sharing over WebRTC with Socket.io signalling, transferring files without a server hop.",
         "Handled connection negotiation, chunked transfer and transfer-state UI."
@@ -213,18 +352,394 @@
     {
       "name": "TradeAlgo V2",
       "url": "https://gainzalgopro.netlify.app/",
-      "tech": ["React", "Vite", "FastAPI", "MetaTrader 5"],
+      "tech": [
+        "React",
+        "Vite",
+        "FastAPI",
+        "MetaTrader 5"
+      ],
       "bullets": [
         "Built a real-time trading indicator platform with TradingView charts and a MetaTrader 5 connection for local and production accounts.",
         "Shipped configurable technical indicators, trade setup analysis and an automated trading bot control panel."
       ]
+    },
+    {
+      "name": "Noketa",
+      "url": "https://noketa.netlify.app/",
+      "github": "",
+      "tech": [
+        "NEXTJS"
+      ],
+      "bullets": [
+        "Emails that look good and perform.",
+        "The full email stack - beautiful templates, reliable delivery, and developer-first APIs."
+      ]
+    },
+    {
+      "name": "Appi: High-Conversion Mobile App Landing Page",
+      "url": "https://joshua-appi.netlify.app/",
+      "github": "",
+      "tech": [
+        "Next.js",
+        "TypeScript",
+        "CSS3",
+        "Node.js",
+        "React"
+      ],
+      "bullets": [
+        "Appi is a high-performance, conversion-optimized landing page template designed to drive mobile application downloads.",
+        "Built with Next.js for server-side rendering and optimal SEO, the project features a fully responsive and modern UI styled with pure CSS.",
+        "It leverages TypeScript for robust type safety and integrates a lightweight Node.js backend to handle user waitlists, lead generation, and analytics tracking seamlessly."
+      ]
+    },
+    {
+      "name": "SlabShot Landing Page",
+      "url": "https://joshua-slabshot.netlify.app/",
+      "github": "",
+      "tech": [
+        "React",
+        "CSS",
+        "JavaScript",
+        "Nextjs",
+        "TypeScript"
+      ],
+      "bullets": [
+        "Data Warehouse is a data storage area that has been tested for security, so you can store your data here safely but not be afraid of being stolen by others."
+      ]
+    },
+    {
+      "name": "Church Platform / Admin Mangement Platform (Client Project)",
+      "url": "https://cacmtz.vercel.app/",
+      "github": "",
+      "tech": [
+        "Nextjs",
+        "MongoDB",
+        "Typescript"
+      ],
+      "bullets": [
+        "This is an Advanced Chuch Web Progressive Web App, with Event Management System and Admin Panel, It has LIVE features for current Events, A Gallery, Sermons Page, with Ministers Page."
+      ]
+    },
+    {
+      "name": "The Scribe",
+      "url": "https://thescribepro.netlify.app/",
+      "github": "https://github.com/Akinleyejoshua/the_scribe",
+      "tech": [
+        "Nextjs",
+        "Gemini",
+        "Nodejs"
+      ],
+      "bullets": [
+        "An AI writing assistant purpose-built for apostolic, prophetic, and Spirit-filled ministry voices.",
+        "We capture your theological voice, then generate full manuscripts in your exact style."
+      ]
+    },
+    {
+      "name": "Goast Coach",
+      "url": "https://ghostcoachpro.netlify.app/dashboard",
+      "github": "https://github.com/Akinleyejoshua/goastcoach",
+      "tech": [
+        "Nextjs",
+        "AI",
+        "Nodejs"
+      ],
+      "bullets": [
+        "Ghost Coach is an AI-powered sports coaching assistant.",
+        "A player uploads a photo of their stance or technique, and the application analyzes it using a Vision LLM to deliver structured, personalized coaching feedback."
+      ]
+    },
+    {
+      "name": "Blogrr - Social Media App",
+      "url": "https://blogrpro.vercel.app/home",
+      "github": "",
+      "tech": [
+        "React",
+        "Node.js",
+        "MongoDB",
+        "Socket.io"
+      ],
+      "bullets": [
+        "A full-featured social media application with user authentication, posts, comments, likes, and real-time notifications."
+      ]
+    },
+    {
+      "name": "Sales Analysis Dashboard",
+      "url": "https://databipro.netlify.app/share/bd332f28-50d",
+      "github": "",
+      "tech": [
+        "Power BI",
+        "Excel",
+        "PowerBI",
+        "SQL",
+        "Python"
+      ],
+      "bullets": [
+        "Sales Analysis for Ecommerce Dataset."
+      ]
+    },
+    {
+      "name": "Power BI Sales Report",
+      "url": "https://databipro.netlify.app/share/3c0f25f7-127",
+      "github": "",
+      "tech": [
+        "Excel",
+        "PowerBI",
+        "Data BI"
+      ],
+      "bullets": [
+        "Data Visualization for Sales Report."
+      ]
+    },
+    {
+      "name": "Crypto-NFTs Collection Dapp",
+      "url": "https://crypto-nfts.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/NFTs",
+      "tech": [
+        "Nextjs",
+        "MetaMask",
+        "ethers.js",
+        "Hardhart.js",
+        "Solidity",
+        "Remix"
+      ],
+      "bullets": [
+        "A Non-Fungible-Token Dapp were you can sell JPEG documents."
+      ]
+    },
+    {
+      "name": "BLOCKCHAIN DAPP (ETH-TRANFER)",
+      "url": "https://ethtransact.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/ethtransact",
+      "tech": [
+        "Nextjs",
+        "MetaMask",
+        "ethers.js",
+        "Hardhart.js",
+        "Solidity",
+        "Remix"
+      ],
+      "bullets": [
+        "54 views 23 Jul 2022 A blockchain decentralized application review.",
+        "TECHNOLOGIES USED: 1.",
+        "REMIX 2."
+      ]
+    },
+    {
+      "name": "SaaS Screen Sharing",
+      "url": "http://screen-view.vercel.app/",
+      "github": "",
+      "tech": [
+        "React",
+        "WebRTC",
+        "Node.js",
+        "Redis"
+      ],
+      "bullets": [
+        "Software-as-a-Service application for screen sharing and remote collaboration with real-time communication."
+      ]
+    },
+    {
+      "name": "FaceBook Clone",
+      "url": "",
+      "github": "",
+      "tech": [
+        "Nextjs",
+        "MongoDB",
+        "Nodejs"
+      ],
+      "bullets": [
+        "A Facebook Web Application Mini-Version."
+      ]
+    },
+    {
+      "name": "Twitter/X Clone",
+      "url": "http://x-clone-client.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/twitter-clone-client",
+      "tech": [
+        "React",
+        "Next.js",
+        "Express"
+      ],
+      "bullets": [
+        "Full-stack Twitter clone with tweet functionality, user profiles, follow system, and real-time updates."
+      ]
+    },
+    {
+      "name": "WooCommerce Dropshipping Web App",
+      "url": "http://uni-store.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/uni-store",
+      "tech": [
+        "React",
+        "WooCommerce",
+        "PHP",
+        "MySQL",
+        "Nextjs"
+      ],
+      "bullets": [
+        "E-commerce dropshipping platform integrated with WooCommerce for seamless product management and order fulfillment."
+      ]
+    },
+    {
+      "name": "BLNR Backend (Open Source)",
+      "url": "https://blnr-dashboard-jet.vercel.app/",
+      "github": "",
+      "tech": [
+        "Node.js",
+        "Express",
+        "MongoDB"
+      ],
+      "bullets": [
+        "Open source backend project with robust API architecture, authentication, and database management."
+      ]
+    },
+    {
+      "name": "Covid-19 Diagnostics",
+      "url": "https://j-covidtest.netlify.app/",
+      "github": "",
+      "tech": [
+        "Python",
+        "TensorFlow",
+        "Keras",
+        "OpenCV"
+      ],
+      "bullets": [
+        "Machine learning model for COVID-19 diagnosis using medical imaging and patient data analysis."
+      ]
+    },
+    {
+      "name": "ChatBot Assistant",
+      "url": "",
+      "github": "https://github.com/Akinleyejoshua/-chatbot/tree/main",
+      "tech": [
+        "Python",
+        "GPT-4",
+        "LangChain",
+        "Selenium"
+      ],
+      "bullets": [
+        "GPT-powered chatbot for HR assistance, web scraping, and code fetching with natural language understanding."
+      ]
+    },
+    {
+      "name": "LLM GPT Web Application",
+      "url": "https://ultra-gpt-llm.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/llm",
+      "tech": [
+        "React",
+        "Python",
+        "OpenAI",
+        "FastAPI"
+      ],
+      "bullets": [
+        "Full-stack web application integrating large language models for intelligent text generation and analysis."
+      ]
+    },
+    {
+      "name": "NotePad: Dual-Engine Cross-Platform Note Suite",
+      "url": "https://media-gallery.free.nf/uploads/1784336775-465ae8f30fe672f0abaf15daed8909d0.apk",
+      "github": "https://github.com/Akinleyejoshua/notepad_flutter",
+      "tech": [
+        "Flutter",
+        "React Native",
+        "Dart",
+        "TypeScript",
+        "SQLite",
+        "CRDT",
+        "Markdown Parser"
+      ],
+      "bullets": [
+        "A high-performance, offline-first note-taking ecosystem developed simultaneously in Flutter and React Native to benchmark and showcase cross-platform architectural patterns.",
+        "OmniNote features a robust markdown editing engine, real-time local-first synchronization using conflict-free replicated data types (CRDTs), and end-to-end encryption."
+      ]
+    },
+    {
+      "name": "xSearchPro - AI-Powered Enterprise Search Engine",
+      "url": "https://x-searchpro.vercel.app/",
+      "github": "",
+      "tech": [
+        "Next.js",
+        "Node.js",
+        "MongoDB",
+        "JWT",
+        "Paystack",
+        "Vercel",
+        "Artificial Intelligence"
+      ],
+      "bullets": [
+        "xSearchPro is a cutting-edge, AI-powered search engine designed to deliver lightning-fast, context-aware search results for enterprise and consumer data.",
+        "By leveraging advanced semantic search algorithms, it solves the limitations of traditional keyword-based queries.",
+        "The platform features robust JWT-based authentication for secure multi-tenant access, a highly scalable Node.js and MongoDB backend, and a high-performance Next.js frontend optimized for Vercel deployment."
+      ]
+    },
+    {
+      "name": "DropifyPro",
+      "url": "https://dropifypro.vercel.app/",
+      "github": "",
+      "tech": [
+        "Next.js",
+        "Node.js",
+        "MongoDB",
+        "PayStack",
+        "PayPal"
+      ],
+      "bullets": [
+        "A powerful B2B e-commerce solution designed to streamline wholesale operations and simplify supply chain management for growing enterprises."
+      ]
+    },
+    {
+      "name": "FlashMailPro",
+      "url": "https://flashmailpro.vercel.app/",
+      "github": "",
+      "tech": [
+        "Next.js",
+        "Node.js",
+        "MongoDB",
+        "Email APIs"
+      ],
+      "bullets": [
+        "Helping businesses grow through the power of email.",
+        "Our mission is to make professional email marketing accessible to everyone."
+      ]
+    },
+    {
+      "name": "UltraStorePro",
+      "url": "https://ultrasstore.vercel.app/",
+      "github": "",
+      "tech": [
+        "NextJs",
+        "MongoDB",
+        "JWT",
+        "PayStack",
+        "PayPal",
+        "Express"
+      ],
+      "bullets": [
+        "An Advanced WooCommerce + Ecommece Online Store, Delivering Physical and Digital Product Internationally."
+      ]
+    },
+    {
+      "name": "xAPI",
+      "url": "https://xapipro.netlify.app/",
+      "github": "",
+      "tech": [
+        "HTML CSS JS"
+      ],
+      "bullets": [
+        "An API Management tool like PostMan, for sending API request and documenting the APIs."
+      ]
+    },
+    {
+      "name": "xLabelPro",
+      "url": "https://xlabelpro.netlify.app/",
+      "github": "",
+      "tech": [
+        "HTML CSS JS JQUERY"
+      ],
+      "bullets": []
     }
   ],
-
   "education": [],
-
   "certifications": [],
-
   "screening_defaults": {
     "work_authorization": "Yes",
     "work_authorization_details": "Authorized to work in Nigeria; available worldwide for remote roles",

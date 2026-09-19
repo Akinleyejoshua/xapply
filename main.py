@@ -460,6 +460,31 @@ def cmd_gmail_login(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_portfolio(args: argparse.Namespace) -> int:
+    """Pull projects, roles and skills from your portfolio site into profile.json."""
+    from portfolio import import_portfolio
+
+    what = [w.strip() for w in (args.only or "projects,experience,skills").split(",") if w.strip()]
+    changes = asyncio.run(import_portfolio(settings.profile_path, args.site, what,
+                                           dry_run=args.dry_run))
+    print(f"\n  {settings.profile_path.name}: {changes.summary()}\n")
+    for kind, names in changes.added.items():
+        print(f"  new {kind}:")
+        for name in names:
+            print(f"    + {name[:74]}")
+    for kind, names in changes.updated.items():
+        print(f"  filled in {kind}:")
+        for name in names:
+            print(f"    ~ {name[:74]}")
+    if changes.unreachable:
+        print(f"\n  could not read: {', '.join(changes.unreachable)}")
+    if args.dry_run:
+        print("\n  Nothing was written. Run it again without --dry-run to keep these.\n")
+    elif changes.backup:
+        print(f"\n  Your previous profile is at {changes.backup.name}\n")
+    return 0
+
+
 def cmd_question(args: argparse.Namespace) -> int:
     """Show which of the usual application questions a wording is recognised as."""
     from question_bank import QuestionBank
@@ -712,6 +737,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("gmail-login",
                    help="sign in to Gmail once so applications can be sent from it"
                    ).set_defaults(func=cmd_gmail_login)
+
+    ip = sub.add_parser("import-portfolio",
+                        help="pull projects, roles and skills from your portfolio site")
+    ip.add_argument("--site", default="https://joshuapro.netlify.app",
+                    help="the portfolio to read from")
+    ip.add_argument("--only", help="projects, experience, skills (comma separated)")
+    ip.add_argument("--dry-run", action="store_true",
+                    help="show what would change and write nothing")
+    ip.set_defaults(func=cmd_import_portfolio)
 
     q = sub.add_parser("question", help="see how an application question is recognised")
     q.add_argument("text", help="the question, in quotes")

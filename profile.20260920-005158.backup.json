@@ -1,0 +1,254 @@
+{
+  "_source": "Generated from https://joshuapro.netlify.app (public portfolio API) on 2026-09-19.",
+  "_review_before_use": [
+    "education: not published on the portfolio - fill in institution/degree/field/dates or the bot will leave education blank",
+    "years_of_experience: derived from the 2020->present timeline, adjust any value you disagree with",
+    "screening_defaults: work authorization, sponsorship, salary and notice period are assumptions - correct them",
+    "location: portfolio says 'Available Worldwide (Remote)'; set city/country to your real base for address fields"
+  ],
+
+  "name": "Joshua Akinleye",
+  "first_name": "Joshua",
+  "last_name": "Akinleye",
+  "prefeared_first_name": "Joshua",
+  "headline": "Full Stack Developer | AI/ML Engineer | Data Analytics",
+  "email": "akinleyejoshua.career@gmail.com",
+  "phone": "+2348131519518",
+  "phone_country": "Nigeria",
+  "phone_country_code": "+234",
+  "location": "Lagos, Nigeria (Remote, Worldwide)",
+  "city": "Lagos",
+  "country": "Nigeria",
+  "cgpa": "80%",
+  "linkedin": "https://www.linkedin.com/in/joshua-akinleye-061a013a6/",
+  "github": "https://github.com/Akinleyejoshua",
+  "website": "https://joshuapro.netlify.app",
+  "x/twitter": "https://x.com/yeshuaakinleye",
+  "summary": "Full stack developer, data analyst and AI/ML engineer with 6 years of experience building production web platforms, machine learning systems and data products. Ships end-to-end: Next.js and React front ends, Node.js/FastAPI/Django back ends, MongoDB and PostgreSQL data layers, and deep learning models with PyTorch and TensorFlow.",
+
+  "skills": {
+    "frontend": ["Next.js", "React", "React Native", "TypeScript", "JavaScript", "HTML", "CSS", "Tailwind CSS"],
+    "backend": ["Node.js", "Express", "NestJS", "FastAPI", "Django", "Flask", "Laravel (API)", "REST API design", "gRPC", "WebRTC", "Socket.io", "JWT authentication"],
+    "database": ["PostgreSQL", "MongoDB", "MySQL", "SQLite", "Redis"],
+    "ai_ml": ["PyTorch", "TensorFlow", "TensorFlow.js", "Scikit-Learn", "Keras", "OpenCV", "Pandas", "NumPy", "LangChain", "OpenAI API", "Gemini API", "NLP", "Computer Vision", "YOLOv8", "CNNs"],
+    "data_analytics": ["SQL", "Power BI", "Excel", "Data visualization", "Business intelligence", "Recharts"],
+    "mobile": ["Flutter", "Dart", "React Native"],
+    "languages_tools": ["Python", "TypeScript", "JavaScript", "PHP", "Dart", "Solidity", "Docker", "Kubernetes", "Git", "Figma", "Prometheus", "OpenAPI/Swagger"],
+    "web3": ["Solidity", "ethers.js", "Hardhat", "MetaMask", "Smart contracts"]
+  },
+
+  "years_of_experience": {
+    "software engineering": 6,
+    "backend development": 6,
+    "full stack development": 6,
+    "frontend development": 6,
+    "web development": 6,
+    "JavaScript": 6,
+    "React": 5,
+    "Next.js": 5,
+    "Node.js": 5,
+    "TypeScript": 4,
+    "Python": 4,
+    "machine learning": 4,
+    "deep learning": 4,
+    "data analysis": 4,
+    "data science": 4,
+    "MongoDB": 5,
+    "SQL": 4,
+    "PostgreSQL": 3,
+    "MySQL": 4,
+    "Express": 5,
+    "FastAPI": 3,
+    "Django": 3,
+    "Flask": 3,
+    "TensorFlow": 4,
+    "PyTorch": 3,
+    "NLP": 4,
+    "computer vision": 3,
+    "LangChain": 2,
+    "PHP": 3,
+    "Flutter": 2,
+    "React Native": 2,
+    "Docker": 2,
+    "Kubernetes": 1,
+    "Solidity": 2,
+    "Power BI": 3,
+    "REST API": 6
+  },
+
+  "experience": [
+    {
+      "company": "Corvendra",
+      "title": "Full Stack Developer",
+      "location": "Remote",
+      "start": "Jan 2026",
+      "end": "Present",
+      "bullets": [
+        "Design and develop full stack software across front-end and back-end, from requirements through production release.",
+        "Build front-end interfaces and back-end services, owning API design, data models and application architecture.",
+        "Handle integration, deployment and maintenance of production systems, including release and post-release support.",
+        "Collaborate cross-functionally with product and IT stakeholders to translate business needs into delivered software.",
+        "Apply security and compliance practices across authentication, data handling and deployment pipelines."
+      ]
+    },
+    {
+      "company": "BLNR (Open Source)",
+      "title": "Backend Developer",
+      "location": "Remote",
+      "start": "2024",
+      "end": "2025",
+      "bullets": [
+        "Led backend architecture and development for an open-source platform built on Node.js, Express and MongoDB.",
+        "Designed scalable server-side solutions with a robust API layer, authentication and database management.",
+        "Contributed to open source projects and reviewed community contributions.",
+        "Collaborated with IT teams to meet client expectations on delivery and reliability."
+      ]
+    },
+    {
+      "company": "Smartecniqs",
+      "title": "Conversational AI Scientist (Data Science)",
+      "location": "Remote",
+      "start": "2022",
+      "end": "2023",
+      "bullets": [
+        "Developed conversational AI systems for business applications, covering intent handling and dialogue flows.",
+        "Built and trained machine learning models, running data preparation, training and evaluation.",
+        "Implemented NLP solutions that automated customer-facing interactions."
+      ]
+    },
+    {
+      "company": "Gtext",
+      "title": "Full Stack Developer",
+      "location": "Nigeria",
+      "start": "2021",
+      "end": "2022",
+      "bullets": [
+        "Developed end-to-end web applications from interface through data layer.",
+        "Built RESTful APIs and managed the supporting databases.",
+        "Deployed and maintained production-ready applications."
+      ]
+    },
+    {
+      "company": "C.A.C",
+      "title": "Web Developer",
+      "location": "Nigeria",
+      "start": "2020",
+      "end": "2021",
+      "bullets": [
+        "Designed and developed responsive web applications.",
+        "Implemented front-end interfaces using modern frameworks.",
+        "Collaborated with teams to deliver client solutions."
+      ]
+    }
+  ],
+
+  "projects": [
+    {
+      "name": "xMachine",
+      "url": "https://xmachinepro.netlify.app/",
+      "github": "https://github.com/Akinleyejoshua/xmachine",
+      "tech": ["TensorFlow.js", "WebGPU", "Next.js", "Node.js", "MongoDB", "React"],
+      "bullets": [
+        "Built an end-to-end browser-based deep learning platform where users import datasets, train models and run real-time inference client-side.",
+        "Used WebGPU hardware acceleration with backend synchronization, removing local environment setup and cloud compute cost for users."
+      ]
+    },
+    {
+      "name": "DataBI",
+      "url": "https://databipro.netlify.app/",
+      "tech": ["Next.js", "Node.js", "MongoDB", "TypeScript", "Groq/OpenAI", "Recharts", "Tailwind CSS"],
+      "bullets": [
+        "Built an AI-powered business intelligence and financial automation platform that turns raw financial documents into dashboards.",
+        "Generated AI summaries for stakeholder reporting and 'chart grade' scores that evaluate data quality and trend strength."
+      ]
+    },
+    {
+      "name": "xRec",
+      "url": "https://x-recpro.vercel.app/",
+      "tech": ["Next.js", "Node.js", "Express", "MongoDB", "WebRTC", "NLP"],
+      "bullets": [
+        "Built an AI recruitment platform that runs autonomous interviews over WebRTC and evaluates candidate responses in real time.",
+        "Generated objective performance scorecards for HR teams using natural language processing and video analysis."
+      ]
+    },
+    {
+      "name": "Cloud Gallery",
+      "url": "https://media-gallery.free.nf/",
+      "github": "https://github.com/Akinleyejoshua/custom-storage-php",
+      "tech": ["PHP", "Docker", "Kubernetes", "MongoDB", "gRPC", "Prometheus", "OpenAPI"],
+      "bullets": [
+        "Built a cloud storage gateway with a PSR-7 streaming architecture that removes the PHP memory bottleneck on large file transfers.",
+        "Shipped a microservices deployment with REST API, container orchestration and Prometheus monitoring."
+      ]
+    },
+    {
+      "name": "Facial Expression Detector V2",
+      "url": "https://facialanalyser.netlify.app/",
+      "github": "https://github.com/Akinleyejoshua/facial-analysis-yolo",
+      "tech": ["Python", "PyTorch", "TensorFlow", "OpenCV", "YOLOv8", "CNN"],
+      "bullets": [
+        "Trained a deep learning model for real-time facial expression recognition and emotion classification.",
+        "Deployed the model behind a web interface for live inference on webcam input."
+      ]
+    },
+    {
+      "name": "Ultra GPT - Virtual HR",
+      "url": "https://ultragpt-pro.vercel.app/",
+      "tech": ["Python", "FastAPI", "OpenAI", "LangChain", "React"],
+      "bullets": [
+        "Built an LLM-powered virtual HR assistant handling employee queries, onboarding and HR process automation.",
+        "Served the model through a FastAPI backend with a React front end."
+      ]
+    },
+    {
+      "name": "Ultra Share Pro",
+      "url": "https://ultrasharepro.vercel.app/",
+      "github": "https://github.com/Akinleyejoshua/webRTC-Nextjs",
+      "tech": ["WebRTC", "Next.js", "Node.js", "Socket.io"],
+      "bullets": [
+        "Built peer-to-peer file sharing over WebRTC with Socket.io signalling, transferring files without a server hop.",
+        "Handled connection negotiation, chunked transfer and transfer-state UI."
+      ]
+    },
+    {
+      "name": "TradeAlgo V2",
+      "url": "https://gainzalgopro.netlify.app/",
+      "tech": ["React", "Vite", "FastAPI", "MetaTrader 5"],
+      "bullets": [
+        "Built a real-time trading indicator platform with TradingView charts and a MetaTrader 5 connection for local and production accounts.",
+        "Shipped configurable technical indicators, trade setup analysis and an automated trading bot control panel."
+      ]
+    }
+  ],
+
+  "education": [],
+
+  "certifications": [],
+
+  "screening_defaults": {
+    "work_authorization": "Yes",
+    "work_authorization_details": "Authorized to work in Nigeria; available worldwide for remote roles",
+    "requires_sponsorship": "Yes",
+    "notice_period": "2 weeks",
+    "start_date": "Within 2-4 weeks of an offer",
+    "expected_salary": "Negotiable based on role scope and market rate",
+    "salary_currency": "USD",
+    "willing_to_relocate": "Yes",
+    "remote_preference": "Remote",
+    "willing_to_travel": "Up to 25%",
+    "security_clearance": "No",
+    "over_18": "Yes",
+    "english_proficiency": "Fluent",
+    "hear_about_us": "LinkedIn",
+    "gender": "Male",
+    "race": "Black or African American",
+    "veteran": "I am not a protected veteran",
+    "disability": "No, I do not have a disability",
+    "pronouns": "",
+    "previously_employed_here": "No",
+    "agree_to_terms": "Yes",
+    "current_company": "Corvendra",
+    "current_title": "Full Stack Developer",
+    "portfolio": "https://joshuapro.netlify.app"
+  }
+}

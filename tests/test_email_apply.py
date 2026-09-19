@@ -836,3 +836,80 @@ async def test_when_neither_way_works_the_draft_is_left_for_you(settings) -> Non
 
     assert "in your Drafts" in str(caught.value)
     assert "Nothing was recorded as sent" in str(caught.value)
+
+
+# ---- saying nothing rather than saying "Unknown" ---------------------------
+
+def test_a_company_nobody_knows_is_left_out_of_the_subject(settings, tmp_path) -> None:
+    """A model asked for a company it cannot know answers "Unknown", and repeating it
+    puts "at Unknown" in front of a recruiter."""
+    settings.email_from = "joshua@example.com"
+
+    for company in ("Unknown", "", "N/A", "?"):
+        job = JobPosting(job_id="j", url="https://x.com/j", title="Data Analyst",
+                         company=company)
+        subject = EmailApplier(settings).compose(job, "a@b.com", PROFILE, "Hi.", []).subject
+        assert subject == "Application for Data Analyst - Joshua Akinleye", company
+
+
+def test_a_company_that_is_known_is_named(settings) -> None:
+    settings.email_from = "joshua@example.com"
+    job = JobPosting(job_id="j", url="https://x.com/j", title="Data Analyst",
+                     company="Northwind")
+
+    subject = EmailApplier(settings).compose(job, "a@b.com", PROFILE, "Hi.", []).subject
+
+    assert subject == "Application for Data Analyst at Northwind - Joshua Akinleye"
+
+
+def test_a_whole_advert_is_not_used_as_a_subject(settings) -> None:
+    """A post scraped from social media puts the entire advert in the page title."""
+    settings.email_from = "joshua@example.com"
+    job = JobPosting(job_id="j", url="https://x.com/j", company="",
+                     title="Ganesh Reddy on X: 'https://t.co/mN93 is hiring Role: SDE 1 "
+                           "Experience: 1-3 Years Full-Time Apply Here: https://t.co/Uw'")
+
+    subject = EmailApplier(settings).compose(job, "a@b.com", PROFILE, "Hi.", []).subject
+
+    assert len(subject) < 120 and subject.endswith("- Joshua Akinleye")
+
+
+def test_the_role_the_model_found_beats_a_page_title() -> None:
+    from models import best_title
+
+    assert best_title("Yevgeniya Tsernoh's Post", "Data Analyst") == "Data Analyst"
+    assert best_title("Ganesh Reddy on X", "Software Engineer") == "Software Engineer"
+    assert best_title("Data Analyst | LinkedIn", "Data Analyst") == "Data Analyst"
+
+
+def test_a_real_role_is_not_mistaken_for_a_page_title() -> None:
+    """"Post" appears in real job titles, so the rule must not fire on those."""
+    from models import best_title
+
+    assert best_title("Data Analyst, Post Sales", "Analyst") == "Data Analyst, Post Sales"
+    assert best_title("Post Production Coordinator", "X") == "Post Production Coordinator"
+    assert best_title("Senior Data Analyst", "Analyst") == "Senior Data Analyst"
+
+
+def test_a_file_is_not_named_after_something_nobody_knows(tmp_path) -> None:
+    from ai_agent import JobAnalysis
+    from resume_builder import ResumeBuilder
+
+    settings = Settings(_env_file=None, output_dir=tmp_path)
+    analysis = JobAnalysis(job_title="Data Analyst", company_name="Unknown", match_score=70,
+                           match_rationale="x", missing_requirements=[],
+                           highlighted_skills=[], tailored_summary="x",
+                           tailored_bullets=[], answers=[])
+    job = JobPosting(job_id="j", url="https://x.com/j", title="Data Analyst",
+                     company="Unknown")
+
+    assert ResumeBuilder(settings).output_path(job, analysis).name == "Data_Analyst.pdf"
+
+
+def test_a_file_falls_back_to_something_rather_than_nothing(tmp_path) -> None:
+    from resume_builder import ResumeBuilder
+
+    settings = Settings(_env_file=None, output_dir=tmp_path)
+    job = JobPosting(job_id="j", url="https://x.com/j", title="", company="")
+
+    assert ResumeBuilder(settings).output_path(job, None).name == "application.pdf"
