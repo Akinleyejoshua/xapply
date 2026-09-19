@@ -1,5 +1,24 @@
 {
   "_comment": "Company job-board tokens for the public ATS APIs. All entries verified live. Add your own targets; the token is the path segment in the board URL, e.g. job-boards.greenhouse.io/<token> or jobs.ashbyhq.com/<token>.",
+  "ashby": [
+    "careerswift.ai",
+    "clarium",
+    "constructor",
+    "cursor",
+    "goody",
+    "linear",
+    "markarch",
+    "modal",
+    "notion",
+    "openai",
+    "perplexity",
+    "ramp",
+    "replit",
+    "revenuecat",
+    "supabase",
+    "swans",
+    "tremendous"
+  ],
   "greenhouse": [
     "stripe",
     "airbnb",
@@ -23,18 +42,15 @@
     "duolingo"
   ],
   "lever": [
-    "palantir",
+    "binance",
+    "biocatch",
+    "jobgether",
     "matchgroup",
-    "spotify"
-  ],
-  "ashby": [
-    "openai",
-    "ramp",
-    "notion",
-    "cursor",
-    "perplexity",
-    "replit",
-    "modal",
-    "linear"
+    "padsplit",
+    "palantir",
+    "portcast",
+    "radformation",
+    "spotify",
+    "weloglobal"
   ]
 }
