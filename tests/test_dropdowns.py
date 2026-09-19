@@ -317,3 +317,44 @@ async def test_the_whole_form_is_filled_in_one_pass(form, settings) -> None:
     assert await page.inner_text("#btn") == "LinkedIn"
     assert await page.inner_text("#dv") == "Fully remote"
     assert result.unresolved == []
+
+
+@pytest.mark.asyncio
+async def test_custom_dropdowns_survive_being_discovered_twice(form) -> None:
+    """fill_step runs again to fix rejected fields. The marker attribute it leaves
+    behind used to make every custom dropdown vanish from the second pass."""
+    _browser, page, filler = form
+    body = page.locator("body")
+
+    first = await filler.discover(body)
+    second = await filler.discover(body)
+
+    assert [f.label for f in first] == [f.label for f in second]
+    assert sum(1 for f in second if f.kind == "combobox") == 2
+
+
+@pytest.mark.asyncio
+async def test_reading_a_menu_does_not_leave_it_open(form) -> None:
+    """An open menu covers the fields under it, so the next click lands on an option
+    instead of the field it was aiming for."""
+    _browser, page, filler = form
+    body = page.locator("body")
+    fields = {f.label: f for f in await filler.discover(body)}
+
+    await filler._combobox_options(body, fields["How did you hear about us?"])
+    await filler._combobox_options(body, fields["Preferred work arrangement"])
+
+    assert await page.locator("#m1").is_hidden()
+    assert await page.locator("#m2").is_hidden()
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_is_not_mistaken_for_an_answer(form) -> None:
+    """"Select..." and "Choose one" are prompts. Read as values, the field counted as
+    already filled and was skipped."""
+    _browser, page, filler = form
+    fields = {f.label: f for f in await filler.discover(page.locator("body"))}
+
+    assert fields["How did you hear about us?"].current_value == ""
+    assert fields["Preferred work arrangement"].current_value == ""
+    assert fields["Work authorisation"].current_value == ""
