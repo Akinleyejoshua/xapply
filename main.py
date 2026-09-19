@@ -192,6 +192,10 @@ def cmd_discover(args: argparse.Namespace) -> int:
         settings.countries = resolve_countries(args.countries)
     db = _db()
 
+    from discovery import ScanStats, explain_empty_scan
+
+    totals = ScanStats()
+
     async def go() -> list:
         gate = HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
         found = []
@@ -200,13 +204,15 @@ def cmd_discover(args: argparse.Namespace) -> int:
             for src in build_sources(settings, lazy, db):
                 page = await lazy.page_for(src.name)
                 found.extend(await src.discover(page))
+                if getattr(src, "stats", None):
+                    totals += src.stats
         return found
 
     jobs = asyncio.run(go())
     if args.json:
         print(json.dumps([j.to_dict() for j in jobs], indent=2))
         return 0
-    reports.print_discovered(jobs, settings.sources)
+    reports.print_discovered(jobs, settings.sources, totals, explain_empty_scan(totals, settings))
     if args.save and jobs:
         out = Path(args.save)
         out.write_text("\n".join(j.apply_url or j.url for j in jobs) + "\n", encoding="utf-8")

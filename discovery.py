@@ -30,6 +30,7 @@ import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import quote_plus, urlparse
@@ -91,20 +92,53 @@ def query_tokens(queries: Iterable[str]) -> list[set[str]]:
 #: posting containing "Engineer". Require a majority of a query's words instead.
 TITLE_MATCH_RATIO = 0.6
 
+#: Shortest prefix two words must share to count as the same idea. Five characters keeps
+#: "analytics"/"analyst"/"analysis" together while keeping "support"/"supply" apart.
+STEM_PREFIX = 5
+#: When one word is a prefix of the other ("engineer" in "engineering") this is enough.
+CONTAINS_PREFIX = 4
+
+
+def _common_prefix(a: str, b: str) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
+def words_match(a: str, b: str) -> bool:
+    """Whether two title words mean the same thing.
+
+    Job titles inflect constantly: a search for "Data Analytics" has to find
+    "Data Analyst" and "Data Analysis", and "Engineer" has to find "Engineering".
+    Exact word equality misses all of those, which made precise-looking searches
+    return nothing.
+    """
+    if a == b:
+        return True
+    if len(a) >= CONTAINS_PREFIX and len(b) >= CONTAINS_PREFIX:
+        if a.startswith(b) or b.startswith(a):
+            return True
+    shared = _common_prefix(a, b)
+    return shared >= STEM_PREFIX and len(a) >= STEM_PREFIX and len(b) >= STEM_PREFIX
+
 
 def title_matches(title: str, token_sets: list[set[str]], ratio: float = TITLE_MATCH_RATIO) -> bool:
     """True when the title carries most of the words of at least one configured query.
 
-    'Backend Engineer'         -> needs both words
-    'Machine Learning Engineer'-> needs 2 of 3, so 'Machine Learning Scientist' still matches
-                                  but a bare 'Sales Engineer' does not
+    'Backend Engineer'          -> needs both words, so 'Sales Engineer' does not match
+    'Machine Learning Engineer' -> needs 2 of 3, so 'Machine Learning Scientist' matches
+    'Data Analytics'            -> matches 'Data Analyst' and 'Data Analysis' too
     """
     if not token_sets:
         return True
-    words = set(re.split(r"[^a-z0-9+#.]+", (title or "").lower()))
+    words = [w for w in re.split(r"[^a-z0-9+#.]+", (title or "").lower()) if w]
     for toks in token_sets:
         needed = max(1, math.ceil(len(toks) * ratio))
-        if len(toks & words) >= needed:
+        hits = sum(1 for t in toks if any(words_match(t, w) for w in words))
+        if hits >= needed:
             return True
     return False
 
@@ -210,6 +244,46 @@ def seniority_matches(title: str, wanted: Optional[list[str]]) -> bool:
 # --------------------------------------------------------------------------
 
 
+@dataclass
+class ScanStats:
+    """Why postings did not make it through, so an empty scan can explain itself."""
+
+    seen: int = 0
+    dropped_title: int = 0
+    dropped_seniority: int = 0
+    dropped_location: int = 0
+    dropped_seen_before: int = 0
+    dropped_no_description: int = 0
+    dropped_unresolved: int = 0     # aggregators: no ATS link behind the listing
+    kept: int = 0
+
+    def __iadd__(self, other: "ScanStats") -> "ScanStats":
+        for f in self.__dataclass_fields__:
+            setattr(self, f, getattr(self, f) + getattr(other, f))
+        return self
+
+    @property
+    def dropped(self) -> int:
+        return self.seen - self.kept
+
+    def reasons(self) -> list[tuple[str, int]]:
+        return [(label, value) for label, value in (
+            ("search terms", self.dropped_title),
+            ("seniority", self.dropped_seniority),
+            ("location or country", self.dropped_location),
+            ("already applied", self.dropped_seen_before),
+            ("no description", self.dropped_no_description),
+            ("no application link", self.dropped_unresolved),
+        ) if value]
+
+    def summary(self) -> str:
+        if not self.seen:
+            return "no postings returned by the board"
+        parts = [f"{self.kept} kept of {self.seen}"]
+        parts += [f"{n} dropped by {label}" for label, n in self.reasons()]
+        return "; ".join(parts)
+
+
 class ApiJobSource:
     """Discovery over plain HTTP. Postings arrive fully described, so hydrate() is a no-op."""
 
@@ -220,6 +294,7 @@ class ApiJobSource:
         self.db = db
         self.b = browser
         self.tokens = query_tokens(settings.search_queries)
+        self.stats = ScanStats()
 
     async def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(headers=HEADERS, timeout=self.s.discovery_timeout_s,
@@ -239,8 +314,13 @@ class ApiJobSource:
     def _new(self, job: JobPosting) -> bool:
         """Skip anything already in the database, and anything with no usable description."""
         if self.db.has_job(self.name, job.job_id):
+            self.stats.dropped_seen_before += 1
             return False
-        return len(job.description) >= 120
+        if len(job.description) < 120:
+            self.stats.dropped_no_description += 1
+            return False
+        self.stats.kept += 1
+        return True
 
     async def discover(self, page: Any = None) -> list[JobPosting]:  # pragma: no cover
         raise NotImplementedError
@@ -284,14 +364,23 @@ class GreenhouseBoardSource(ApiJobSource):
                 if not listing or "jobs" not in listing:
                     log.info("greenhouse/%s: no board", token)
                     continue
-                candidates = [
-                    j for j in listing["jobs"]
-                    if title_matches(j.get("title", ""), self.tokens)
-                    and seniority_matches(j.get("title", ""), self.s.seniority_levels)
-                    and location_matches((j.get("location") or {}).get("name", ""),
-                                         self.s.search_location, self.s.remote_only,
-                                         countries=self.s.countries)
-                ][: self.s.max_jobs_per_company]
+                candidates = []
+                for j in listing["jobs"]:
+                    self.stats.seen += 1
+                    title = j.get("title", "")
+                    if not title_matches(title, self.tokens):
+                        self.stats.dropped_title += 1
+                        continue
+                    if not seniority_matches(title, self.s.seniority_levels):
+                        self.stats.dropped_seniority += 1
+                        continue
+                    if not location_matches((j.get("location") or {}).get("name", ""),
+                                            self.s.search_location, self.s.remote_only,
+                                            countries=self.s.countries):
+                        self.stats.dropped_location += 1
+                        continue
+                    candidates.append(j)
+                candidates = candidates[: self.s.max_jobs_per_company]
                 kept = 0
                 for j in candidates:
                     job_id = str(j["id"])
@@ -318,7 +407,7 @@ class GreenhouseBoardSource(ApiJobSource):
                         found.append(job)
                         kept += 1
                     await asyncio.sleep(self.s.discovery_delay_s)
-                log.info("greenhouse/%s: %d/%d postings match", token, kept, len(listing["jobs"]))
+                log.info("greenhouse/%s: %d kept of %d", token, kept, len(listing["jobs"]))
         return found
 
 
@@ -343,16 +432,20 @@ class LeverBoardSource(ApiJobSource):
                     continue
                 kept = 0
                 for p in postings:
+                    self.stats.seen += 1
                     cats = p.get("categories") or {}
                     title = (p.get("text") or "").strip()
                     loc = cats.get("location") or ""
                     if not title_matches(title, self.tokens):
+                        self.stats.dropped_title += 1
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
+                        self.stats.dropped_seniority += 1
                         continue
                     if not location_matches(loc, self.s.search_location, self.s.remote_only,
                                             workplace_type=p.get("workplaceType"),
                                             countries=self.s.countries):
+                        self.stats.dropped_location += 1
                         continue
                     description = (p.get("descriptionPlain") or "") + "\n\n" + (p.get("additionalPlain") or "")
                     hosted = p.get("hostedUrl") or ""
@@ -368,7 +461,7 @@ class LeverBoardSource(ApiJobSource):
                         kept += 1
                     if kept >= self.s.max_jobs_per_company:
                         break
-                log.info("lever/%s: %d/%d postings match", token, kept, len(postings))
+                log.info("lever/%s: %d kept of %d", token, kept, len(postings))
                 await asyncio.sleep(self.s.discovery_delay_s)
         return found
 
@@ -396,16 +489,20 @@ class AshbyBoardSource(ApiJobSource):
                 for p in data["jobs"]:
                     if p.get("isListed") is False:
                         continue
+                    self.stats.seen += 1
                     title = (p.get("title") or "").strip()
                     if not title_matches(title, self.tokens):
+                        self.stats.dropped_title += 1
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
+                        self.stats.dropped_seniority += 1
                         continue
                     locs = " ".join([p.get("location") or ""] +
                                     [s.get("location", "") for s in (p.get("secondaryLocations") or [])])
                     if not location_matches(locs, self.s.search_location, self.s.remote_only,
                                             workplace_type=p.get("workplaceType"),
                                             countries=self.s.countries):
+                        self.stats.dropped_location += 1
                         continue
                     hosted = p.get("jobUrl") or ""
                     job = JobPosting(
@@ -422,7 +519,7 @@ class AshbyBoardSource(ApiJobSource):
                         kept += 1
                     if kept >= self.s.max_jobs_per_company:
                         break
-                log.info("ashby/%s: %d/%d postings match", token, kept, len(data["jobs"]))
+                log.info("ashby/%s: %d kept of %d", token, kept, len(data["jobs"]))
                 await asyncio.sleep(self.s.discovery_delay_s)
         return found
 
@@ -519,19 +616,28 @@ class RemoteOKSource(AggregatorSource):
                 log.warning("remoteok: unexpected feed shape")
                 return found
             rows = [d for d in data if isinstance(d, dict) and d.get("position")]
-            matched = [d for d in rows if title_matches(d.get("position", ""), self.tokens)
-                       and seniority_matches(d.get("position", ""), self.s.seniority_levels)]
-            log.info("remoteok: %d/%d listings match the title filter", len(matched), len(rows))
+            self.stats.seen += len(rows)
+            matched = []
+            for d in rows:
+                if not title_matches(d.get("position", ""), self.tokens):
+                    self.stats.dropped_title += 1
+                elif not seniority_matches(d.get("position", ""), self.s.seniority_levels):
+                    self.stats.dropped_seniority += 1
+                else:
+                    matched.append(d)
+            log.info("remoteok: %d of %d listings match the title filter", len(matched), len(rows))
             for d in matched[: self.s.max_jobs_per_company]:
                 link = d.get("apply_url") or d.get("url") or ""
                 description = strip_html(d.get("description", ""))
                 ats_url = await self.resolve_ats_url(client, link, description, page)
                 if not ats_url:
+                    self.stats.dropped_unresolved += 1
                     log.debug("remoteok: no ATS link behind %s", link)
                     continue
                 loc = (d.get("location") or "Remote").strip()
                 if not location_matches(loc, self.s.search_location, self.s.remote_only,
                                         countries=self.s.countries):
+                    self.stats.dropped_location += 1
                     continue
                 job = JobPosting(
                     job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
@@ -556,19 +662,28 @@ class HimalayasSource(AggregatorSource):
         async with await self._client() as client:
             data = await self._json(client, self.FEED.format(limit=self.s.aggregator_page_size))
             jobs = (data or {}).get("jobs") or []
-            matched = [d for d in jobs if title_matches(d.get("title", ""), self.tokens)
-                       and seniority_matches(d.get("title", ""), self.s.seniority_levels)]
-            log.info("himalayas: %d/%d listings match the title filter", len(matched), len(jobs))
+            self.stats.seen += len(jobs)
+            matched = []
+            for d in jobs:
+                if not title_matches(d.get("title", ""), self.tokens):
+                    self.stats.dropped_title += 1
+                elif not seniority_matches(d.get("title", ""), self.s.seniority_levels):
+                    self.stats.dropped_seniority += 1
+                else:
+                    matched.append(d)
+            log.info("himalayas: %d of %d listings match the title filter", len(matched), len(jobs))
             for d in matched[: self.s.max_jobs_per_company]:
                 link = d.get("applicationLink") or d.get("guid") or ""
                 description = strip_html(d.get("description", ""))
                 ats_url = await self.resolve_ats_url(client, link, description, page)
                 if not ats_url:
+                    self.stats.dropped_unresolved += 1
                     log.debug("himalayas: no ATS link behind %s", link)
                     continue
                 loc = ", ".join(d.get("locationRestrictions") or []) or "Remote"
                 if not location_matches(loc, self.s.search_location, self.s.remote_only,
                                         countries=self.s.countries):
+                    self.stats.dropped_location += 1
                     continue
                 job = JobPosting(
                     job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
@@ -640,6 +755,37 @@ class GoogleSearchSource(ApiJobSource):
         from job_search import extract_posting  # imported here to avoid a circular import
 
         return await extract_posting(self.b, page, job)
+
+
+def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
+    """Turn an empty result into advice that names the filter actually responsible."""
+    if stats.kept:
+        return []
+    if not stats.seen:
+        return ["No board returned any postings. Check the company tokens with "
+                "`python main.py companies --probe`."]
+    tips: list[str] = []
+    ranked = sorted(stats.reasons(), key=lambda kv: -kv[1])
+    for label, n in ranked[:3]:
+        share = round(100 * n / stats.seen)
+        if label == "search terms":
+            tips.append(f"{n} of {stats.seen} postings ({share}%) did not match your search terms "
+                        f"({', '.join(settings.search_queries)}). Try fewer or broader terms.")
+        elif label == "seniority":
+            tips.append(f"{n} postings were the wrong seniority. You have "
+                        f"{', '.join(settings.seniority_levels)} selected; untick to allow any level.")
+        elif label == "location or country":
+            where = ", ".join(settings.countries) if settings.countries else settings.search_location
+            extra = " and remote-only is on" if settings.remote_only else ""
+            tips.append(f"{n} postings were outside {where or 'your location filter'}{extra}.")
+        elif label == "already applied":
+            tips.append(f"{n} postings are already in your database. "
+                        "`python main.py delete --status failed` frees them up.")
+        elif label == "no description":
+            tips.append(f"{n} postings came back with no usable description.")
+        elif label == "no application link":
+            tips.append(f"{n} aggregator listings had no Greenhouse, Lever or Ashby link behind them.")
+    return tips
 
 
 SOURCE_REGISTRY: dict[str, type[ApiJobSource]] = {

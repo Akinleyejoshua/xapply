@@ -167,6 +167,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     app.state.task_kind = ""         # "discover" | "run" | ""
     app.state.log = []               # live activity log shown in the UI
     app.state.discovered = []        # JobPosting dicts from the last scan
+    app.state.scan_stats = {}        # why the last scan kept or dropped what it did
 
     def note(message: str) -> None:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -484,6 +485,11 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     def get_discovered() -> list[dict[str, Any]]:
         return app.state.discovered
 
+    @app.get("/api/scan-stats", dependencies=[Depends(auth)], tags=["discover"])
+    def get_scan_stats() -> dict[str, Any]:
+        """How many postings the last scan examined, and what dropped them."""
+        return app.state.scan_stats or {"seen": 0, "kept": 0, "reasons": {}, "tips": []}
+
     @app.post("/admin/discover", dependencies=[Depends(auth)], tags=["discover"])
     async def trigger_discover(body: DiscoverRequest) -> dict[str, Any]:
         if body.sources:
@@ -512,15 +518,30 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             app.state.gate = gate
             # LazyBrowser only opens a real window if a source actually asks for a page,
             # so a pure board-API scan never pops a blank browser.
+            from discovery import ScanStats, explain_empty_scan
+
             found: list[Any] = []
+            totals = ScanStats()
             async with LazyBrowser(settings, gate) as lazy:
                 for src in build_sources(settings, lazy, database):
                     page = await lazy.page_for(src.name)
                     got = await src.discover(page)
-                    note(f"{src.name}: {len(got)} posting(s)")
+                    stats = getattr(src, "stats", None)
+                    note(f"{src.name}: {len(got)} posting(s)"
+                         + (f" ({stats.summary()})" if stats else ""))
+                    if stats:
+                        totals += stats
                     found.extend(got)
             app.state.discovered = [j.to_dict() for j in found]
-            note(f"scan finished: {len(found)} posting(s) ready to review")
+            app.state.scan_stats = {
+                "seen": totals.seen, "kept": totals.kept,
+                "reasons": dict(totals.reasons()),
+                "tips": explain_empty_scan(totals, settings),
+            }
+            note(f"scan finished: {len(found)} posting(s) ready to review "
+                 f"({totals.seen} postings examined)")
+            for tip in app.state.scan_stats["tips"]:
+                note("why nothing matched: " + tip)
 
         start("discover", _go)
         return {"started": True, "sources": settings.sources}

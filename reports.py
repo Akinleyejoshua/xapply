@@ -229,15 +229,25 @@ def export_csv(db: Database, path: Path, status: Optional[str] = None) -> Path:
     return path
 
 
-def print_discovered(jobs: list[Any], sources: list[str]) -> None:
+def print_discovered(jobs: list[Any], sources: list[str], stats: Any = None,
+                     tips: Optional[list[str]] = None) -> None:
     """Preview of `python main.py discover`: what would be applied to, grouped by ATS."""
     width = _term_width()
     print()
     print(c(f"  DISCOVERED {len(jobs)} POSTING(S) from {', '.join(sources)}".ljust(width - 2), BOLD))
     print(c("  " + "─" * (width - 4), DIM))
+    if stats is not None and stats.seen:
+        print(f"  Examined {stats.seen} posting(s); kept {stats.kept}.")
+        for label, n in stats.reasons():
+            print(c(f"    {n:>6} dropped by {label}", DIM))
+        print()
     if not jobs:
-        print("  Nothing matched. Widen SEARCH_QUERIES, set REMOTE_ONLY=false, "
-              "or add companies with `python main.py companies --add ashby:<token>`.\n")
+        for tip in (tips or []):
+            print(c(f"  - {tip}", "33"))
+        if not tips:
+            print("  Nothing matched. Widen SEARCH_QUERIES, clear the seniority and country "
+                  "filters, or add companies with `python main.py companies --add ashby:<token>`.")
+        print()
         return
     by_ats: dict[str, list[Any]] = {}
     for j in jobs:
