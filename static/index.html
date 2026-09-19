@@ -656,11 +656,13 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <span class="sp"></span>
             <input id="foundFilter" placeholder="Filter company or role" style="width:220px">
             <button class="sm ghost" id="btnSelAll">Select all</button>
-            <button class="sm ghost" id="btnSelNone">Clear</button>
+            <button class="sm ghost" id="btnSelNone">Deselect</button>
             <button class="primary" id="btnApplySel" disabled>Apply to selected</button>
             <button id="btnApplySelAuto" disabled>Apply with auto-submit</button>
-            <button class="sm ghost danger" id="btnDelFoundSel" disabled>Delete selected</button>
-            <button class="sm ghost danger" id="btnDelAllFound">Clear results</button>
+            <button class="sm ghost danger" id="btnDelFoundSel" disabled
+                    title="Remove the ticked postings from your saved scan results">Delete selected</button>
+            <button class="sm ghost danger" id="btnDelAllFound"
+                    title="Remove every saved scan result. Your applications are untouched.">Delete all results</button>
           </div>
           <div id="scanDiag"></div>
           <div class="table-wrap">
