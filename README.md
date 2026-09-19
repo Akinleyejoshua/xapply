@@ -160,8 +160,27 @@ python main.py models --provider nvidia --search nemotron   # browse what is ava
 python main.py run --provider nvidia --model openai/gpt-oss-20b
 ```
 
-In the web UI the provider and model dropdowns sit both on the **Dashboard**, next to the run
-buttons, and under **Settings**. The list is fetched live from the provider.
+**Picking a model.** The provider and model controls sit on the **Dashboard**, next to the run
+buttons, and under **Settings**. The model field is a search box: type any part of a name to
+filter, use the arrow keys and Enter, or paste an id the list does not contain. A dropdown of
+eighty entries is unusable, and no list is ever guaranteed complete, so both are handled.
+
+**Test this model** settles it by sending one tiny prompt and reporting what came back. That
+matters because a listed model can still be retired or overloaded:
+
+| Model | Result |
+| --- | --- |
+| `openai/gpt-oss-20b` | Answered a test prompt |
+| `meta/llama-3.3-70b-instruct` | 410, retired by the provider |
+| `stepfun-ai/step-3.5` | 404, no such model on this endpoint |
+| `nvidia/nemotron-3-super-120b-a12b` | 503 when busy, works otherwise |
+
+**Where the list comes from.** NVIDIA's OpenAI-compatible endpoint lists 82 models, and that is
+the complete set it will accept, with or without a key. Twenty-one of them are embedding, safety,
+reward, parsing or translation models that cannot hold a conversation, so they are hidden behind a
+**show non-chat** toggle, leaving 61. NVIDIA's own NVCF catalogue lists more, but those extra
+entries are internal deployments and non-chat models such as protein folding and speech
+recognition, and they return 404 on the chat endpoint, so listing them would only mislead.
 
 NVIDIA models differ in how they do structured output, so the client walks a ladder:
 `json_schema`, then `nvext.guided_json`, then `json_object` with the schema in the prompt. It
@@ -433,7 +452,7 @@ any other host with the default token is refused.
 | Discover | `POST /admin/discover`, `GET /api/discovered`, `GET /api/scan-stats`, `POST /api/detect` |
 | Apply | `POST /admin/run`, `/admin/apply-selected`, `/admin/stop` |
 | Control | `GET /api/run`, `/api/gate`, `POST /admin/continue`, `POST /admin/skip` |
-| Settings | `GET|PATCH /api/config`, `POST /api/config/reset`, `GET /api/models` |
+| Settings | `GET|PATCH /api/config`, `POST /api/config/reset`, `GET /api/models`, `POST /api/models/test` |
 | Data | `GET|PUT /api/profile`, `GET|POST /api/companies`, `DELETE /api/companies/{ats}/{token}` |
 | Boards | `POST /api/companies/resolve`, `/api/companies/add-from-url`, `GET /api/companies/probe` |
 
@@ -547,6 +566,8 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A CAPTCHA appears before anything is filled | Fixed: the form is filled first, and the challenge is handled at submit time |
 | A challenge never clears | Use **Skip this job**, type `s` in the terminal, or create `logs/SKIP` |
 | The sensitivity slider snaps back | Fixed: controls you are editing are no longer overwritten by the refresh |
+| A model you want is not in the list | Type its id anyway and press **Test this model**. The answer is definitive |
+| A run fails with a model error | Test the model. 410 means retired, 404 means wrong id, 503 means try again shortly |
 | A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |

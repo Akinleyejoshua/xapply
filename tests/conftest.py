@@ -29,6 +29,9 @@ def never_touch_the_real_settings_file():
         else:
             REAL_OVERRIDES.write_bytes(before)
         pytest.fail(
-            "A test wrote to the real settings.local.json. Give that test's Settings "
-            "an `overrides_path=tmp_path / 'settings.local.json'`."
+            "settings.local.json changed during this test.\n"
+            "If the test builds a Settings, give it "
+            "`overrides_path=tmp_path / 'settings.local.json'`.\n"
+            "If it does not, a dashboard left running on this machine is writing to the "
+            "file while the suite runs; stop it, or run the suite with the server down."
         )

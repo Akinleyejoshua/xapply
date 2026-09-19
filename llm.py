@@ -38,6 +38,14 @@ class LLMError(RuntimeError):
     """Raised when a provider cannot produce a valid structured response."""
 
 
+class ModelUnavailable(LLMError):
+    """The configured model cannot be used at all, so the whole run should stop.
+
+    Distinct from a transient failure: retrying other postings with the same model
+    would fail identically, and would fill the database with useless failures.
+    """
+
+
 def extract_json(text: str) -> str:
     """Pull a JSON object out of a model response that may be fenced or chatty."""
     if not text:
@@ -282,10 +290,14 @@ class NvidiaProvider(LLMProvider):
                         "NVIDIA rejected the API key. Check NVIDIA_API_KEY in .env "
                         f"(free key at https://build.nvidia.com). Raw error: {r.text[:200]}"
                     )
-                if r.status_code == 404:
-                    raise LLMError(
-                        f"NVIDIA has no model {self.model!r}. Pick one from "
-                        f"{self.base_url}/models and set NVIDIA_MODEL in .env."
+                if r.status_code in (404, 410):
+                    note_model_result("nvidia", self.model, False)
+                    verb = "has retired" if r.status_code == 410 else "has not deployed"
+                    raise ModelUnavailable(
+                        f"NVIDIA {verb} {self.model!r}, so no application can be scored.\n"
+                        f"  Its catalogue lists many models it does not actually serve.\n"
+                        f"  Open Settings, press 'Check which models work', and pick one that "
+                        f"passes, or run: python main.py models --verify"
                     )
                 if r.status_code == 400:
                     # Usually this rung of the structured-output ladder is unsupported.
@@ -325,6 +337,7 @@ class NvidiaProvider(LLMProvider):
                 if self._mode != mode:
                     log.info("NVIDIA structured-output mode for %s: %s", self.model, mode)
                     self._mode = mode
+                note_model_result("nvidia", self.model, True)
                 return parsed
         raise LLMError(
             f"NVIDIA model {self.model!r} could not produce valid structured output "
@@ -391,6 +404,40 @@ async def check_model(settings: Settings, provider: str, model: str) -> dict[str
     }.get(r.status_code, "")
     return {"ok": False, "model": model, "status": r.status_code,
             "detail": f"{hint} {detail}".strip()}
+
+
+#: Models known to answer, refreshed by `verify_models`. NVIDIA's catalogue lists many
+#: models it has not deployed, so "listed" and "usable" are different things.
+_VERIFIED: dict[str, dict[str, bool]] = {}
+
+
+async def verify_models(settings: Settings, provider: str, models: list[str],
+                        concurrency: int = 6) -> dict[str, bool]:
+    """Send a tiny prompt to each model and remember which ones answered."""
+    provider = (provider or settings.llm_provider).lower()
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(model: str) -> tuple[str, bool]:
+        async with sem:
+            result = await check_model(settings, provider, model)
+            # A 503 means it exists but is busy, which still counts as usable.
+            return model, bool(result.get("ok") or result.get("status") == 503)
+
+    pairs = await asyncio.gather(*(one(m) for m in models))
+    table = _VERIFIED.setdefault(provider, {})
+    table.update(dict(pairs))
+    working = sum(1 for _, ok in pairs if ok)
+    log.info("Verified %d/%d %s models", working, len(pairs), provider)
+    return dict(pairs)
+
+
+def verified_table(provider: str) -> dict[str, bool]:
+    return dict(_VERIFIED.get((provider or "").lower(), {}))
+
+
+def note_model_result(provider: str, model: str, ok: bool) -> None:
+    """Record what a real call told us, so the picker learns without extra probing."""
+    _VERIFIED.setdefault((provider or "").lower(), {})[model] = ok
 
 
 PROVIDERS: dict[str, type[LLMProvider]] = {
