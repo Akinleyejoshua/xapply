@@ -167,6 +167,54 @@ against the Pydantic schema before anything touches it.
 
 ---
 
+## Filtering what you apply to
+
+**Seniority.** Every posting is bucketed into `intern`, `junior`, `mid`, `senior` or `lead` from its
+title, before any LLM call. Tick the levels you want under **Scan & Apply**, or:
+
+```bash
+python main.py discover --seniority mid,senior
+python main.py run --seniority senior,lead
+```
+
+```
+# .env
+SENIORITY_LEVELS=mid,senior
+```
+
+Leaving it empty means every level. A title with no level word at all, like "Backend Engineer",
+counts as `mid`. "Senior Staff Engineer" is `lead`, because staff outranks senior. "Associate
+Product Manager" is `junior`, not `lead`, despite the word manager. "Software Engineer, Ads
+Manager" is `mid`, because there the word belongs to a product name.
+
+**Remote only.** Tick **Remote roles only** on the scan card, pass `--remote-only`, or set
+`REMOTE_ONLY=true`. This drops hybrid and on-site postings. It deliberately does not trust an
+ATS's own "remote" boolean: Ashby marks hybrid roles remote, so 505 of OpenAI's 537 flagged-remote
+jobs are actually hybrid. The `workplaceType` field is used when present, and the location text
+otherwise.
+
+---
+
+## Deleting applications
+
+Deleting a row removes the dedupe record too, so the posting becomes eligible for discovery again.
+That is how you retry something that failed.
+
+In the **Applications** tab: the × on any row, the checkboxes plus **Delete selected**, or
+**Delete all shown**, which respects the current status filter. Tick **Also delete the generated
+PDF and screenshot files** to remove those from disk as well.
+
+```bash
+python main.py delete 42                    # one application
+python main.py delete 42 43 44 --files      # several, plus their PDFs and screenshots
+python main.py delete --status failed       # every failed attempt, so they can be retried
+python main.py delete --all --yes           # start over
+```
+
+Every form asks for confirmation first, and prints what it is about to remove.
+
+---
+
 ## Reviewing what the bot did
 
 Every job produces a SQLite row **and** a JSON audit file in `logs/applications/` holding the full
@@ -206,6 +254,7 @@ python main.py export --out apps.csv
 | `make analyze URL=…` | `analyze --url` | Score one posting and build the PDF, apply to nothing |
 | `make models` | `models` | List the models the provider offers |
 | `make companies` | `companies --probe` | Count open roles on each company board |
+| | `delete` | Remove applications so their postings can be retried |
 | `make login` | `login` | Sign in once, LinkedIn only |
 | `make test` | | Offline test suite: no network, no browser, no LLM calls |
 | `make check` | | Byte-compile and import every module |
@@ -230,6 +279,7 @@ any other host with the default token is refused.
 | Group | Endpoints |
 | --- | --- |
 | Overview | `GET /api/stats`, `/api/applications`, `/api/applications/{id}`, `PATCH /api/applications/{id}` |
+| Delete | `DELETE /api/applications/{id}`, `POST /api/applications/delete` |
 | Files | `GET /api/applications/{id}/resume`, `/screenshot`, `/api/export.csv`, `/api/audits` |
 | Discover | `POST /admin/discover`, `GET /api/discovered`, `POST /api/detect` |
 | Apply | `POST /admin/run`, `/admin/apply-selected`, `/admin/stop` |
@@ -339,7 +389,9 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | Clicking Continue does nothing | Fixed: the pause now accepts the terminal, the dashboard button and `logs/CONTINUE`, whichever comes first |
 | Every job is skipped | Lower `MATCH_THRESHOLD`, or read the rationale with `python main.py show <id>` |
 | A scan finds nothing | Your search terms need a majority of their words in the title. Try fewer, broader terms |
-| A scan finds far too much | Use more specific terms. One shared word is not enough to match |
+| A scan finds far too much | Use more specific terms, or narrow the seniority levels |
+| Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
+| A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |
 | `Could not launch browser channel 'chrome'` | Harmless. It falls back to bundled Chromium, or set `BROWSER_CHANNEL=` |
 | The bot pauses constantly on one site | Those fields are not resolvable from your profile. Extend `screening_defaults` |
 
