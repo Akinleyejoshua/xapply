@@ -92,7 +92,8 @@ def test_the_bank_holds_no_written_answers() -> None:
     nothing in this file can claim something you did not do."""
     raw = json.loads(BANK_PATH.read_text(encoding="utf-8"))
     for entry in raw["archetypes"]:
-        assert set(entry) <= {"id", "asks", "phrases", "evidence", "guidance"}, entry["id"]
+        assert set(entry) <= {"id", "asks", "phrases", "evidence", "guidance", "style"}, entry["id"]
+        assert entry.get("style", "prose") in ("prose", "short"), entry["id"]
         assert "answer" not in entry, "an archetype must not carry a ready-made answer"
 
 
@@ -195,3 +196,113 @@ def test_the_story_guidance_forbids_inventing_an_incident() -> None:
     bank = QuestionBank.load()
     text = bank.guidance_for("Tell us about a time a project did not go to plan.")
     assert "invented" in text.lower() or "do not invent" in text.lower()
+
+
+# ---- a lookup rule must never answer a written question --------------------
+
+REMOTE_ESSAY = ("Tell us about your experience working in an async and/or remote "
+                "environment. What practices or approaches have worked well for you? "
+                "What challenges have you faced?")
+
+
+def test_an_essay_about_remote_work_is_not_a_remote_preference(bank: QuestionBank) -> None:
+    """The bug: the rule for remote-or-onsite working fires on any label containing
+    "remote", and answered this question with the one word "Remote"."""
+    assert bank.wants_prose(REMOTE_ESSAY) is True
+
+
+def test_a_yes_or_no_about_remote_work_still_is_one(bank: QuestionBank) -> None:
+    """Matching the same archetype must not turn a short question into an essay."""
+    assert bank.wants_prose("Are you open to remote work?") is False
+    assert bank.wants_prose("Preferred work arrangement") is False
+
+
+@pytest.mark.parametrize("label", [
+    "What is your notice period?", "What is your expected salary?",
+    "Will you now or in the future require sponsorship?", "Email", "LinkedIn Profile",
+    "How did you hear about this role?",
+])
+def test_ordinary_screening_questions_stay_lookups(bank: QuestionBank, label: str) -> None:
+    assert bank.wants_prose(label) is False, bank.explain(label)
+
+
+def test_a_wording_the_bank_has_never_seen_is_judged_by_shape(bank: QuestionBank) -> None:
+    """Nothing in the bank matches this, and it still plainly wants writing."""
+    unknown = ("Describe how you would explain a difficult technical trade-off to "
+               "somebody who does not write software.")
+    assert bank.match(unknown) is None
+    assert bank.wants_prose(unknown) is True
+
+
+@pytest.mark.asyncio
+async def test_the_model_answers_the_essay_and_the_rules_answer_the_facts() -> None:
+    """End to end through the resolver, which is where the wrong answer came from."""
+    from ai_agent import FieldAnswer
+    from browser_bot import AnswerResolver, FormField, ResolveContext
+    from config import Settings
+    from models import JobPosting
+
+    profile = {"email": "you@example.com",
+               "screening_defaults": {"remote_preference": "Remote", "notice_period": "2 weeks"}}
+
+    class SpyAI:
+        def __init__(self) -> None:
+            self.asked: list[str] = []
+
+        async def answer_form_question(self, profile, job, analysis, label, kind, **kw):
+            self.asked.append(label)
+            return FieldAnswer(answer="I have worked remotely for three years, relying on "
+                                      "written updates and documented handovers.",
+                               confidence=0.9, needs_human=False, reasoning="")
+
+    ai = SpyAI()
+    resolver = AnswerResolver(ai, Settings(_env_file=None))
+    ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), None)
+
+    essay = await resolver.resolve(FormField(kind="textarea", label=REMOTE_ESSAY, idx="x0"), ctx)
+    short = await resolver.resolve(
+        FormField(kind="text", label="Are you open to remote work?", idx="x1"), ctx)
+
+    assert REMOTE_ESSAY in ai.asked, "the essay never reached the model"
+    assert essay.value.startswith("I have worked remotely")
+    assert short.value == "Remote" and "Are you open to remote work?" not in ai.asked
+
+
+@pytest.mark.asyncio
+async def test_a_multi_line_box_is_always_treated_as_writing() -> None:
+    """Whatever it is labelled. A textarea is not where a stored one-liner belongs."""
+    from browser_bot import AnswerResolver, FormField
+    from config import Settings
+
+    resolver = AnswerResolver(None, Settings(_env_file=None))
+
+    assert resolver.wants_writing(FormField(kind="textarea", label="Notes", idx="x0")) is True
+    assert resolver.wants_writing(FormField(kind="text", label="Notes", idx="x1")) is False
+
+
+@pytest.mark.asyncio
+async def test_a_dropdown_is_never_treated_as_writing() -> None:
+    from browser_bot import AnswerResolver, FormField
+    from config import Settings
+
+    resolver = AnswerResolver(None, Settings(_env_file=None))
+    field = FormField(kind="textarea", label=REMOTE_ESSAY, idx="x0",
+                      options=[{"label": "Yes", "value": "y", "idx": "", "dom_id": ""}])
+
+    assert resolver.wants_writing(field) is False
+
+
+def test_the_screening_rules_refuse_an_essay_on_their_own() -> None:
+    """Belt and braces: these rules match on a single word, and a stored value dropped
+    into an essay box is the most visible way the bot embarrasses you."""
+    from browser_bot import AnswerResolver, FormField
+    from config import Settings
+
+    resolver = AnswerResolver(None, Settings(_env_file=None))
+    profile = {"screening_defaults": {"remote_preference": "Remote"}}
+
+    assert resolver._from_screening_defaults(
+        FormField(kind="text", label=REMOTE_ESSAY, idx="x0"), profile) is None
+    assert resolver._from_screening_defaults(
+        FormField(kind="text", label="Are you open to remote work?", idx="x1"),
+        profile).value == "Remote"

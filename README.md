@@ -516,6 +516,13 @@ records those patterns, what each one is really asking, and which part of your p
 answers it. The answer itself is composed from your own experience and projects every
 time, so the file cannot put words in your mouth or claim something you did not do.
 
+Each entry is marked `prose` or `short`. That decides whether the question may be
+answered from a stored one-liner at all. Without it, "Tell us about your experience
+working in a remote environment" was answered with the profile's remote preference, the
+single word "Remote", because a lookup rule spotted the word and the model was never
+reached. A `prose` question now always goes to the model, while "Are you open to remote
+work?" is still answered instantly from your profile.
+
 It is yours to edit. Add phrases to teach it a wording it does not know:
 
 ```bash

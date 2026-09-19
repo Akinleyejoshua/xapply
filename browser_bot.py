@@ -39,6 +39,7 @@ from ai_agent import AIAgent, JobAnalysis
 from config import Settings
 from matching import stem_equal, word_similarity
 from models import JobPosting, ats_text
+from question_bank import QuestionBank, looks_like_an_essay
 
 log = logging.getLogger(__name__)
 
@@ -1327,9 +1328,12 @@ def _content_words(s: str) -> list[str]:
 
 
 class AnswerResolver:
-    def __init__(self, ai: Optional[AIAgent], settings: Settings):
+    def __init__(self, ai: Optional[AIAgent], settings: Settings,
+                 questions: Optional[QuestionBank] = None):
         self.ai = ai
         self.s = settings
+        #: Used to tell a question that wants writing from one that wants a fact.
+        self.questions = questions or QuestionBank.load()
         self._cache: dict[str, ResolvedAnswer] = {}
 
     async def resolve(self, f: FormField, ctx: ResolveContext, force_ai: bool = False) -> ResolvedAnswer:
@@ -1339,6 +1343,16 @@ class AnswerResolver:
             return self._cache[cache_key]
 
         answer: Optional[ResolvedAnswer] = None
+        if not force_ai and self.wants_writing(f):
+            # A lookup rule answers by spotting a word. The rule for remote-or-onsite
+            # working fires on any label containing "remote", which is right for "Are you
+            # open to remote work?" and badly wrong for "Tell us about your experience
+            # working in a remote environment", which it answered with the one word
+            # "Remote". A question that wants writing goes straight to the model.
+            log.debug("%r wants writing, so the lookup rules are skipped", label[:60])
+            answer = await self._from_ai(f, ctx)
+            self._cache[cache_key] = answer
+            return answer
         if not force_ai:
             # Screening questions are checked first because they are phrased as sentences
             # and would otherwise be captured by a loose contact-field rule. "Will you
@@ -1355,6 +1369,19 @@ class AnswerResolver:
             answer = await self._from_ai(f, ctx)
         self._cache[cache_key] = answer
         return answer
+
+    def wants_writing(self, f: FormField) -> bool:
+        """Whether this field is a question to answer in prose rather than a fact.
+
+        Two signals. A multi-line box with no options is asking for writing whatever it
+        is labelled, and the question bank recognises the usual wordings. Either is
+        enough; neither fires on an ordinary field like Email or a yes/no dropdown.
+        """
+        if f.options:
+            return False                       # a choice is never an essay
+        if f.kind == "textarea":
+            return True
+        return self.questions.wants_prose(f.label or "")
 
     # ---- strategies ----------------------------------------------------
     def _from_profile(self, f: FormField, profile: dict) -> Optional[ResolvedAnswer]:
@@ -1437,6 +1464,14 @@ class AnswerResolver:
         return None
 
     def _from_screening_defaults(self, f: FormField, profile: dict) -> Optional[ResolvedAnswer]:
+        """A stored one-line answer to a standard screening question.
+
+        Never for a question that wants writing. This is belt and braces with the check
+        in `resolve`, because these rules match on a single word and a stored value in
+        the middle of an essay box is the most visible way the bot embarrasses you.
+        """
+        if looks_like_an_essay(f.label or ""):
+            return None
         defaults = profile.get("screening_defaults") or {}
         for pattern, key in SCREENING_RULES:
             if pattern.search(f.label):

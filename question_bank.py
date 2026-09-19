@@ -37,6 +37,30 @@ def normalise(text: str) -> str:
     return re.sub(r"\s+", " ", _NORMALISE.sub(" ", (text or "").lower())).strip()
 
 
+#: A question that wants writing rather than a fact. The distinction decides whether a
+#: lookup rule may answer at all: "Tell us about working in a remote environment" was
+#: being answered with the profile's remote preference, the single word "Remote",
+#: because the rule for remote-or-onsite saw the word and never let the model near it.
+PROSE = "prose"
+SHORT = "short"
+
+#: Questions the bank does not know, recognised by shape instead. Long, and asking to
+#: be told something.
+ESSAY_SHAPE = re.compile(
+    r"\btell (us|me)\b|\bdescribe\b|\bexplain\b|\bwalk (us|me) through\b|"
+    r"\bin your own words\b|\bwhat (practices|approaches|challenges|steps)\b|"
+    r"\bshare (an|a|your)\b|\bgive (an|us an) example\b|\belaborate\b|"
+    r"\bwhy do you\b|\bwhat (interests|excites|motivates) you\b", re.I)
+#: Under this length a question is a field label, however it is phrased.
+ESSAY_MIN_CHARS = 60
+
+
+def looks_like_an_essay(label: str) -> bool:
+    """Whether a question wants writing, judged from its shape alone."""
+    text = (label or "").strip()
+    return len(text) >= ESSAY_MIN_CHARS and bool(ESSAY_SHAPE.search(text))
+
+
 @dataclass
 class Archetype:
     id: str
@@ -44,6 +68,7 @@ class Archetype:
     phrases: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     guidance: str = ""
+    style: str = PROSE
 
     def score(self, label: str) -> float:
         """How strongly this archetype claims `label`, already normalised."""
@@ -87,7 +112,8 @@ class QuestionBank:
                     id=str(entry["id"]), asks=entry.get("asks", ""),
                     phrases=list(entry.get("phrases") or []),
                     evidence=list(entry.get("evidence") or []),
-                    guidance=entry.get("guidance", "")))
+                    guidance=entry.get("guidance", ""),
+                    style=entry.get("style", PROSE)))
             except (KeyError, TypeError) as exc:
                 log.warning("Skipping a malformed question archetype: %s", exc)
         return cls(out)
@@ -109,10 +135,30 @@ class QuestionBank:
         found = self.match(label)
         return found.brief() if found else ""
 
+    def wants_prose(self, label: str) -> bool:
+        """Whether this question has to be written rather than looked up.
+
+        A lookup rule answers by spotting a word: the rule for remote-or-onsite working
+        fires on any label containing "remote". That is right for "Are you open to remote
+        work?" and badly wrong for "Tell us about your experience working in a remote
+        environment", which it answered with the single word "Remote". So a question that
+        wants writing is never offered to the rules at all.
+        """
+        found = self.match(label)
+        if found is not None and found.style == SHORT:
+            return False
+        if looks_like_an_essay(label):
+            return True
+        # Matching a prose archetype is not enough on its own. "Are you open to remote
+        # work?" matches the remote archetype and is still a yes or no, so the question
+        # has to be long enough to be asking for writing.
+        return found is not None and len((label or "").strip()) >= ESSAY_MIN_CHARS
+
     def explain(self, label: str) -> dict[str, Any]:
         """Every archetype's score, for working out a surprising match."""
         normalised = normalise(label)
         scored = sorted(((a.id, round(a.score(normalised), 3)) for a in self.archetypes),
                         key=lambda kv: -kv[1])
         found = self.match(label)
-        return {"label": label, "matched": found.id if found else None, "scores": scored[:5]}
+        return {"label": label, "matched": found.id if found else None,
+                "wants_prose": self.wants_prose(label), "scores": scored[:5]}
