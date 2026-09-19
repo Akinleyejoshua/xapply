@@ -455,3 +455,195 @@ def test_the_wording_may_come_after_the_address() -> None:
 
     assert application_address("careers@nw.com is where applications go.",
                                "https://nw.com/j") == "careers@nw.com"
+
+
+# ---- never say sent without looking ----------------------------------------
+
+class GmailPage:
+    """Enough of the Gmail compose window to act out each ending."""
+
+    url = "https://mail.google.com/mail/u/0/#inbox"
+
+    def __init__(self, ending: str) -> None:
+        self.ending = ending
+        self.sent = False
+        self.keys: list[str] = []
+        self.keyboard = self._Keyboard(self)
+
+    class _Keyboard:
+        def __init__(self, page: "GmailPage") -> None:
+            self.page = page
+
+        async def press(self, key: str) -> None:
+            self.page.keys.append(key)
+
+    class _Loc:
+        def __init__(self, sel: str, page: "GmailPage") -> None:
+            self.sel, self.page = sel, page
+
+        @property
+        def first(self):
+            return self
+
+        @property
+        def last(self):
+            return self
+
+        async def wait_for(self, **_k):
+            if not await self.count():
+                raise RuntimeError("not on the page")
+
+        async def count(self) -> int:
+            page, sel = self.page, self.sel
+            if "alertdialog" in sel or "Kj-JD" in sel or "one recipient" in sel:
+                return 1 if (page.ending == "refused" and page.sent) else 0
+            if "Message Body" in sel or 'role="textbox"' in sel:
+                return 0 if (page.sent and page.ending == "sent") else 1
+            if "Message sent" in sel or "Sending" in sel or "has-text" in sel:
+                return 0
+            return 1
+
+        async def is_visible(self) -> bool:
+            return bool(await self.count())
+
+        async def inner_text(self) -> str:
+            return ("Please specify at least one recipient."
+                    if "alertdialog" in self.sel else "")
+
+        async def click(self) -> None:
+            if "Send" in self.sel:
+                self.page.sent = True
+
+        async def fill(self, _v: str) -> None:
+            return None
+
+        async def type(self, _v: str, delay: int = 0) -> None:
+            return None
+
+        async def set_input_files(self, _f) -> None:
+            return None
+
+    def locator(self, sel: str):
+        return self._Loc(sel, self)
+
+
+class GmailBrowser:
+    def __init__(self, page: GmailPage) -> None:
+        self.page = page
+
+    async def goto(self, page, url):
+        return url
+
+
+async def _send(settings, ending: str):
+    from email_apply import GmailTransport
+
+    page = GmailPage(ending)
+    GmailTransport.CONFIRM_TIMEOUT = 1.5
+    draft = EmailApplier(settings).compose(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        "careers@example.com", PROFILE, "Hello.", [])
+    await GmailTransport(settings, GmailBrowser(page)).send(draft)
+    return page
+
+
+@pytest.mark.asyncio
+async def test_a_message_gmail_actually_sent_is_reported_sent(settings) -> None:
+    page = await _send(settings, "sent")
+
+    assert page.sent is True
+
+
+@pytest.mark.asyncio
+async def test_a_message_gmail_refused_is_not_reported_sent(settings) -> None:
+    """The bug: Send was clicked and success logged without looking, so a message
+    sitting in Drafts was recorded as an application you had made."""
+    from email_apply import SendRefused
+
+    with pytest.raises(SendRefused) as caught:
+        await _send(settings, "refused")
+
+    assert "at least one recipient" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_silence_from_gmail_is_not_taken_as_success(settings) -> None:
+    from email_apply import SendRefused
+
+    with pytest.raises(SendRefused) as caught:
+        await _send(settings, "stuck")
+
+    assert "Drafts" in str(caught.value)
+    assert "Nothing has been recorded as sent" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_the_recipient_is_committed_before_sending(settings) -> None:
+    """Gmail only accepts a recipient once it becomes a chip. Filling the box leaves
+    the text uncommitted and Send then refuses the whole message."""
+    page = await _send(settings, "sent")
+
+    assert "Tab" in page.keys
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_recorded_as_failed_not_submitted(settings, tmp_path: Path,
+                                                             monkeypatch) -> None:
+    """The whole point: the database must not say you applied when you did not."""
+    from database import STATUS_FAILED, Database
+    from email_apply import SendRefused
+    from pipeline import Pipeline
+
+    db = Database(tmp_path / "t.db")
+    db.init()
+    p = Pipeline.__new__(Pipeline)
+    p.s, p.db, p.gate, p.stats = settings, db, None, {}
+    p.profile = PROFILE
+    p.resumes = None
+    monkeypatch.setattr(p, "_bump", lambda status: None)
+    monkeypatch.setattr(p, "write_audit",
+                        lambda *a, **k: Path(tmp_path / "audit.json"))
+
+    class Refusing:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        transport = "gmail"
+
+        def missing_settings(self):
+            return []
+
+        def compose(self, *a, **k):
+            from email_apply import Draft
+
+            return Draft(to="careers@example.com", subject="s", body="b", attachments=[])
+
+        def save_preview(self, *a, **k):
+            return tmp_path / "preview.eml"
+
+        async def send(self, draft):
+            raise SendRefused("Gmail did not confirm sending.")
+
+    import email_apply
+    monkeypatch.setattr(email_apply, "EmailApplier", Refusing)
+    settings.email_auto_send = True
+
+    async def cover():
+        return tmp_path / "cover.pdf", "letter"
+
+    cover.cache = {}
+    from ai_agent import JobAnalysis
+
+    analysis = JobAnalysis(job_title="Analyst", company_name="X", match_score=70,
+                           match_rationale="ok", missing_requirements=[],
+                           highlighted_skills=[], tailored_summary="s",
+                           tailored_bullets=[], answers=[])
+    resume = tmp_path / "cv.pdf"
+    resume.write_bytes(b"%PDF")
+
+    status = await p._apply_by_email(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        analysis, resume, "nothing trimmed", "careers@example.com", cover)
+
+    assert status == STATUS_FAILED
+    assert "did not confirm" in db.list()[0]["notes"]
