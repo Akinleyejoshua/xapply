@@ -76,9 +76,12 @@ python main.py companies --probe                 # count open roles on each boar
 python main.py companies --add ashby:stickermule
 ```
 
-The token is the path segment in the board URL. For `jobs.ashbyhq.com/linear/...` it is `linear`;
-for `job-boards.greenhouse.io/gitlab/...` it is `gitlab`. You can also add and remove them under
-**Settings** in the web UI.
+Under **Settings**, paste any job link you found in your browser and the board behind it is
+identified and verified for you, with its open-role count. A board link or a bare company token
+works too. **Count open roles on every board** flags any token that has gone dead.
+
+From the terminal the token is the path segment in the board URL: `jobs.ashbyhq.com/linear/...`
+is `linear`, `job-boards.greenhouse.io/gitlab/...` is `gitlab`.
 
 ---
 
@@ -223,12 +226,29 @@ ATS's own "remote" boolean: Ashby marks hybrid roles remote, so 505 of OpenAI's 
 jobs are actually hybrid. The `workplaceType` field is used when present, and the location text
 otherwise.
 
-**Search terms** match on word stems, not whole words, because job titles inflect constantly.
-"Data Analytics" finds *Data Analyst* and *Data Analysis*, "Backend Engineering" finds *Backend
-Engineer*. A majority of a query's words still has to be present, so "Backend Engineer" does not
-match a bare *Sales Engineer*, and "Data Analytics" does not match *Data Engineer*, which is a
-different job. Two words only count as the same idea when they share a five-character prefix, so
-*support* and *supply* stay apart.
+**Search terms** are scored for resemblance, not matched word for word. Counting shared words was
+too blunt: a search for "Data Analytics" returned nothing at all, because `analytics` is not the
+word `analyst`. Of 93 real intern postings on the configured boards, it matched zero, including
+*Analytics Engineer Intern* and *Business Analyst Intern*.
+
+Words are folded into concepts, so `analyst`, `analytics`, `analysis`, `insights` and `BI` are one
+idea, and `ML` and `machine learning` are another. Concepts are then weighted by how much they
+narrow a search. `engineer` barely narrows anything, so it counts for little; `backend` or
+`kubernetes` counts fully. The score is the share of your query's weight the title covers:
+
+| Search term | Title | Score |
+| --- | --- | --- |
+| Data Analytics | Data Analyst | 0.97 |
+| Data Analytics | Analytics Engineer Intern | 0.50 |
+| Data Analytics | Accounting Intern | 0.00 |
+| Backend Engineer | Backend Developer | 0.96 |
+| Backend Engineer | Sales Engineer | 0.29 |
+
+**Match sensitivity** is the cut-off, adjustable on the scan card and defaulting to 0.45. Lower
+casts a wider net. Discovery is deliberately generous, because every posting is then scored
+properly by the model and rejected below your match threshold. A near miss at this stage costs
+one cheap API call; a wrongly dropped posting is never seen again. The score for each result is
+shown in the Match column.
 
 **Countries.** Pick any number from the dropdown on the scan card, or:
 
@@ -254,6 +274,48 @@ The filters stack. With **United Kingdom** and **Remote roles only** both set, a
 genuinely remote *and* name the UK, so "London (Hybrid)" is dropped and "Remote, United Kingdom"
 is kept. Choosing any country makes the free-text **Location** box inactive, so the two can never
 disagree.
+
+---
+
+## Reaching the form on a company careers page
+
+Half of all Greenhouse boards redirect their own job URL to the company's careers site,
+which shows the description and an Apply button but never the form. Stripe, Airbnb,
+Coinbase, Dropbox, Asana, Databricks, Duolingo, Instacart, Brex and Samsara all do this.
+Those pages also carry their own marketing CAPTCHA, which used to stop a run before the
+form was ever reached.
+
+So for Greenhouse the agent goes straight to the embed form, which always renders the
+real application and never redirects. If that is unavailable it falls back to the posting
+itself, then any embedded ATS iframe, then an Apply button or link on the page. Measured
+across twelve company boards, it now reaches a real form with a working Submit button on
+all twelve.
+
+Two safeguards make that reliable:
+
+- **A form has to look like an application.** A careers page offers a search box and a
+  newsletter signup, both of which are forms with inputs. Accepting one of those stopped
+  the search before the real form was found. A candidate now has to carry a file upload,
+  or a name and an email, or four fields with one of those.
+- **An iframe is matched on its host.** A Google API proxy carries `greenhouse.io` in its
+  query string, and following it led nowhere.
+
+---
+
+## CAPTCHAs: fill first, solve last
+
+An application form very often carries its own inline reCAPTCHA or Turnstile widget.
+Stopping for it on arrival means you are shown a CAPTCHA next to a set of empty boxes.
+
+So while navigating, the agent only stops for something that genuinely blocks the page:
+a login wall, or a challenge on a page with no form on it. An inline widget is noted and
+ignored, the form is filled, and the full check runs immediately before submitting, which
+is the only moment the CAPTCHA has to be solved.
+
+**When a challenge will not clear**, skip the posting rather than holding up the run:
+click **Skip this job** in the dashboard banner, type `s` then Enter in the terminal,
+create `logs/SKIP`, or `POST /admin/skip`. The application is recorded as skipped with
+the reason, and the agent moves to the next one.
 
 ---
 
@@ -370,9 +432,10 @@ any other host with the default token is refused.
 | Files | `GET /api/applications/{id}/resume`, `/screenshot`, `/api/export.csv`, `/api/audits` |
 | Discover | `POST /admin/discover`, `GET /api/discovered`, `GET /api/scan-stats`, `POST /api/detect` |
 | Apply | `POST /admin/run`, `/admin/apply-selected`, `/admin/stop` |
-| Control | `GET /api/run`, `/api/gate`, `POST /admin/continue` |
+| Control | `GET /api/run`, `/api/gate`, `POST /admin/continue`, `POST /admin/skip` |
 | Settings | `GET|PATCH /api/config`, `POST /api/config/reset`, `GET /api/models` |
 | Data | `GET|PUT /api/profile`, `GET|POST /api/companies`, `DELETE /api/companies/{ats}/{token}` |
+| Boards | `POST /api/companies/resolve`, `/api/companies/add-from-url`, `GET /api/companies/probe` |
 
 ---
 
@@ -438,6 +501,7 @@ map onto range options properly: 6 years picks "5-10 years", not the nearest sta
 | `discovery.py` | Board APIs, aggregator feeds, Google search |
 | `job_search.py` | LinkedIn search, posting extraction, lazy browser |
 | `pipeline.py` | Orchestration and audit logging |
+| `matching.py` | Title relevance: concepts, weights and the resemblance score |
 | `countries.py` | Country names, their aliases and cities, and regional shorthand |
 | `reports.py` | Terminal dashboard rendering |
 | `api.py` | FastAPI app: every flow the CLI has |
@@ -478,7 +542,11 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | Clicking Continue does nothing | Fixed: the pause now accepts the terminal, the dashboard button and `logs/CONTINUE`, whichever comes first |
 | Every job is skipped | Lower `MATCH_THRESHOLD`, or read the rationale with `python main.py show <id>` |
 | A scan finds nothing | Read the strip above the results. It names the filter that dropped everything |
-| A search finds far fewer than the board shows | Fixed: terms now match word stems, so "Data Analytics" finds "Data Analyst" |
+| A search finds far fewer than the board shows | Fixed: terms are scored for resemblance. Lower Match sensitivity to widen further |
+| Only the job description opens, never the form | Fixed: Greenhouse now opens the embed form directly, which never redirects |
+| A CAPTCHA appears before anything is filled | Fixed: the form is filled first, and the challenge is handled at submit time |
+| A challenge never clears | Use **Skip this job**, type `s` in the terminal, or create `logs/SKIP` |
+| The sensitivity slider snaps back | Fixed: controls you are editing are no longer overwritten by the refresh |
 | A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
