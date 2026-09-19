@@ -737,7 +737,20 @@ DISCOVER_JS = r"""
     return '';
   };
   let idx = 0; let order = 0; const out = []; const radioGroups = new Map();
-  const placeholderish = t => /^(select|choose|please|pick|-+|\s*)$/i.test((t || '').split(' ')[0]) && (t || '').length < 30;
+  // Elements the first pass took, so the dropdown pass can tell them apart from its
+  // own. Checking for the marker attribute instead was wrong: it survives from the
+  // previous run, so every custom dropdown disappeared from the second discovery
+  // onwards and was silently left unfilled.
+  const captured = new Set();
+  // "Select...", "Choose one", "---" and the like are prompts, not answers. Matching
+  // only the bare word left "Select..." looking like a real choice, so the field was
+  // treated as already filled and skipped.
+  const placeholderish = t => {
+    const s = (t || '').replace(/[.\u2026\-\s]+$/g, '').trim();
+    if (!s) return true;
+    if (s.length > 30) return false;
+    return /^(select|choose|please|pick|none|nothing|n\/a|-+)$/i.test(s.split(' ')[0]);
+  };
   root.querySelectorAll('input, textarea, select').forEach(el => {
     const myOrder = order++;
     let type = (el.getAttribute('type') || '').toLowerCase();
@@ -755,6 +768,7 @@ DISCOVER_JS = r"""
     if (el.disabled || el.readOnly) return;
     const id = 'x' + (idx++);
     el.setAttribute('data-xapply-idx', id);
+    captured.add(el);
     const required = !!(el.required || el.getAttribute('aria-required') === 'true');
     if (type === 'radio') {
       const key = el.name ? 'name:' + el.name : 'group:' + groupLabelOf(el);
@@ -799,7 +813,7 @@ DISCOVER_JS = r"""
     const tag = el.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;  // already captured
     if (el.querySelector('input:not([type=hidden]), textarea, select')) return;  // a wrapper, not the control
-    if (el.hasAttribute('data-xapply-idx')) return;
+    if (captured.has(el)) return;
     if (!visible(el)) return;
     if (el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled')) return;
     const id = 'x' + (idx++);
@@ -1055,10 +1069,14 @@ class FormFiller:
         return {"label": f.label, "kind": "checkbox", "value": "checked" if want else "unchecked",
                 "source": source, "confidence": 1.0, "ok": True}
 
-    #: Where an opened dropdown puts its choices, whatever it is built from.
-    OPTION_SELECTOR = ('[role="option"], [role="listbox"] li, [role="menuitem"], '
-                       '[role="menuitemradio"], [class*="option" i][id*="option" i], '
-                       '.basic-typeahead__selectable')
+    #: Where an opened dropdown puts its choices, whatever it is built from. Restricted
+    #: to what is on screen: a page can hold several closed menus, and matching their
+    #: hidden options made "is this menu still open" answer for the wrong menu, which
+    #: left one hanging open over the fields below it.
+    OPTION_SELECTOR = ('[role="option"]:visible, [role="listbox"] li:visible, '
+                       '[role="menuitem"]:visible, [role="menuitemradio"]:visible, '
+                       '[class*="option" i][id*="option" i]:visible, '
+                       '.basic-typeahead__selectable:visible')
 
     async def _open_menu(self, scope: Locator, f: FormField) -> Locator:
         """Click a dropdown open and return a locator for whatever it revealed."""
@@ -1081,6 +1099,23 @@ class FormFiller:
             if text:
                 out.append(re.sub(r"\s+", " ", text))
         return out
+
+    async def _close_menu(self, scope: Locator, f: FormField, options: Locator) -> None:
+        """Shut a menu that was only opened to read it.
+
+        Left open it covers the fields below, and the next thing the filler clicks is
+        an option rather than the field it meant to reach. Escape closes most widgets;
+        the ones that only toggle need their trigger clicked again.
+        """
+        page = scope.page
+        try:
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+            if await options.count() and await options.first.is_visible():
+                await self._loc(scope, f.idx).click()
+                await asyncio.sleep(0.2)
+        except Exception as exc:
+            log.debug("could not close the menu for %r: %s", f.label, exc)
 
     async def _click_option(self, options: Locator, text: str) -> Optional[str]:
         """Click the option whose text is exactly `text`."""
@@ -1130,8 +1165,7 @@ class FormFiller:
             opts = await self._open_menu(scope, f)
             page = scope.page
             labels = await self._visible_option_texts(opts)
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(0.2)
+            await self._close_menu(scope, f, opts)
             return [{"label": l, "value": l, "idx": "", "dom_id": ""} for l in labels]
         except Exception as exc:
             log.debug("combobox option discovery failed for %r: %s", f.label, exc)

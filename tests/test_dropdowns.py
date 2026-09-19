@@ -8,6 +8,7 @@ back up partway through.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 from pathlib import Path
@@ -218,9 +219,9 @@ async def test_answers_are_worked_out_together_not_one_after_another(settings) -
     resolver = SlowResolver(delay=0.1)
     filler = FormFiller(None, resolver, settings)
 
-    started = asyncio.get_event_loop().time()
+    started = asyncio.get_running_loop().time()
     done = await filler.prefetch(None, _text_fields(8), ctx=None)
-    took = asyncio.get_event_loop().time() - started
+    took = asyncio.get_running_loop().time() - started
 
     assert done == 8 and len(resolver.calls) == 8
     assert took < 0.5, f"8 answers at 0.1s each took {took:.2f}s, so they ran in sequence"
