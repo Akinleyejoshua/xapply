@@ -724,6 +724,18 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
             found: list[Any] = []
             totals = ScanStats()
+            current: list[Any] = []       # the source being scanned, for its live counters
+
+            def live_totals() -> ScanStats:
+                """Finished sources plus however far the current one has got."""
+                snapshot = ScanStats()
+                snapshot += totals
+                for src in current:
+                    stats = getattr(src, "stats", None)
+                    if stats:
+                        snapshot += stats
+                snapshot.kept = len(found)
+                return snapshot
 
             def publish() -> None:
                 """Make what has been found so far visible straight away.
@@ -732,25 +744,27 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                 throw away everything it had gathered. Results are published as each
                 board finishes, so they survive a stop and appear while the scan runs.
                 """
+                snapshot = live_totals()
                 app.state.discovered = [j.to_dict() for j in found]
                 app.state.scan_stats = {
-                    "seen": totals.seen, "kept": totals.kept,
-                    "reasons": dict(totals.reasons()),
+                    "seen": snapshot.seen, "kept": len(found),
+                    "reasons": dict(snapshot.reasons()),
                     "tips": [], "partial": True,
                 }
 
             def on_batch(source_name: str, batch: list[Any]) -> None:
                 found.extend(batch)
-                totals.kept = len(found)
                 publish()
 
             try:
                 async with LazyBrowser(settings, gate) as lazy:
                     for src in build_sources(settings, lazy, database):
                         src.on_batch = on_batch
+                        current[:] = [src]
                         page = await lazy.page_for(src.name)
                         before = len(found)
                         got = await src.discover(page)
+                        current.clear()
                         # Sources that do not report incrementally still contribute here.
                         for job in got:
                             if job not in found:
@@ -764,7 +778,9 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                         publish()
             except asyncio.CancelledError:
                 publish()
-                note(f"scan stopped early; keeping the {len(found)} posting(s) found so far")
+                snapshot = live_totals()
+                note(f"scan stopped early; keeping the {len(found)} posting(s) found so far "
+                     f"({snapshot.seen} examined before the stop)")
                 raise
 
             app.state.discovered = [j.to_dict() for j in found]
