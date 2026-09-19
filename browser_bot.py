@@ -898,6 +898,9 @@ def _sd(p: dict, key: str) -> str:
     return "" if v is None else str(v)
 
 
+#: Contact fields carry short labels. Anything longer is a question, not a field.
+MAX_CONTACT_LABEL = 64
+
 PROFILE_RULES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"\bfirst\s*name|given name|\bforename", re.I), _first_name),
     (re.compile(r"\blast\s*name|surname|family name", re.I), _last_name),
@@ -910,7 +913,9 @@ PROFILE_RULES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"github", re.I), lambda p: p.get("github", "")),
     (re.compile(r"portfolio|personal (web)?site|website|\burl\b|other website|blog", re.I),
      lambda p: p.get("website") or p.get("github", "")),
-    (re.compile(r"\bcity\b|location|where are you (located|based)|address|reside", re.I),
+    (re.compile(r"\bcountry\b|nationality|country of residence", re.I),
+     lambda p: p.get("country") or p.get("location", "")),
+    (re.compile(r"\bcity\b|\blocation\b|where are you (located|based)|\baddress\b|reside", re.I),
      lambda p: p.get("city") or p.get("location", "")),
     (re.compile(r"(current|most recent|present) (company|employer|organi[sz]ation)|^company$|^employer$|\borg\b", re.I),
      lambda p: _current(p, "company")),
@@ -921,8 +926,9 @@ PROFILE_RULES: list[tuple[re.Pattern, Any]] = [
 ]
 
 SCREENING_RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"sponsor", re.I), "requires_sponsorship"),
-    (re.compile(r"authori[sz]ed|legally (able|permitted|allowed)|eligib|right to work|work permit|work in the", re.I), "work_authorization"),
+    (re.compile(r"\bsponsor(ship)?\b", re.I), "requires_sponsorship"),
+    (re.compile(r"authori[sz]ed|legally (able|permitted|allowed)|eligib|right to work|"
+                r"work permit|work in the|work authorization", re.I), "work_authorization"),
     (re.compile(r"notice period|notice\b", re.I), "notice_period"),
     (re.compile(r"how soon|when (can|could|are you able to) (you )?start|start date|available to start|availability|earliest", re.I), "start_date"),
     (re.compile(r"salary|compensation|pay (expectation|range|rate)|expected (pay|rate)|\brate\b|\bctc\b", re.I), "expected_salary"),
@@ -963,8 +969,13 @@ class AnswerResolver:
 
         answer: Optional[ResolvedAnswer] = None
         if not force_ai:
-            answer = self._from_profile(f, ctx.profile) or self._from_years(f, ctx.profile) \
-                or self._from_predicted(f, ctx.analysis) or self._from_screening_defaults(f, ctx.profile)
+            # Screening questions are checked first because they are phrased as sentences
+            # and would otherwise be captured by a loose contact-field rule. "Will you
+            # require sponsorship in this location?" must not be answered with a city.
+            answer = self._from_screening_defaults(f, ctx.profile) \
+                or self._from_years(f, ctx.profile) \
+                or self._from_profile(f, ctx.profile) \
+                or self._from_predicted(f, ctx.analysis)
             if answer and f.options:
                 if choose_option(answer.value or "", f.option_labels) is None:
                     log.debug("Rule answer %r does not fit options for %r, asking AI", answer.value, label)
@@ -976,10 +987,19 @@ class AnswerResolver:
 
     # ---- strategies ----------------------------------------------------
     def _from_profile(self, f: FormField, profile: dict) -> Optional[ResolvedAnswer]:
+        """Contact-style fields, matched only against short, field-like labels.
+
+        A real contact field is labelled "Email" or "Location (City)". A long sentence
+        is a screening question that merely happens to contain one of these words, and
+        answering it from the profile produces nonsense.
+        """
         if f.kind in ("radio",):
             return None
+        label = (f.label or "").strip()
+        if len(label) > MAX_CONTACT_LABEL or label.rstrip().endswith("?"):
+            return None
         for pattern, getter in PROFILE_RULES:
-            if pattern.search(f.label):
+            if pattern.search(label):
                 value = str(getter(profile) or "").strip()
                 if value:
                     return ResolvedAnswer(value, "profile", 0.98)

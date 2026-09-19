@@ -15,6 +15,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeout
 
@@ -22,7 +23,16 @@ from ai_agent import JobAnalysis
 from browser_bot import FormFiller, HumanGate, ResolveContext, StealthBrowser
 from config import Settings
 from database import STATUS_FAILED, STATUS_PENDING, STATUS_SKIPPED, STATUS_SUBMITTED
-from models import ASHBY, GREENHOUSE, LEVER, LINKEDIN, ApplyResult, JobPosting
+from models import (
+    ASHBY,
+    GREENHOUSE,
+    LEVER,
+    LINKEDIN,
+    UNKNOWN,
+    ApplyResult,
+    JobPosting,
+    detect_ats,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +47,31 @@ ERROR_SELECTOR = (
     '.artdeco-inline-feedback--error, [role="alert"], [class*="error-message" i], [class*="form-error" i], '
     '[class*="field-error" i], [class*="errorMessage" i], .error-text, [class*="_error" i]:not(input)'
 )
+FORM_SHAPE_JS = r"""
+(el) => {
+  const sel = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select';
+  const visible = n => {
+    const st = getComputedStyle(n);
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    const r = n.getBoundingClientRect();
+    return r.width > 0 || r.height > 0 || n.type === 'file';
+  };
+  const nodes = [...el.querySelectorAll(sel)];
+  const shown = nodes.filter(visible);
+  const typeOf = n => (n.getAttribute('type') || n.tagName).toLowerCase();
+  const blob = n => ((n.name || '') + ' ' + (n.id || '') + ' ' + (n.placeholder || '') + ' ' +
+                     (n.getAttribute('aria-label') || '')).toLowerCase();
+  return {
+    total: shown.length,
+    file: nodes.filter(n => typeOf(n) === 'file').length,
+    email: shown.filter(n => typeOf(n) === 'email' || /e-?mail/.test(blob(n))).length,
+    password: shown.filter(n => typeOf(n) === 'password').length,
+    search: shown.filter(n => typeOf(n) === 'search' || /\bsearch\b|\bquery\b/.test(blob(n))).length,
+    name: shown.filter(n => /first.?name|last.?name|full.?name|\bname\b/.test(blob(n))).length,
+  };
+}
+"""
+
 FORM_CONTAINER_JS = r"""
 () => {
   const sel = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select';
@@ -63,6 +98,33 @@ FORM_CONTAINER_JS = r"""
   return [...best.querySelectorAll(sel)].filter(visible).length;
 }
 """
+
+#: Hosts that really serve application forms. Matching on the host, not on the URL
+#: text, matters: a Google API proxy iframe carries `greenhouse.io` in its query string
+#: and would otherwise be followed instead of the form.
+ATS_IFRAME_HOSTS = (
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com",
+    "myworkdayjobs.com", "icims.com", "jobvite.com", "breezy.hr", "bamboohr.com",
+    "recruitee.com", "teamtailor.com", "personio.de", "rippling.com",
+)
+
+
+def is_ats_iframe(src: Optional[str]) -> bool:
+    """Whether an iframe src points at an applicant tracking system, by host."""
+    if not src:
+        return False
+    try:
+        host = (urlparse(src).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == h or host.endswith("." + h) for h in ATS_IFRAME_HOSTS)
+
+
+#: Buttons and links that open an application form on a company-hosted careers page.
+APPLY_TRIGGER_RE = re.compile(
+    r"^\s*(apply|apply now|apply for this (job|role|position)|apply to this job|"
+    r"submit (an )?application|start (your )?application|i'?m interested)\s*$", re.I
+)
 
 RESUME_FILE_INPUTS = (
     'input[type="file"][name*="resume" i], input[type="file"][id*="resume" i], '
@@ -345,27 +407,58 @@ class SinglePageApplier(BaseApplier):
     async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
         """Navigate so the application form is on screen and return its scope."""
         await self.b.goto(page, self.apply_url(job))
-        return await self.find_form(page)
+        form = await self.find_in_frames_or_page(page, timeout=12_000)
+        if form is None:
+            form = await self.follow_apply_trigger(page)
+        return form
 
     def apply_url(self, job: JobPosting) -> str:
         return job.apply_url or job.url
 
     async def find_form(self, page: Page, timeout: int = 15_000) -> Optional[Locator]:
-        """Locate the form scope, falling back to the DOM when no selector matches.
+        """Locate the application form, falling back to the DOM when no selector matches.
 
         Not every ATS wraps its application in a `<form>`: Ashby renders plain divs.
         So after the configured selectors, the smallest element that still contains
         every visible input is tagged and used as the scope.
+
+        Every candidate is checked against `is_application_form` first. Without that,
+        a company careers page hands back its search box, which looks like a form,
+        contains one input, and stops the search before the real form is ever reached.
         """
         per_selector = max(2000, timeout // max(1, len(self.form_selectors)))
         for sel in self.form_selectors:
             loc = page.locator(sel).filter(has=page.locator('input:not([type="hidden"]), textarea, select'))
             try:
                 await loc.first.wait_for(state="visible", timeout=per_selector)
-                return loc.first
             except PlaywrightTimeout:
                 continue
-        return await self.find_form_container(page)
+            for i in range(min(await loc.count(), 4)):
+                candidate = loc.nth(i)
+                if await self.is_application_form(candidate):
+                    return candidate
+                log.debug("Ignoring %s[%d]: does not look like an application form", sel, i)
+        container = await self.find_form_container(page)
+        if container is not None and await self.is_application_form(container):
+            return container
+        return None
+
+    async def is_application_form(self, scope: Locator) -> bool:
+        """Does this element hold an application, or just a search box or newsletter signup?"""
+        try:
+            counts = await scope.evaluate(FORM_SHAPE_JS)
+        except Exception as exc:
+            log.debug("form shape check failed: %s", exc)
+            return False
+        if counts.get("password"):
+            return False                                    # a login form
+        if counts.get("file"):
+            return True                                     # a resume upload settles it
+        if counts.get("search") and counts.get("total", 0) <= 2:
+            return False                                    # a site search box
+        if counts.get("email") and counts.get("total", 0) >= 2:
+            return True
+        return counts.get("total", 0) >= 4
 
     async def find_form_container(self, page: Page) -> Optional[Locator]:
         """Tag the smallest element holding most of the page's inputs and return it."""
@@ -378,6 +471,69 @@ class SinglePageApplier(BaseApplier):
             return None
         log.info("Using DOM fallback for the form scope (%s inputs)", found)
         return page.locator("[data-xapply-form]").first
+
+    async def find_in_frames_or_page(self, page: Page, timeout: int = 10_000) -> Optional[Locator]:
+        """Look for the form on the page, then inside any embedded ATS iframe.
+
+        Company careers pages frequently embed the real form in an iframe. Navigating
+        straight to the iframe's source is more reliable than driving it in place.
+        """
+        form = await self.find_form(page, timeout=timeout)
+        if form is not None:
+            return form
+        try:
+            frames = page.locator("iframe[src]")
+            for i in range(min(await frames.count(), 12)):
+                src = await frames.nth(i).get_attribute("src")
+                if not is_ats_iframe(src):
+                    continue
+                log.info("Following embedded application iframe to %s", src)
+                await self.b.goto(page, src)
+                found = await self.find_form(page, timeout=timeout)
+                if found is not None:
+                    return found
+                await page.go_back(wait_until="domcontentloaded")
+        except Exception as exc:
+            log.debug("iframe follow failed: %s", exc)
+        return None
+
+    async def follow_apply_trigger(self, page: Page) -> Optional[Locator]:
+        """Click the Apply button or link a company page shows instead of a form.
+
+        A link is followed by its href when it points at a known ATS, because many
+        careers pages open the real form in a new tab.
+        """
+        try:
+            link = page.get_by_role("link", name=APPLY_TRIGGER_RE)
+            for i in range(min(await link.count(), 4)):
+                el = link.nth(i)
+                if not await el.is_visible():
+                    continue
+                href = await el.get_attribute("href")
+                if href and detect_ats(href) != UNKNOWN:
+                    log.info("Following the Apply link to %s", href)
+                    await self.b.goto(page, href)
+                else:
+                    await self.b.human_click(el)
+                form = await self.find_in_frames_or_page(page, timeout=10_000)
+                if form is not None:
+                    return form
+        except Exception as exc:
+            log.debug("apply link handling failed: %s", exc)
+        try:
+            btn = page.get_by_role("button", name=APPLY_TRIGGER_RE)
+            for i in range(min(await btn.count(), 4)):
+                el = btn.nth(i)
+                if not await el.is_visible():
+                    continue
+                log.info("Clicking the Apply button on %s", page.url)
+                await self.b.human_click(el)
+                form = await self.find_in_frames_or_page(page, timeout=10_000)
+                if form is not None:
+                    return form
+        except Exception as exc:
+            log.debug("apply button handling failed: %s", exc)
+        return None
 
     async def find_submit(self, scope: Locator, page: Page) -> Optional[Locator]:
         for root in (scope, page.locator("body")):
@@ -456,26 +612,69 @@ class SinglePageApplier(BaseApplier):
             return self._result(STATUS_FAILED, _short_exc(exc), answers, shot, url)
 
 
+#: Half of all Greenhouse boards redirect their own job URL to the company's careers
+#: site, which shows the description and an "Apply" button but never the form itself.
+#: Greenhouse always serves the real form at this embed URL, and it never redirects.
+GREENHOUSE_EMBED = "https://job-boards.greenhouse.io/embed/job_app?for={token}&token={job_id}"
+GH_BOARD_RE = re.compile(r"(?:job-boards|boards)\.greenhouse\.io/(?!embed)([A-Za-z0-9_.-]+)", re.I)
+GH_JOB_IN_PATH_RE = re.compile(r"greenhouse\.io/[A-Za-z0-9_.-]+/jobs/(\d+)", re.I)
+GH_JID_RE = re.compile(r"[?&]gh_jid=(\d+)", re.I)
+GH_JOB_ID_RE = re.compile(r"^gh-([A-Za-z0-9_.-]+)-(\d+)$")
+
+
+def greenhouse_embed_url(job: JobPosting) -> Optional[str]:
+    """Build the always-working Greenhouse form URL for a posting, if we can identify it."""
+    token = job_id = None
+    m = GH_JOB_ID_RE.match(job.job_id or "")
+    if m:
+        token, job_id = m.group(1), m.group(2)
+    for url in (job.apply_url, job.url):
+        if not url:
+            continue
+        if token is None:
+            b = GH_BOARD_RE.search(url)
+            if b:
+                token = b.group(1)
+        if job_id is None:
+            j = GH_JOB_IN_PATH_RE.search(url) or GH_JID_RE.search(url)
+            if j:
+                job_id = j.group(1)
+    if token and job_id:
+        return GREENHOUSE_EMBED.format(token=token, job_id=job_id)
+    return None
+
+
 class GreenhouseApplier(SinglePageApplier):
     ats = GREENHOUSE
-    form_selectors = ("form#application-form", "form#application_form", "#application", "form")
+    form_selectors = ("form#application-form", "form#application_form", "#application",
+                      "#app_body", "form")
 
     async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
+        """Reach the application form however the company has arranged its careers page.
+
+        Four routes, in order: the posting URL itself, an embedded Greenhouse iframe,
+        an Apply button or link on a company-hosted page, and finally the Greenhouse
+        embed form, which serves the real form even when everything else redirects.
+        """
         await self.b.goto(page, self.apply_url(job))
-        # Embedded boards on company sites load the real form in an iframe: go to its source directly.
-        frame = page.locator("iframe#grnhse_iframe")
-        if await frame.count():
-            src = await frame.first.get_attribute("src")
-            if src:
-                await self.b.goto(page, src)
-        # Some boards hide the form behind an "Apply" button.
-        form = await self.find_form(page, timeout=6000)
-        if form is None:
-            btn = page.get_by_role("button", name=re.compile(r"^apply( now| for this job)?$", re.I))
-            if await btn.count():
-                await self.b.human_click(btn.first)
-                form = await self.find_form(page)
-        return form
+
+        form = await self.find_in_frames_or_page(page, timeout=6000)
+        if form is not None:
+            return form
+
+        form = await self.follow_apply_trigger(page)
+        if form is not None:
+            return form
+
+        embed = greenhouse_embed_url(job)
+        if embed:
+            log.info("No form on %s; using the Greenhouse embed form %s", page.url, embed)
+            await self.b.goto(page, embed)
+            form = await self.find_in_frames_or_page(page, timeout=15_000)
+            if form is not None:
+                return form
+        log.warning("Could not reach an application form for %s", job.url)
+        return None
 
 
 class LeverApplier(SinglePageApplier):
@@ -499,15 +698,7 @@ class AshbyApplier(SinglePageApplier):
         url = (job.apply_url or job.url).split("?")[0].rstrip("/")
         return url if url.endswith("/application") else url + "/application"
 
-    async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
-        await self.b.goto(page, self.apply_url(job))
-        form = await self.find_form(page, timeout=8000)
-        if form is None:
-            tab = page.get_by_role("link", name=re.compile(r"^application|^apply", re.I))
-            if await tab.count():
-                await self.b.human_click(tab.first)
-                form = await self.find_form(page)
-        return form
+
 
 
 APPLIERS: dict[str, type[BaseApplier]] = {

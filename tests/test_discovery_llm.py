@@ -77,26 +77,25 @@ def patch_client(monkeypatch, source, routes: dict[str, Any]) -> None:
 @pytest.mark.parametrize("title,expected", [
     ("Machine Learning Engineer", True),
     ("Senior Machine Learning Engineer, Ads", True),
-    ("Machine Learning Scientist", True),          # 2 of 3 words
+    ("Machine Learning Scientist", True),
     ("Backend Engineer, Billing", True),
     ("Backend Software Engineer", True),
     ("Sales Engineer", False),                      # 'engineer' alone is not enough
     ("Solutions Engineer", False),
-    ("Data Engineer", False),
     ("Abuse Investigator", False),
     ("Engineering Manager", False),
 ])
-def test_title_matches_requires_a_majority(title, expected) -> None:
-    toks = query_tokens(["Machine Learning Engineer", "Backend Engineer"])
-    assert title_matches(title, toks) is expected
+def test_title_matches_on_the_distinctive_words(title, expected) -> None:
+    assert title_matches(title, ["Machine Learning Engineer", "Backend Engineer"]) is expected
 
 
 def test_title_matches_without_queries_accepts_everything() -> None:
     assert title_matches("Anything At All", []) is True
 
 
-def test_query_tokens_drops_seniority_noise() -> None:
-    assert query_tokens(["Senior Backend Engineer"]) == [{"backend", "engineer"}]
+def test_query_tokens_keeps_the_terms_as_typed() -> None:
+    assert query_tokens(["Senior Backend Engineer", "  ", "Data Analytics"]) == \
+        ["Senior Backend Engineer", "Data Analytics"]
 
 
 @pytest.mark.parametrize("text,remote_only,workplace_type,expected", [
@@ -404,64 +403,47 @@ def test_settings_seniority_accepts_csv(monkeypatch) -> None:
     assert Settings(_env_file=None).seniority_levels == ["mid", "senior", "lead"]
 
 
-# ---- word matching: the inflection bug --------------------------------------
+# ---- title matching ---------------------------------------------------------
 #
-# Regression: a search for "Data Analytics" returned nothing, because the matcher
-# compared whole words and "analytics" != "analyst". Of 2,146 live Greenhouse
-# postings, 94 had "data" in the title and only 4 survived.
-
-
-@pytest.mark.parametrize("a,b,same", [
-    ("analytics", "analyst", True),
-    ("analytics", "analysis", True),
-    ("analysis", "analyst", True),
-    ("engineer", "engineering", True),
-    ("developer", "development", True),
-    ("develop", "developer", True),
-    ("science", "scientist", True),
-    ("manager", "management", True),
-    ("design", "designer", True),
-    ("python", "pythonic", True),
-    ("data", "database", True),
-    # things that must stay apart
-    ("support", "supply", False),
-    ("backend", "frontend", False),
-    ("sales", "engineer", False),
-    ("data", "devops", False),
-    ("cloud", "clinical", False),
-])
-def test_words_match(a, b, same) -> None:
-    from discovery import words_match
-
-    assert words_match(a, b) is same
-    assert words_match(b, a) is same          # symmetric
+# The scorer itself lives in matching.py and is covered by tests/test_matching.py.
+# What matters here is how discovery uses it.
 
 
 @pytest.mark.parametrize("title,expected", [
+    # unmistakable hits
     ("Data Analyst", True),
-    ("Data Analyst, Payments", True),
     ("Senior Data Analyst", True),
     ("Financial Data Analyst", True),
-    ("Staff Data Analyst", True),
     ("Data Analytics Lead", True),
-    ("Data Analysis Specialist", True),
-    # related but genuinely different roles
-    ("Data Engineer", False),
-    ("Data Scientist, Fraud", False),
+    # adjacent data roles: kept on purpose, because the model scores them properly
+    # afterwards and a wrongly dropped posting is never seen again
+    ("Data Engineer", True),
+    ("Data Scientist, Fraud", True),
+    ("Analytics Engineer Intern", True),
+    # a sales role that happens to say "Data" scores 0.50 and survives discovery.
+    # That is the intended trade: the model reads the description and rejects it,
+    # which is cheap, whereas a wrongly dropped posting is never seen again.
+    ("Account Executive, Product Sales (Data)", True),
+    # genuinely unrelated
     ("Software Engineer", False),
-    ("Marketing Analyst", False),
-    ("Account Executive, Product Sales (Data)", False),
+    ("Accounting Intern", False),
+    ("University Recruiter", False),
 ])
-def test_data_analytics_query_finds_analyst_titles(title, expected) -> None:
-    toks = query_tokens(["Data Analytics", "Data Analysis"])
-    assert title_matches(title, toks) is expected
+def test_data_analytics_query_at_the_default_threshold(title, expected) -> None:
+    assert title_matches(title, ["Data Analytics", "Data Analysis"]) is expected
 
 
-def test_engineering_query_finds_engineer_titles() -> None:
-    toks = query_tokens(["Backend Engineering"])
-    assert title_matches("Backend Engineer", toks) is True
-    assert title_matches("Senior Backend Engineer, Billing", toks) is True
-    assert title_matches("Frontend Engineer", toks) is False
+def test_a_stricter_threshold_narrows_to_exact_roles() -> None:
+    queries = ["Data Analytics", "Data Analysis"]
+    assert title_matches("Data Analyst", queries, 0.8) is True
+    assert title_matches("Data Engineer", queries, 0.8) is False
+    assert title_matches("Analytics Engineer Intern", queries, 0.8) is False
+
+
+def test_generic_words_do_not_widen_a_search() -> None:
+    assert title_matches("Backend Engineer", ["Backend Engineer"]) is True
+    assert title_matches("Sales Engineer", ["Backend Engineer"]) is False
+    assert title_matches("Engineering Manager", ["Backend Engineer"]) is False
 
 
 # ---- scan diagnostics -------------------------------------------------------
