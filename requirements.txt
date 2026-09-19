@@ -1,0 +1,21 @@
+# AI
+google-genai>=1.30.0
+pydantic>=2.8
+pydantic-settings>=2.7
+
+# Browser automation + PDF rendering
+playwright>=1.47
+jinja2>=3.1
+pypdf>=5.0
+
+# Admin API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Utilities
+python-dotenv>=1.0
+
+# Tests (offline)
+pytest>=8.0
+pytest-asyncio>=0.24
+httpx>=0.27

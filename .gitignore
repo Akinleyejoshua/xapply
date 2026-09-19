@@ -1,0 +1,11 @@
+.env
+.venv/
+.browser_profile/
+__pycache__/
+*.pyc
+applications.db
+applications.db-journal
+output_resumes/*.pdf
+logs/
+jobs.txt
+.DS_Store

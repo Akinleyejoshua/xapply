@@ -1,0 +1,110 @@
+{
+  "name": "Jane Doe",
+  "headline": "Backend Engineer | Python, FastAPI, AWS",
+  "email": "jane.doe@example.com",
+  "phone": "+1 415 555 0142",
+  "phone_country": "United States",
+  "phone_country_code": "+1",
+  "location": "San Francisco, CA, United States",
+  "city": "San Francisco",
+  "linkedin": "https://www.linkedin.com/in/janedoe",
+  "github": "https://github.com/janedoe",
+  "website": "",
+  "summary": "Backend engineer with 6 years of experience building Python services, data pipelines and cloud infrastructure for SaaS products.",
+  "skills": {
+    "languages": ["Python", "SQL", "TypeScript", "Bash"],
+    "frameworks": ["FastAPI", "Django", "Flask", "Celery", "SQLAlchemy", "Pydantic"],
+    "data": ["PostgreSQL", "Redis", "Kafka", "Elasticsearch", "Pandas"],
+    "cloud_devops": ["AWS (ECS, Lambda, S3, RDS)", "Docker", "Kubernetes", "Terraform", "GitHub Actions"],
+    "practices": ["REST API design", "Distributed systems", "Observability", "TDD", "Code review", "Agile"]
+  },
+  "years_of_experience": {
+    "Python": 6,
+    "SQL": 6,
+    "PostgreSQL": 5,
+    "FastAPI": 3,
+    "Django": 4,
+    "AWS": 4,
+    "Docker": 5,
+    "Kubernetes": 2,
+    "TypeScript": 2,
+    "Kafka": 2,
+    "Terraform": 2,
+    "software engineering": 6,
+    "backend development": 6
+  },
+  "experience": [
+    {
+      "company": "Acme Analytics",
+      "title": "Senior Backend Engineer",
+      "location": "Remote",
+      "start": "2022",
+      "end": "Present",
+      "bullets": [
+        "Designed and shipped a FastAPI microservice platform handling 40M requests/day with p99 latency under 120 ms.",
+        "Led migration from a Django monolith to containerized services on AWS ECS, cutting infra cost by 35%.",
+        "Built a Kafka-based event pipeline feeding a PostgreSQL warehouse used by 12 analysts daily.",
+        "Introduced OpenTelemetry tracing and SLO dashboards, reducing mean time to resolution by 50%.",
+        "Mentored 3 engineers and ran the team's design-review process."
+      ]
+    },
+    {
+      "company": "Bright Labs",
+      "title": "Software Engineer",
+      "location": "San Francisco, CA",
+      "start": "2019",
+      "end": "2022",
+      "bullets": [
+        "Developed Django REST APIs and Celery workers for a B2B billing product with 300+ customers.",
+        "Optimized PostgreSQL queries and added Redis caching, speeding up the invoicing job 8x.",
+        "Automated CI/CD with GitHub Actions and Docker, taking deploy frequency from weekly to daily.",
+        "Wrote integration tests that raised coverage from 45% to 85%."
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "pgstream",
+      "url": "https://github.com/janedoe/pgstream",
+      "tech": ["Python", "PostgreSQL", "Kafka"],
+      "bullets": [
+        "Open-source change-data-capture tool streaming PostgreSQL WAL changes to Kafka; 400+ GitHub stars.",
+        "Implemented exactly-once delivery with idempotent producers and offset checkpoints."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "University of California, Berkeley",
+      "degree": "B.S.",
+      "field": "Computer Science",
+      "start": "2015",
+      "end": "2019",
+      "details": ""
+    }
+  ],
+  "certifications": ["AWS Certified Solutions Architect - Associate"],
+  "screening_defaults": {
+    "work_authorization": "Yes",
+    "work_authorization_details": "Authorized to work in the United States without sponsorship",
+    "requires_sponsorship": "No",
+    "notice_period": "2 weeks",
+    "start_date": "Within 2-4 weeks of an offer",
+    "expected_salary": "165000",
+    "salary_currency": "USD",
+    "willing_to_relocate": "No",
+    "remote_preference": "Remote or hybrid",
+    "willing_to_travel": "Up to 10%",
+    "security_clearance": "No",
+    "over_18": "Yes",
+    "english_proficiency": "Native or bilingual",
+    "hear_about_us": "LinkedIn",
+    "gender": "Decline to self-identify",
+    "race": "Decline to self-identify",
+    "veteran": "I am not a protected veteran",
+    "disability": "I do not wish to answer",
+    "pronouns": "",
+    "previously_employed_here": "No",
+    "agree_to_terms": "Yes"
+  }
+}
