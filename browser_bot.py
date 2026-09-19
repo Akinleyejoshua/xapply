@@ -817,7 +817,18 @@ DISCOVER_JS = r"""
     out.push(d);
   });
 
-  return out.concat([...radioGroups.values()]);
+  // Order by where things actually sit on the page. Counting as we go is wrong: the
+  // dropdown pass runs after the input pass, so a dropdown halfway up the form was
+  // numbered after the last text box and would have been filled out of sequence.
+  const seen = [...root.querySelectorAll('[data-xapply-idx]')];
+  const position = new Map(seen.map((el, i) => [el.getAttribute('data-xapply-idx'), i]));
+  const all = out.concat([...radioGroups.values()]);
+  all.forEach(d => {
+    if (position.has(d.idx)) { d.order = position.get(d.idx); return; }
+    const first = (d.options || []).find(o => position.has(o.idx));   // a radio group
+    if (first) d.order = position.get(first.idx);
+  });
+  return all;
 }
 """
 
