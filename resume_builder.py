@@ -249,6 +249,41 @@ class ResumeBuilder:
         role = job.title or analysis.job_title
         return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}.pdf"
 
+    # ---- cover letter ---------------------------------------------------
+    def cover_letter_path(self, job: JobPosting, analysis: Optional[JobAnalysis] = None) -> Path:
+        company = job.company or (analysis.company_name if analysis else "")
+        role = job.title or (analysis.job_title if analysis else "")
+        return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}_cover_letter.pdf"
+
+    def render_cover_letter(self, profile: dict, letter: CoverLetter, job: JobPosting,
+                            analysis: Optional[JobAnalysis] = None) -> str:
+        template = self.env.get_template("cover_letter.html")
+        context = {
+            "name": profile.get("name", ""),
+            "headline": profile.get("headline", ""),
+            "email": profile.get("email", ""),
+            "phone": profile.get("phone", ""),
+            "location": profile.get("location", ""),
+            "links": self._links(profile),
+            "role": job.title or (analysis.job_title if analysis else ""),
+            "company": job.company or (analysis.company_name if analysis else ""),
+            "greeting": letter.greeting,
+            "paragraphs": letter.paragraphs,
+            "signature": letter.signature,
+        }
+        return template.render(font_face=self.font_face(), **ats_text(context))
+
+    async def build_cover_letter(self, profile: dict, letter: CoverLetter, job: JobPosting,
+                                 analysis: Optional[JobAnalysis] = None) -> Path:
+        """Render a cover letter to its own single-page PDF."""
+        self.settings.output_dir.mkdir(parents=True, exist_ok=True)
+        path = self.cover_letter_path(job, analysis)
+        html = self.render_cover_letter(profile, letter, job, analysis)
+        await render_first_that_fits([("cover", html)], path, max_pages=1)
+        log.info("Cover letter written to %s", path)
+        return path
+
+    # ---- fitting the resume to the page budget --------------------------
     def _variants(self, context: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         """Progressively shorter versions of the same truthful content, longest first.
 
