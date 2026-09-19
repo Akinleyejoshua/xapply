@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     human_gate_mode: Literal["terminal", "api"] = "terminal"
 
     # ---- Job search ----
-    sources: Annotated[list[str], NoDecode] = ["linkedin"]  # linkedin, urls
+    # linkedin | urls | greenhouse | lever | ashby | remoteok | himalayas | google
+    sources: Annotated[list[str], NoDecode] = ["greenhouse", "ashby", "lever"]
     search_queries: Annotated[list[str], NoDecode] = ["Python Developer"]
     search_location: str = "Remote"
     posted_within_hours: int = 72  # 0 = any time
@@ -51,6 +52,14 @@ class Settings(BaseSettings):
     max_applications_per_run: int = 10
     url_list_file: Path = BASE_DIR / "jobs.txt"
     follow_companies: bool = False
+    remote_only: bool = False          # keep only postings that look remote
+
+    # ---- Discovery (public board APIs + aggregators) ----
+    company_file: Path = BASE_DIR / "companies.json"
+    max_jobs_per_company: int = 10     # cap per company board / aggregator feed
+    discovery_timeout_s: float = 25.0
+    discovery_delay_s: float = 0.35    # pause between API calls, to stay polite
+    aggregator_page_size: int = 100
     follow_external_apply: bool = True  # LinkedIn "Apply" -> Greenhouse/Lever/Ashby hand-off
 
     # ---- Browser ----

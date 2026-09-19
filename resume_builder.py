@@ -60,17 +60,27 @@ class ResumeBuilder:
         """Merge the tailored content back into the profile with code-level guardrails."""
         groups = {(g.kind, _norm(g.name)): g for g in analysis.tailored_bullets}
 
+        # The AI orders tailored_bullets most-relevant-first. Preserve that rank so that,
+        # if the page overflows, the entries dropped are the ones it judged least relevant.
+        rank = {(g.kind, _norm(g.name)): i for i, g in enumerate(analysis.tailored_bullets)}
+
         experience = []
-        for exp in profile.get("experience", []):
-            g = groups.get(("experience", _norm(exp.get("company", ""))))
+        for pos, exp in enumerate(profile.get("experience", [])):
+            key = ("experience", _norm(exp.get("company", "")))
+            g = groups.get(key)
             bullets = [b.strip() for b in (g.bullets if g else exp.get("bullets", [])) if b.strip()]
-            experience.append({**exp, "bullets": bullets or exp.get("bullets", [])})
+            experience.append({**exp, "bullets": bullets or exp.get("bullets", []),
+                               "_pos": pos, "_rank": rank.get(key, 999)})
 
         projects = []
-        for proj in profile.get("projects", []):
-            g = groups.get(("project", _norm(proj.get("name", ""))))
+        for pos, proj in enumerate(profile.get("projects", [])):
+            key = ("project", _norm(proj.get("name", "")))
+            g = groups.get(key)
             bullets = [b.strip() for b in (g.bullets if g else proj.get("bullets", [])) if b.strip()]
-            projects.append({**proj, "bullets": bullets or proj.get("bullets", [])})
+            projects.append({**proj, "bullets": bullets or proj.get("bullets", []),
+                             "_pos": pos, "_rank": rank.get(key, 999)})
+        # Experience stays in reverse-chronological order (profile order); projects follow AI relevance.
+        projects.sort(key=lambda p: (p["_rank"], p["_pos"]))
 
         unmatched = [g.name for (kind, _), g in groups.items()
                      if not any(_norm(g.name) == _norm(e.get("company", "")) for e in profile.get("experience", []))
@@ -88,10 +98,17 @@ class ResumeBuilder:
             if match and match not in highlighted:
                 highlighted.append(match)
         skill_groups = []
+        used = set()
         if highlighted:
             skill_groups.append({"label": "Core", "items": highlighted})
+            used.update(_norm(s) for s in highlighted)
         for label, items in skill_groups_raw.items():
-            rest = [s for s in items if s not in highlighted]
+            rest = []
+            for item in items:  # a skill listed in two profile groups is printed once
+                k = _norm(item)
+                if k not in used:
+                    used.add(k)
+                    rest.append(item)
             if rest:
                 skill_groups.append({"label": label.replace("_", " ").title(), "items": rest})
 
@@ -126,37 +143,71 @@ class ResumeBuilder:
         role = job.title or analysis.job_title
         return self.settings.output_dir / f"{slugify(company)}_{slugify(role)}.pdf"
 
+    def _variants(self, context: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        """Progressively shorter versions of the same truthful content, longest first.
+
+        Nothing is invented or reworded here; entries are only dropped, least relevant first,
+        so a dense profile still fits on one ATS-friendly page.
+        """
+        out: list[tuple[str, dict[str, Any]]] = [("full", context)]
+        n_proj, n_exp = len(context["projects"]), len(context["experience"])
+        for keep_proj in (5, 4, 3, 2, 1):
+            if keep_proj < n_proj:
+                out.append((f"projects<={keep_proj}", {**context, "projects": context["projects"][:keep_proj]}))
+        base = out[-1][1]
+        for keep_exp in (4, 3):
+            if keep_exp < n_exp:
+                out.append((f"experience<={keep_exp}",
+                            {**base, "experience": base["experience"][:keep_exp]}))
+        trimmed = out[-1][1]
+        out.append(("no-projects", {**trimmed, "projects": []}))
+        return out
+
     async def build(self, profile: dict, analysis: JobAnalysis, job: JobPosting) -> Path:
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
-        html = self.render_html(profile, analysis)
         path = self.output_path(job, analysis)
-        await html_to_pdf(html, path, single_page=True)
-        log.info("Resume written to %s", path)
+        template = self.env.get_template("resume.html")
+        context = self.build_context(profile, analysis)
+        variants = [(name, template.render(**ctx)) for name, ctx in self._variants(context)]
+        used = await render_first_that_fits(variants, path)
+        log.info("Resume written to %s (%s)", path, used)
         return path
 
 
-async def html_to_pdf(html: str, path: Path, single_page: bool = True) -> Path:
-    """Render HTML to PDF with headless Chromium (page.pdf only works headless)."""
+async def render_first_that_fits(variants: list[tuple[str, str]], path: Path) -> str:
+    """Render each HTML variant until one lands on a single page; shrink the last one if needed.
+
+    Strategy, in order: full content at 100% scale, then progressively trimmed content, then
+    scale reduction on the shortest variant. `page.pdf` only works in headless Chromium, so a
+    dedicated headless browser is used even when the applier runs headed.
+    """
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
             page = await browser.new_page()
-            await page.set_content(html, wait_until="load")
             await page.emulate_media(media="print")
-            for scale in SCALE_STEPS:
-                await page.pdf(
-                    path=str(path),
-                    format="Letter",
-                    print_background=True,
-                    prefer_css_page_size=True,
-                    scale=scale,
-                )
-                if not single_page:
-                    break
+            for name, html in variants:
+                await page.set_content(html, wait_until="load")
+                await page.pdf(path=str(path), format="Letter", print_background=True,
+                               prefer_css_page_size=True, scale=1.0)
                 pages = _count_pages(path)
                 if pages is None or pages <= 1:
-                    break
+                    return name
+                log.debug("Variant %r is %d pages, trimming further", name, pages)
+            for scale in SCALE_STEPS[1:]:  # shortest variant is still loaded
+                await page.pdf(path=str(path), format="Letter", print_background=True,
+                               prefer_css_page_size=True, scale=scale)
+                pages = _count_pages(path)
+                if pages is None or pages <= 1:
+                    return f"{variants[-1][0]} @ {scale:.2f}"
                 log.info("Resume is %d pages at scale %.2f, shrinking", pages, scale)
         finally:
             await browser.close()
+    log.warning("Resume still exceeds one page at minimum scale: %s", path)
+    return "overflow"
+
+
+async def html_to_pdf(html: str, path: Path, single_page: bool = True) -> Path:
+    """Render a single HTML string to PDF (kept for ad-hoc use and tests)."""
+    await render_first_that_fits([("single", html)], path)
     return path

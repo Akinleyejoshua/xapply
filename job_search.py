@@ -292,6 +292,13 @@ class UrlListSource:
 
 
 def build_sources(settings: Settings, browser: StealthBrowser, db: Database, urls: Optional[list[str]] = None):
+    """Assemble the configured discovery sources.
+
+    `linkedin` and `urls` drive a browser; the board APIs and aggregators in
+    `discovery.py` are plain HTTP and return fully described postings.
+    """
+    from discovery import SOURCE_REGISTRY  # imported here to avoid a circular import
+
     sources = []
     if urls:
         return [UrlListSource(settings, browser, db, urls=urls)]
@@ -300,6 +307,9 @@ def build_sources(settings: Settings, browser: StealthBrowser, db: Database, url
             sources.append(LinkedInJobSource(settings, browser, db))
         elif name == "urls":
             sources.append(UrlListSource(settings, browser, db))
+        elif name in SOURCE_REGISTRY:
+            sources.append(SOURCE_REGISTRY[name](settings, db, browser))
         else:
-            log.warning("Unknown source %r ignored", name)
+            log.warning("Unknown source %r ignored (known: linkedin, urls, %s)",
+                        name, ", ".join(sorted(SOURCE_REGISTRY)))
     return sources
