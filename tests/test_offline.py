@@ -404,3 +404,53 @@ def test_dashboard_is_served(settings: Settings) -> None:
     for marker in ('id="view-dash"', 'id="view-scan"', 'id="view-settings"',
                    'id="runModel"', 'id="cfgModel"', "/admin/discover"):
         assert marker in html, marker
+
+
+def test_api_detect_urls(settings: Settings) -> None:
+    """The UI needs to tell the user what a pasted link is before applying to it."""
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+    rows = client.post("/api/detect", json={"urls": [
+        "https://job-boards.greenhouse.io/gitlab/jobs/8556658002",
+        "jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff",   # no scheme
+        "https://jobs.lever.co/palantir/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2",
+        "https://www.linkedin.com/jobs/view/4012345678/",
+        "https://example.com/careers/42",
+        "   ",                                                            # dropped
+    ]}).json()
+    assert [r["ats"] for r in rows] == [GREENHOUSE, ASHBY, LEVER, LINKEDIN, "unknown"]
+    assert rows[1]["url"].startswith("https://")      # scheme added
+    assert rows[4]["supported"] is False
+    assert all(r["already_seen"] is False for r in rows)
+
+
+def test_api_detect_flags_jobs_already_applied_to(settings: Settings) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    url = "https://jobs.lever.co/acme/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+    db.record(JobPosting.from_url(url, source="urls"), STATUS_SUBMITTED)
+    client = TestClient(create_app(settings, db))
+    row = client.post("/api/detect", json={"urls": [url]}).json()[0]
+    assert row["already_seen"] is True
+    assert "skipped" in row["note"].lower()
+
+
+def test_apply_selected_normalises_and_rejects_empty(settings: Settings) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    client = TestClient(create_app(settings, db))
+    assert client.post("/admin/apply-selected", json={"urls": []}).status_code == 400
+    assert client.post("/admin/apply-selected", json={"urls": ["  ", ""]}).status_code == 400

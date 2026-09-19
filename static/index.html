@@ -200,6 +200,22 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
     </div>
 
     <div class="card" style="margin-top:14px">
+      <div class="row"><h2>Apply to a URL you already have</h2></div>
+      <p class="dim" style="margin:8px 0 12px">
+        Paste one Greenhouse, Lever, Ashby or LinkedIn job link per line. The bot opens each one,
+        tailors your resume for it, fills the form, and then either stops for you or submits.
+      </p>
+      <textarea id="manualUrls" rows="4" spellcheck="false"
+        placeholder="https://job-boards.greenhouse.io/gitlab/jobs/8556658002&#10;https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="btnCheckUrls">Check links</button>
+        <button class="primary" id="btnManualFill">Fill, then let me submit</button>
+        <button id="btnManualAuto">Fill and submit automatically</button>
+      </div>
+      <div id="urlCheck" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
       <div class="row">
         <h2>Results <span class="dim" id="foundCount"></span></h2>
         <div class="sp"></div>
@@ -465,6 +481,38 @@ async function applySelected(auto){
     await call('/admin/apply-selected', {method:'POST',
       body: JSON.stringify({urls:[...SELECTED], auto_submit:auto})});
     toast(`Applying to ${SELECTED.size} posting(s)`);
+    show('dash');
+  } catch(e){ toast(e.message, true); }
+}
+
+/* ---------- manual URLs ---------- */
+function manualUrlList(){
+  return $('manualUrls').value.split(/[\s,]+/).map(u => u.trim()).filter(Boolean);
+}
+$('btnCheckUrls').onclick = async () => {
+  const urls = manualUrlList();
+  if(!urls.length) return toast('Paste at least one job URL', true);
+  try{
+    const rows = await call('/api/detect', {method:'POST', body: JSON.stringify({urls})});
+    $('urlCheck').innerHTML = `<table><thead><tr><th>ATS</th><th>URL</th><th>Status</th></tr></thead><tbody>` +
+      rows.map(r => `<tr>
+        <td>${r.supported ? `<span class="pill submitted">${esc(r.ats)}</span>`
+                          : '<span class="pill failed">unknown</span>'}</td>
+        <td class="mono">${esc(r.url.slice(0,78))}</td>
+        <td class="dim">${esc(r.note)}</td></tr>`).join('') + '</tbody></table>';
+  } catch(e){ toast(e.message, true); }
+};
+$('btnManualFill').onclick = () => applyManual(false);
+$('btnManualAuto').onclick = () => {
+  const n = manualUrlList().length;
+  if(n && confirm(`Auto-submit ${n} real application(s) without you clicking Submit?`)) applyManual(true);
+};
+async function applyManual(auto){
+  const urls = manualUrlList();
+  if(!urls.length) return toast('Paste at least one job URL', true);
+  try{
+    await call('/admin/apply-selected', {method:'POST', body: JSON.stringify({urls, auto_submit:auto})});
+    toast(`Applying to ${urls.length} pasted URL(s)` + (auto ? ' with auto-submit' : ''));
     show('dash');
   } catch(e){ toast(e.message, true); }
 }

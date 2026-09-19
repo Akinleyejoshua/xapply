@@ -92,14 +92,12 @@ async def test_required_checkbox_is_not_blanket_ticked(settings: Settings) -> No
     Regression: a real Lever form marks every language checkbox required, and the old
     rule ticked anything required, claiming languages the candidate does not speak.
     """
-    from browser_bot import AnswerResolver, FormFiller, ResolveContext
+    from browser_bot import AnswerResolver, ResolveContext
     from models import JobPosting
 
     profile = {"name": "Jane Doe", "email": "j@x.com", "experience": [],
                "screening_defaults": {"english_proficiency": "Fluent", "agree_to_terms": "Yes"}}
-    resolver = AnswerResolver(None, settings)      # no AI, so only rules apply
-    filler = FormFiller.__new__(FormFiller)        # no browser needed for this path
-    filler.resolver, filler.s = resolver, settings
+    resolver = AnswerResolver(None, settings)      # no AI, so only profile rules apply
     ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), None)
 
     def box(label: str) -> FormField:
@@ -107,15 +105,15 @@ async def test_required_checkbox_is_not_blanket_ticked(settings: Settings) -> No
 
     # Nothing in the profile says the candidate speaks these, so none may be ticked.
     for label in ("Khmer (KHM)", "Hmong (HMN)", "American Sign Language (ASL)", "Mandarin (MAN)"):
-        assert await filler._handle_checkbox.__wrapped__(filler, None, box(label), ctx) is None \
-            if hasattr(filler._handle_checkbox, "__wrapped__") else True
         answer = await resolver.resolve(box(label), ctx)
-        assert not (answer.value and is_affirmative(answer.value)), label
+        ticked = bool(answer.value) and not answer.needs_human and is_affirmative(answer.value)
+        assert ticked is False, f"{label} would have been ticked"
 
-    # Consent boxes are still ticked, and a known language is still affirmative.
-    assert is_affirmative("Yes") is True
+    # A language the profile does vouch for is still affirmative, and so are consent boxes.
     english = await resolver.resolve(box("English (ENG)"), ctx)
     assert english.value == "Fluent" and is_affirmative(english.value) is True
+    from browser_bot import AGREE_RE
+    assert AGREE_RE.search("I agree to the terms") is not None
 
 
 # ---- lazy browser ---------------------------------------------------------

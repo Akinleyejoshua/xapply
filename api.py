@@ -113,6 +113,12 @@ class CompanyAdd(BaseModel):
     token: str
 
 
+class UrlCheck(BaseModel):
+    """Job URLs pasted by hand, to be inspected before applying."""
+
+    urls: list[str]
+
+
 # ---- app ------------------------------------------------------------------
 
 
@@ -419,6 +425,31 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         start("discover", _go)
         return {"started": True, "sources": settings.sources}
 
+    @app.post("/api/detect", dependencies=[Depends(auth)], tags=["discover"])
+    def detect_urls(body: UrlCheck) -> list[dict[str, Any]]:
+        """Tell the UI which ATS each pasted URL maps to, and whether it is already applied to."""
+        from models import UNKNOWN, detect_ats, job_id_from_url
+
+        out = []
+        for raw in body.urls:
+            url = raw.strip()
+            if not url:
+                continue
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            ats = detect_ats(url)
+            job_id = job_id_from_url(url)
+            seen = database.has_job("urls", job_id)
+            out.append({
+                "url": url, "ats": ats, "job_id": job_id, "already_seen": seen,
+                "supported": ats != UNKNOWN,
+                "note": ("Already in the database; it will be skipped" if seen else
+                         "Ready" if ats != UNKNOWN else
+                         "Not a Greenhouse, Lever, Ashby or LinkedIn URL. "
+                         "The bot will open it but may not find a form it understands."),
+            })
+        return out
+
     # ---- apply ------------------------------------------------------------
     @app.post("/admin/run", dependencies=[Depends(auth)], tags=["apply"])
     async def trigger_run(body: RunRequest) -> dict[str, Any]:
@@ -441,9 +472,18 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
 
     @app.post("/admin/apply-selected", dependencies=[Depends(auth)], tags=["apply"])
     async def apply_selected(body: RunRequest) -> dict[str, Any]:
-        if not body.urls:
+        """Apply to an explicit list of URLs: scan results, or ones you pasted in yourself."""
+        urls = []
+        for raw in body.urls or []:
+            url = raw.strip()
+            if not url:
+                continue
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            urls.append(url)
+        if not urls:
             raise HTTPException(400, "Provide the URLs to apply to")
-        return await trigger_run(RunRequest(urls=body.urls, limit=body.limit or len(body.urls),
+        return await trigger_run(RunRequest(urls=urls, limit=body.limit or len(urls),
                                             auto_submit=body.auto_submit))
 
     @app.post("/admin/stop", dependencies=[Depends(auth)], tags=["apply"])
