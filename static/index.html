@@ -298,6 +298,31 @@ label.check .dim{font-size:12.5px; line-height:1.5}
 .grid{display:grid; gap:18px}
 .stats{grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); margin-bottom:22px}
 .cols{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+
+/* Settings reads top to bottom, one topic per card. Side-by-side columns put unrelated
+   settings next to each other and made the page look like one wall of controls. */
+.stack{display:grid; grid-template-columns:1fr; gap:20px; max-width:760px}
+/* A grid item is min-width:auto by default, so one wide child, a table of accounts for
+   instance, stretches the whole column past its container and the cards overlap. */
+.stack > *{min-width:0}
+.stack .card{margin:0; overflow:hidden}
+.stack table{width:100%; table-layout:fixed}
+.stack td,.stack th{overflow-wrap:anywhere}
+.stack .table-wrap{overflow-x:auto}
+.stack .card-head{margin-bottom:4px}
+.stack .card-note{margin:0 0 18px}
+.stack label.field{margin-bottom:20px}
+.stack label.field:last-child{margin-bottom:0}
+.stack label.check{margin-bottom:17px}
+.stack label.check:last-child{margin-bottom:0}
+/* Short numeric settings sit together instead of each taking a whole row. */
+.pair{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:0 18px}
+.hint{display:block; font-size:12px; font-weight:400; color:var(--fg-3); margin:6px 0 0; line-height:1.5}
+@media(max-width:720px){
+  .stack{max-width:none; gap:16px}
+  .pair{grid-template-columns:1fr}
+  .stack .chips{gap:6px}
+}
 .two{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
 @media(max-width:1080px){.two{grid-template-columns:1fr}}
 
@@ -742,7 +767,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
              API keys stay in <span class="mono">.env</span> and are never shown or stored here.</p>
         </div>
 
-        <div class="grid cols">
+        <div class="grid stack">
           <div class="card">
             <div class="card-head"><h2>AI model</h2></div>
             <p class="card-note">NVIDIA offers a free key at
@@ -784,68 +809,91 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
           </div>
 
           <div class="card">
-            <div class="card-head"><h2>Matching and submission</h2></div>
-            <label class="field"><span>Match threshold &mdash; anything below is skipped</span>
-              <input type="number" id="cfgThreshold" min="0" max="100"></label>
-            <label class="field"><span>Max applications per run</span>
-              <input type="number" id="cfgMaxApps" min="1" max="200"></label>
-            <label class="field"><span>Max postings per company board</span>
-              <input type="number" id="cfgMaxCompany" min="1" max="200"></label>
+            <div class="card-head"><h2>Which roles to go for</h2></div>
+            <p class="card-note">What a scan keeps, before anything is applied to.</p>
+            <div class="pair">
+              <label class="field"><span>Match threshold</span>
+                <input type="number" id="cfgThreshold" min="0" max="100">
+                <span class="hint">Anything the model scores below this is skipped.</span></label>
+              <label class="field"><span>Max applications per run</span>
+                <input type="number" id="cfgMaxApps" min="1" max="200"></label>
+              <label class="field"><span>Max postings per company board</span>
+                <input type="number" id="cfgMaxCompany" min="1" max="200"></label>
+            </div>
+            <label class="field"><span>Seniority</span>
+              <div class="chips" id="cfgLevels"></div>
+              <span class="hint">None ticked means any level.</span></label>
+            <label class="field"><span>Countries</span>
+              <div class="chips" id="cfgCountryChips"></div>
+              <span class="hint">None chosen means anywhere.</span></label>
+            <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgRemote">
+              <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and
+                on-site are dropped.</span></span></label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Your CV</h2></div>
             <label class="field"><span>Resume length</span>
               <select id="cfgPages">
                 <option value="1">One page, trimmed to fit</option>
                 <option value="2">Up to two pages (recommended)</option>
                 <option value="3">Up to three pages</option>
               </select></label>
-            <label class="check"><input type="checkbox" id="cfgDropExp">
-              <span><b>May drop older roles to fit</b><span class="dim">Off by default. Projects and
-                bullet counts are always trimmed first; work history is the substance of a CV.</span></span></label>
-            <label class="field"><span>Default seniority &mdash; none ticked means any level</span>
-              <div class="chips" id="cfgLevels"></div></label>
-            <label class="field"><span>Default countries &mdash; none chosen means anywhere</span>
-              <div class="chips" id="cfgCountryChips"></div></label>
-            <p class="card-note" style="margin:0 0 12px">What the agent does is chosen on the
-              Dashboard, next to the run button.</p>
+            <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgDropExp">
+              <span><b>May drop older roles to fit</b><span class="dim">Off by default.
+                Projects and bullet counts are trimmed first; work history is the substance
+                of a CV.</span></span></label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Filling in forms</h2></div>
+            <p class="card-note">What the agent does with a form is chosen on the Dashboard,
+              next to the run button. These change how it goes about it.</p>
             <label class="check" style="display:none"><input type="checkbox" id="cfgAuto"><span></span></label>
-            <label class="check"><input type="checkbox" id="cfgRemote">
-              <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site are dropped.</span></span></label>
-            <label class="check"><input type="checkbox" id="cfgFollow">
-              <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box ticked.</span></span></label>
+            <label class="check"><input type="checkbox" id="cfgAtOnce">
+              <span><b>Fill the whole form at once</b><span class="dim">Reads every question,
+                works out all the answers together, then fills in one pass. Much faster on
+                long forms.</span></span></label>
             <label class="check"><input type="checkbox" id="cfgVerify">
               <span><b>Check the form afterwards</b><span class="dim">Reads every field back
-              and fills again anything that did not take, such as a box you clicked out of
-              while it was being typed into.</span></span></label>
-            <label class="field" style="margin:2px 0 10px">
-              <span>Send applications through</span>
+                and fills again anything that did not take, such as a box you clicked out of
+                while it was being typed into.</span></span></label>
+            <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgFollow">
+              <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box
+                ticked.</span></span></label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Applying by email</h2></div>
+            <p class="card-note">For postings that say to send your CV to an address instead
+              of offering a form.</p>
+            <label class="check"><input type="checkbox" id="cfgEmail">
+              <span><b>Apply by email</b><span class="dim" id="emailNote">Stops for you to
+                read the draft before anything is sent.</span></span></label>
+            <label class="field"><span>Send applications through</span>
               <select id="cfgTransport">
                 <option value="gmail">My signed-in Gmail, in the browser</option>
                 <option value="smtp">A mail server (SMTP settings in .env)</option>
               </select></label>
-            <label class="check"><input type="checkbox" id="cfgSearchX">
+            <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgSearchX">
               <span><b>Also search X for these</b><span class="dim">X refuses anonymous
-              searches, so sign in once with <span class="mono">make signin SITE=x</span>.
-              Used by the "emails" source.</span></span></label>
-            <label class="check"><input type="checkbox" id="cfgEmail">
-              <span><b>Apply by email</b><span class="dim" id="emailNote">For postings that
-              say to send your CV to an address instead of offering a form. Needs SMTP settings
-              in .env, and stops for you to read the draft before sending.</span></span></label>
-            <label class="check"><input type="checkbox" id="cfgAtOnce">
-              <span><b>Fill the whole form at once</b><span class="dim">Reads every question, works out
-              all the answers together, then fills in one pass. Much faster on long forms. Off, answers
-              are worked out one at a time and typed at human speed.</span></span></label>
+                searches, so sign in once from Accounts below.</span></span></label>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Browser</h2></div>
             <label class="check"><input type="checkbox" id="cfgHide">
               <span><b>Hide the browser window</b><span class="dim">Work with nothing on
-              screen. A window opens only if a page needs you, depending on the setting
-              below.</span></span></label>
-            <label class="field" style="margin:2px 0 14px">
-              <span>When a CAPTCHA or login wall blocks a posting</span>
+                screen.</span></span></label>
+            <label class="field"><span>When a CAPTCHA or login wall blocks a posting</span>
               <select id="cfgChallenge">
                 <option value="wait">Stop and let me deal with it</option>
                 <option value="show">Open a window and start that posting again</option>
                 <option value="skip">Skip that posting and carry on</option>
               </select></label>
             <label class="check" style="margin-bottom:0"><input type="checkbox" id="cfgHeadless">
-              <span><b>Headless browser</b><span class="dim">Not recommended: you cannot take over on a CAPTCHA.</span></span></label>
+              <span><b>Headless browser</b><span class="dim">Never opens a window at all,
+                so you cannot take over on a CAPTCHA.</span></span></label>
           </div>
 
           <div class="card">
@@ -855,7 +903,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <p class="card-note">Sign in once and the browser profile keeps the session until
               you sign out, exactly as your everyday browser does. No password is stored here:
               you sign in yourself, in a window, including any second factor.</p>
-            <div id="accounts"></div>
+            <div class="table-wrap" id="accounts"></div>
           </div>
 
           <div class="card">
