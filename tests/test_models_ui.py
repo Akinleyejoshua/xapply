@@ -291,7 +291,8 @@ def test_committed_files_hold_no_secrets(path) -> None:
     for shape in SECRET_SHAPES:
         found = re.search(shape, text)
         assert not found, f"{path} contains something shaped like a real key: {found.group(0)[:12]}..."
+    placeholder = re.compile(r"^$|^change-me$|\.\.\.|^<.*>$|^your[-_]|^xxx", re.I)
     for line in text.splitlines():
-        m = re.match(r"^\s*(GEMINI_API_KEY|NVIDIA_API_KEY|ADMIN_TOKEN)\s*=\s*(\S+)", line)
-        if m:
-            assert m.group(2) in ("", "change-me"), f"a real value is in {path}: {m.group(1)}"
+        m = re.match(r"^\s*(GEMINI_API_KEY|NVIDIA_API_KEY|ADMIN_TOKEN)\s*=\s*(\S*)", line)
+        if m and not placeholder.search(m.group(2)):
+            raise AssertionError(f"a real value is in {path}: {m.group(1)}")

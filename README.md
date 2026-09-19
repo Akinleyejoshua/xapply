@@ -175,12 +175,24 @@ matters because a listed model can still be retired or overloaded:
 | `stepfun-ai/step-3.5` | 404, no such model on this endpoint |
 | `nvidia/nemotron-3-super-120b-a12b` | 503 when busy, works otherwise |
 
-**Where the list comes from.** NVIDIA's OpenAI-compatible endpoint lists 82 models, and that is
-the complete set it will accept, with or without a key. Twenty-one of them are embedding, safety,
-reward, parsing or translation models that cannot hold a conversation, so they are hidden behind a
-**show non-chat** toggle, leaving 61. NVIDIA's own NVCF catalogue lists more, but those extra
-entries are internal deployments and non-chat models such as protein folding and speech
-recognition, and they return 404 on the chat endpoint, so listing them would only mislead.
+**A listed model is not necessarily a working one.** NVIDIA's endpoint lists 82 models. Twenty-one
+are embedding, safety, reward or parsing models that cannot hold a conversation, leaving 61. Of
+those 61, **only nine actually answer**; the rest return 404, because the catalogue advertises
+models NVIDIA has not deployed. Picking one of those wastes an entire run.
+
+So press **Check which models work** under Settings, or run `python main.py models --verify`. Each
+model is called once, the working ones are marked in the picker, and the undeployed ones are
+greyed out and labelled. A busy model answering 503 counts as working, because that is a wait
+rather than a wrong choice.
+
+Before any run starts, the configured model is checked once. If it cannot be used the run stops
+immediately with one message and a **Find a model that works** button, instead of recording the
+same failure against every posting.
+
+**Keys live in `.env`; the model lives in the dashboard.** `GEMINI_MODEL` and `NVIDIA_MODEL` are
+commented out of `.env.example` because the model is chosen in Settings and saved to
+`settings.local.json`, so it changes without editing a file or restarting. The terminal can still
+override it per run with `--model`.
 
 NVIDIA models differ in how they do structured output, so the client walks a ladder:
 `json_schema`, then `nvext.guided_json`, then `json_object` with the schema in the prompt. It
@@ -567,7 +579,9 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A challenge never clears | Use **Skip this job**, type `s` in the terminal, or create `logs/SKIP` |
 | The sensitivity slider snaps back | Fixed: controls you are editing are no longer overwritten by the refresh |
 | A model you want is not in the list | Type its id anyway and press **Test this model**. The answer is definitive |
-| A run fails with a model error | Test the model. 410 means retired, 404 means wrong id, 503 means try again shortly |
+| A run fails with a model error | Press **Find a model that works**, or run `python main.py models --verify` |
+| Every posting fails with a 404 | The model is listed but not deployed. Only nine of NVIDIA's 61 chat models answer |
+| The model changed by itself | Fixed: the picker now saves only a deliberate choice, never a half-typed filter |
 | A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
