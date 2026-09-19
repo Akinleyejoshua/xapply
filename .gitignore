@@ -1,4 +1,6 @@
 .env
+settings.local.json
+profile.json.bak
 .venv/
 .browser_profile/
 __pycache__/

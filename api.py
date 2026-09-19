@@ -25,9 +25,9 @@ from typing import Any, Literal, Optional
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from config import Settings
+from config import PERSISTED_KEYS, Settings
 from config import settings as default_settings
 from database import STATUSES, Database
 from discovery import SENIORITY_LEVELS
@@ -355,16 +355,34 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "follow_companies": settings.follow_companies,
             "known_sources": ["greenhouse", "ashby", "lever", "remoteok", "himalayas",
                               "google", "linkedin", "urls"],
+            # Which of the values above came from settings.local.json rather than .env,
+            # so the UI can show that a choice is remembered.
+            "saved": sorted(settings.saved_overrides()),
         }
 
     @app.patch("/api/config", dependencies=[Depends(auth)], tags=["settings"])
     def patch_config(body: ConfigPatch) -> dict[str, Any]:
+        """Change settings and remember them, so every page and a later restart agree."""
         changed = []
         for key, value in body.model_dump(exclude_none=True).items():
-            setattr(settings, key, value)
+            try:
+                setattr(settings, key, value)
+            except ValidationError as exc:
+                raise HTTPException(422, f"{key}: {exc.errors()[0]['msg']}") from exc
             changed.append(key)
         if changed:
-            note(f"settings updated: {', '.join(changed)}")
+            settings.save_overrides(changed)
+            note(f"settings saved: {', '.join(changed)}")
+        return get_config()
+
+    @app.post("/api/config/reset", dependencies=[Depends(auth)], tags=["settings"])
+    def reset_config() -> dict[str, Any]:
+        """Forget every saved UI choice and go back to what `.env` says."""
+        settings.clear_overrides()
+        fresh = Settings()
+        for key in PERSISTED_KEYS:
+            setattr(settings, key, getattr(fresh, key))
+        note("settings reset to .env")
         return get_config()
 
     GEMINI_FALLBACK = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]

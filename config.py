@@ -1,18 +1,48 @@
 """Central configuration.
 
-Every value can be overridden through environment variables or a `.env` file
-(see `.env.example`). Names are case-insensitive, so `AUTO_SUBMIT=true` sets
-`Settings.auto_submit`.
+Values are resolved in three layers, each overriding the one before:
+
+  1. the defaults written below
+  2. environment variables and `.env` (case-insensitive, so `AUTO_SUBMIT=true`
+     sets `Settings.auto_submit`)
+  3. `settings.local.json`, the choices you made in the web UI
+
+Layer 3 is what makes the dashboard remember a model or a source list across a
+restart. It only ever holds the keys in `PERSISTED_KEYS`, never a secret, and
+deleting the file reverts everything to your `.env`.
 """
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Iterable, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+log = logging.getLogger(__name__)
+
 BASE_DIR = Path(__file__).resolve().parent
+
+#: Settings the web UI may change and have remembered. Deliberately excludes every
+#: path, credential and network binding: those stay under your control in `.env`.
+PERSISTED_KEYS = (
+    "llm_provider",
+    "gemini_model",
+    "nvidia_model",
+    "sources",
+    "search_queries",
+    "search_location",
+    "remote_only",
+    "seniority_levels",
+    "match_threshold",
+    "auto_submit",
+    "headless",
+    "max_applications_per_run",
+    "max_jobs_per_company",
+    "follow_companies",
+)
 
 
 def _split_csv(value: Any) -> Any:
@@ -28,6 +58,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        validate_assignment=True,   # a bad value from the API is rejected, not stored
     )
 
     # ---- AI ----
@@ -106,6 +137,9 @@ class Settings(BaseSettings):
     log_dir: Path = BASE_DIR / "logs"
     audit_dir: Path = BASE_DIR / "logs" / "applications"
 
+    # ---- Persistence of UI choices ----
+    overrides_path: Path = BASE_DIR / "settings.local.json"
+
     # ---- Admin API ----
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -120,5 +154,62 @@ class Settings(BaseSettings):
         for d in (self.output_dir, self.log_dir, self.audit_dir, self.user_data_dir):
             d.mkdir(parents=True, exist_ok=True)
 
+    # ---- persisted UI choices -----------------------------------------
+    def load_overrides(self) -> dict[str, Any]:
+        """Apply `settings.local.json` on top of the environment. Returns what was applied."""
+        path = Path(self.overrides_path)
+        if not path.exists():
+            return {}
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning("Ignoring unreadable %s: %s", path, exc)
+            return {}
+        applied: dict[str, Any] = {}
+        for key, value in (stored or {}).items():
+            if key not in PERSISTED_KEYS:
+                continue                      # never let the file widen its own scope
+            try:
+                setattr(self, key, value)
+            except Exception as exc:          # a stale key from an older version
+                log.warning("Ignoring saved setting %s=%r: %s", key, value, exc)
+                continue
+            applied[key] = getattr(self, key)
+        if applied:
+            log.info("Loaded %d saved setting(s) from %s", len(applied), path.name)
+        return applied
+
+    def save_overrides(self, keys: Iterable[str]) -> dict[str, Any]:
+        """Merge `keys` into `settings.local.json` so they survive a restart."""
+        path = Path(self.overrides_path)
+        stored: dict[str, Any] = {}
+        if path.exists():
+            try:
+                stored = json.loads(path.read_text(encoding="utf-8")) or {}
+            except (json.JSONDecodeError, OSError):
+                stored = {}
+        for key in keys:
+            if key not in PERSISTED_KEYS:
+                continue
+            value = getattr(self, key)
+            stored[key] = str(value) if isinstance(value, Path) else value
+        path.write_text(json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return stored
+
+    def clear_overrides(self) -> None:
+        """Forget every saved UI choice and fall back to `.env` on the next start."""
+        Path(self.overrides_path).unlink(missing_ok=True)
+
+    def saved_overrides(self) -> dict[str, Any]:
+        path = Path(self.overrides_path)
+        if not path.exists():
+            return {}
+        try:
+            return {k: v for k, v in (json.loads(path.read_text(encoding="utf-8")) or {}).items()
+                    if k in PERSISTED_KEYS}
+        except (json.JSONDecodeError, OSError):
+            return {}
+
 
 settings = Settings()
+settings.load_overrides()

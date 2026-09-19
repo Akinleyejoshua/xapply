@@ -108,6 +108,9 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
 .chip button{background:none;border:0;color:var(--dim);cursor:pointer;padding:0;font-size:14px;line-height:1}
 .chip button:hover{color:var(--err)}
 .desc{white-space:pre-wrap;max-height:320px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px}
+.saved{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--ok);
+  background:rgba(63,185,80,.14);padding:1px 6px;border-radius:99px;font-weight:700}
+#savedNote{font-size:12px;color:var(--dim);margin-top:10px}
 </style>
 </head>
 <body>
@@ -279,8 +282,9 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
         <label class="field"><span>Provider</span>
           <select id="cfgProvider"><option value="gemini">Google Gemini</option><option value="nvidia">NVIDIA NIM (free)</option></select></label>
         <label class="field"><span>Model</span><select id="cfgModel"></select></label>
-        <div class="dim mono" id="keyState" style="margin-bottom:12px"></div>
-        <button class="primary" id="btnSaveAi">Save</button>
+        <div class="dim mono" id="keyState" style="margin-bottom:10px"></div>
+        <p class="dim" style="margin:0">Changes save as you make them and apply to every page.</p>
+        <div id="savedNote"></div>
       </div>
 
       <div class="card">
@@ -301,7 +305,6 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
           <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box ticked.</span></span></label>
         <label class="check"><input type="checkbox" id="cfgHeadless">
           <span><b>Headless browser</b><span class="dim">Not recommended: you cannot take over on a CAPTCHA.</span></span></label>
-        <button class="primary" id="btnSaveMatch">Save</button>
       </div>
 
       <div class="card">
@@ -372,13 +375,104 @@ document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => show(b.d
 function show(name){
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + name));
+  try { localStorage.setItem('xapply.tab', name); } catch(e) {}
+  renderConfig();                       // every page reflects the same saved state
   if(name === 'apps') loadApps();
-  if(name === 'settings') loadSettings();
   if(name === 'profile') loadProfile();
 }
 
-/* ---------- state ---------- */
+/* ---------- state ----------
+   CONFIG is the single source of truth for every settings-driven control on every
+   page. Nothing reads a control to decide what the app does; controls are rendered
+   *from* CONFIG, and changing one writes through the API (which saves it to disk)
+   and then re-renders all pages. So a model picked on the Dashboard shows up in
+   Settings, survives a tab switch, and survives a restart. */
 let CONFIG = {}, FOUND = [], SELECTED = new Set();
+let MODEL_CACHE = {};     // provider -> model id list, so switching tabs is instant
+
+function savedMark(key){
+  return (CONFIG.saved || []).includes(key)
+    ? ' <span class="saved" title="Saved; this survives a restart">saved</span>' : '';
+}
+
+/** Render every settings-driven control on every page from CONFIG. */
+function renderConfig(){
+  if(!CONFIG.known_sources) return;
+  // --- scan page ---
+  const onSrc = new Set(CONFIG.sources || []);
+  $('srcChips').innerHTML = (CONFIG.known_sources || []).map(x => `<label class="chip">
+    <input type="checkbox" value="${esc(x)}" ${onSrc.has(x) ? 'checked' : ''}> ${esc(x)}</label>`).join('');
+  const onLvl = new Set(CONFIG.seniority_levels || []);
+  const levels = CONFIG.known_seniority || [];
+  const levelChips = target => levels.map(l => `<label class="chip">
+    <input type="checkbox" value="${esc(l)}" ${onLvl.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
+  $('scanLevels').innerHTML = levelChips();
+  $('cfgLevels').innerHTML = levelChips();
+  setVal('scanQueries', (CONFIG.search_queries || []).join(', '));
+  setVal('scanLocation', CONFIG.search_location || '');
+  setChecked('scanRemote', CONFIG.remote_only);
+  // --- dashboard ---
+  setVal('runLimit', CONFIG.max_applications_per_run);
+  setVal('runThreshold', CONFIG.match_threshold);
+  setVal('runProvider', CONFIG.llm_provider);
+  // --- settings page ---
+  setVal('cfgProvider', CONFIG.llm_provider);
+  setVal('cfgThreshold', CONFIG.match_threshold);
+  setVal('cfgMaxApps', CONFIG.max_applications_per_run);
+  setVal('cfgMaxCompany', CONFIG.max_jobs_per_company);
+  setChecked('cfgAuto', CONFIG.auto_submit);
+  setChecked('cfgRemote', CONFIG.remote_only);
+  setChecked('cfgFollow', CONFIG.follow_companies);
+  setChecked('cfgHeadless', CONFIG.headless);
+  $('keyState').innerHTML =
+    `GEMINI_API_KEY ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
+    `NVIDIA_API_KEY ${CONFIG.has_nvidia_key ? 'set' : '<b>missing</b>'}`;
+  const n = (CONFIG.saved || []).length;
+  $('savedNote').innerHTML = n
+    ? `${n} setting${n === 1 ? '' : 's'} saved to <span class="mono">settings.local.json</span>. ` +
+      `<button class="sm ghost" onclick="resetConfig()">Reset to .env</button>`
+    : `Nothing saved yet; these come from <span class="mono">.env</span>.`;
+  renderModels();
+}
+function setVal(id, v){ const el = $(id); if(el && v !== undefined && v !== null && el.value != v) el.value = v; }
+function setChecked(id, v){ const el = $(id); if(el) el.checked = !!v; }
+
+/** Fill both model dropdowns for the provider each one is showing. */
+async function renderModels(){
+  for(const [provId, modelId] of [['runProvider','runModel'], ['cfgProvider','cfgModel']]){
+    const provider = $(provId).value || CONFIG.llm_provider;
+    const current = provider === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
+    const sel = $(modelId);
+    let models = MODEL_CACHE[provider];
+    if(!models){
+      sel.innerHTML = '<option>loading…</option>';
+      try { models = (await call('/api/models?provider=' + provider)).models; MODEL_CACHE[provider] = models; }
+      catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; continue; }
+    }
+    const list = models.includes(current) ? models : [current, ...models];
+    sel.innerHTML = list.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  }
+}
+
+/** Write a change through the API, which saves it, then re-render every page. */
+async function saveConfig(patch, quiet){
+  try{
+    CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(patch)});
+    renderConfig();
+    if(!quiet) toast('Saved');
+    return true;
+  } catch(e){ toast(e.message, true); await reloadConfig(); return false; }
+}
+async function reloadConfig(){
+  try { CONFIG = await call('/api/config'); renderConfig(); } catch(e){ /* keep the last good copy */ }
+}
+async function resetConfig(){
+  if(!confirm('Forget every saved choice and go back to what .env says?')) return;
+  try { CONFIG = await call('/api/config/reset', {method:'POST'}); MODEL_CACHE = {}; renderConfig(); toast('Reset to .env'); }
+  catch(e){ toast(e.message, true); }
+}
+/** Save after the user stops typing, so every keystroke is not a request. */
+function debounced(fn, ms){ let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms || 600); }; }
 
 /* ---------- poll ---------- */
 async function poll(){
@@ -411,6 +505,9 @@ async function poll(){
   } else bar.style.display = 'none';
 
   if(st.discovered && st.discovered !== FOUND.length && st.kind !== 'discover') loadFound();
+  // Another browser tab, or the CLI, may have changed settings underneath us.
+  if(st.provider !== CONFIG.llm_provider || st.model !== CONFIG.active_model ||
+     st.auto_submit !== CONFIG.auto_submit) reloadConfig();
 }
 async function release(){ try { await call('/admin/continue', {method:'POST'}); } catch(e){ toast(e.message, true); } }
 
@@ -434,36 +531,28 @@ $('btnRunAuto').onclick = () => { if(confirm('Auto-submit sends real application
 $('btnStop').onclick = $('btnScanStop').onclick = async () => {
   try { await call('/admin/stop', {method:'POST'}); toast('Stop requested'); } catch(e){ toast(e.message, true); } };
 async function startRun(auto){
+  if(!await saveConfig({match_threshold: +$('runThreshold').value,
+                        max_applications_per_run: +$('runLimit').value}, true)) return;
   try{
-    await call('/api/config', {method:'PATCH', body: JSON.stringify({
-      match_threshold: +$('runThreshold').value, max_applications_per_run: +$('runLimit').value})});
+    // auto_submit is passed explicitly, so these buttons always mean what they say,
+    // whatever the saved default happens to be.
     await call('/admin/run', {method:'POST', body: JSON.stringify({limit:+$('runLimit').value, auto_submit:auto})});
     toast(auto ? 'Run started with auto-submit' : 'Run started in assisted mode');
   } catch(e){ toast(e.message, true); }
 }
 
 /* ---------- scan ---------- */
-function renderLevels(){
-  const known = CONFIG.known_seniority || ['intern','junior','mid','senior','lead'];
-  const on = new Set(CONFIG.seniority_levels || []);
-  $('scanLevels').innerHTML = known.map(l => `<label class="chip">
-    <input type="checkbox" value="${esc(l)}" ${on.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
-}
-function renderSources(){
-  const known = CONFIG.known_sources || [];
-  const on = new Set(CONFIG.sources || []);
-  $('srcChips').innerHTML = known.map(s => `<label class="chip">
-    <input type="checkbox" value="${esc(s)}" ${on.has(s) ? 'checked' : ''}> ${esc(s)}</label>`).join('');
-}
 $('btnScan').onclick = async () => {
   const sources = [...document.querySelectorAll('#srcChips input:checked')].map(i => i.value);
   if(!sources.length) return toast('Pick at least one source', true);
   const queries = $('scanQueries').value.split(',').map(s => s.trim()).filter(Boolean);
+  if(!queries.length) return toast('Enter at least one search term', true);
+  // Persist first so the scan uses exactly what the page shows, even mid-debounce.
+  if(!await saveConfig({sources, search_queries: queries, search_location: $('scanLocation').value,
+        remote_only: $('scanRemote').checked,
+        seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true)) return;
   try{
-    await call('/admin/discover', {method:'POST', body: JSON.stringify(
-      {sources, queries: queries.length ? queries : null, location: $('scanLocation').value,
-       remote_only: $('scanRemote').checked,
-       seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)})});
+    await call('/admin/discover', {method:'POST', body: JSON.stringify({})});
     toast('Scanning ' + sources.join(', '));
     FOUND = []; SELECTED.clear(); renderFound();
   } catch(e){ toast(e.message, true); }
@@ -629,84 +718,56 @@ async function detail(id){
   $('dlg').showModal();
 }
 
-/* ---------- settings ---------- */
-async function loadSettings(){
-  CONFIG = await call('/api/config');
-  $('cfgProvider').value = CONFIG.llm_provider;
-  $('cfgThreshold').value = CONFIG.match_threshold;
-  $('cfgMaxApps').value = CONFIG.max_applications_per_run;
-  $('cfgMaxCompany').value = CONFIG.max_jobs_per_company;
-  $('cfgAuto').checked = CONFIG.auto_submit;
-  $('cfgRemote').checked = CONFIG.remote_only;
-  $('cfgFollow').checked = CONFIG.follow_companies;
-  $('cfgHeadless').checked = CONFIG.headless;
-  $('runThreshold').value = CONFIG.match_threshold;
-  $('runLimit').value = CONFIG.max_applications_per_run;
-  $('scanQueries').value = (CONFIG.search_queries || []).join(', ');
-  $('scanLocation').value = CONFIG.search_location || '';
-  $('scanRemote').checked = !!CONFIG.remote_only;
-  renderSources();
-  renderLevels();
-  const knownL = CONFIG.known_seniority || [];
-  const onL = new Set(CONFIG.seniority_levels || []);
-  $('cfgLevels').innerHTML = knownL.map(l => `<label class="chip">
-    <input type="checkbox" value="${esc(l)}" ${onL.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
-  $('runProvider').value = CONFIG.llm_provider;
-  await Promise.all([loadModels(), loadRunModels()]);
-  const g = CONFIG.has_gemini_key, n = CONFIG.has_nvidia_key;
-  $('keyState').innerHTML = `GEMINI_API_KEY ${g ? 'set' : 'MISSING'} &nbsp;·&nbsp; NVIDIA_API_KEY ${n ? 'set' : 'MISSING'}`;
-  await loadCompanies();
-}
-async function loadModels(){
-  const p = $('cfgProvider').value;
-  const sel = $('cfgModel');
-  sel.innerHTML = '<option>loading…</option>';
-  try{
-    const d = await call('/api/models?provider=' + p);
-    const current = p === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
-    const models = d.models.includes(current) ? d.models : [current, ...d.models];
-    sel.innerHTML = models.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
-  } catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; }
-}
-$('cfgProvider').onchange = loadModels;
+/* ---------- settings ----------
+   Each control writes through saveConfig, which persists server-side and re-renders
+   every page, so nothing here keeps private state. */
 
-/* the dashboard carries the same picker so you can switch model where you launch a run */
-async function loadRunModels(){
-  const p = $('runProvider').value, sel = $('runModel');
-  sel.innerHTML = '<option>loading…</option>';
-  try{
-    const d = await call('/api/models?provider=' + p);
-    const current = p === 'nvidia' ? CONFIG.nvidia_model : CONFIG.gemini_model;
-    const models = d.models.includes(current) ? d.models : [current, ...d.models];
-    sel.innerHTML = models.map(m => `<option ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('');
-  } catch(e){ sel.innerHTML = `<option>${esc(e.message)}</option>`; }
-}
-$('runProvider').onchange = loadRunModels;
+// scan page
+$('srcChips').addEventListener('change', () => saveConfig(
+  {sources: [...document.querySelectorAll('#srcChips input:checked')].map(i => i.value)}, true));
+$('scanLevels').addEventListener('change', () => saveConfig(
+  {seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true));
+$('scanRemote').onchange = () => saveConfig({remote_only: $('scanRemote').checked}, true);
+$('scanQueries').oninput = debounced(() => saveConfig(
+  {search_queries: $('scanQueries').value.split(',').map(x => x.trim()).filter(Boolean)}, true));
+$('scanLocation').oninput = debounced(() => saveConfig({search_location: $('scanLocation').value}, true));
+
+// dashboard
+$('runLimit').onchange = () => saveConfig({max_applications_per_run: +$('runLimit').value}, true);
+$('runThreshold').onchange = () => saveConfig({match_threshold: +$('runThreshold').value}, true);
+$('runProvider').onchange = async () => { await renderModels(); saveRunModel(); };
 $('runModel').onchange = saveRunModel;
-async function saveRunModel(){
-  const p = $('runProvider').value, body = {llm_provider: p};
-  body[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('runModel').value;
-  try { CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(body)}); toast('Using ' + p + ' / ' + $('runModel').value); }
-  catch(e){ toast(e.message, true); }
+function saveRunModel(){
+  const p = $('runProvider').value, patch = {llm_provider: p};
+  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('runModel').value;
+  return saveConfig(patch);
 }
-$('btnSaveAi').onclick = async () => {
-  const p = $('cfgProvider').value;
-  const body = {llm_provider: p};
-  body[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('cfgModel').value;
-  try { CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify(body)}); toast('AI settings saved'); }
-  catch(e){ toast(e.message, true); }
-};
-$('btnSaveMatch').onclick = async () => {
-  try{
-    CONFIG = await call('/api/config', {method:'PATCH', body: JSON.stringify({
-      match_threshold:+$('cfgThreshold').value, max_applications_per_run:+$('cfgMaxApps').value,
-      max_jobs_per_company:+$('cfgMaxCompany').value, auto_submit:$('cfgAuto').checked,
-      remote_only:$('cfgRemote').checked, follow_companies:$('cfgFollow').checked,
-      seniority_levels:[...document.querySelectorAll('#cfgLevels input:checked')].map(i => i.value),
-      headless:$('cfgHeadless').checked})});
-    toast('Settings saved');
-  } catch(e){ toast(e.message, true); }
-};
+
+// settings page
+$('cfgProvider').onchange = async () => { await renderModels(); saveCfgModel(); };
+$('cfgModel').onchange = saveCfgModel;
+function saveCfgModel(){
+  const p = $('cfgProvider').value, patch = {llm_provider: p};
+  patch[p === 'nvidia' ? 'nvidia_model' : 'gemini_model'] = $('cfgModel').value;
+  return saveConfig(patch);
+}
+$('cfgLevels').addEventListener('change', () => saveConfig(
+  {seniority_levels: [...document.querySelectorAll('#cfgLevels input:checked')].map(i => i.value)}, true));
+for(const [id, key] of [['cfgThreshold','match_threshold'], ['cfgMaxApps','max_applications_per_run'],
+                        ['cfgMaxCompany','max_jobs_per_company']]){
+  $(id).onchange = () => saveConfig({[key]: +$(id).value}, true);
+}
+for(const [id, key] of [['cfgAuto','auto_submit'], ['cfgRemote','remote_only'],
+                        ['cfgFollow','follow_companies'], ['cfgHeadless','headless']]){
+  $(id).onchange = () => {
+    if(key === 'auto_submit' && $(id).checked &&
+       !confirm('Auto-submit sends real applications without you clicking Submit, and is remembered until you turn it off. Continue?')){
+      $(id).checked = false; return;
+    }
+    saveConfig({[key]: $(id).checked}, true);
+  };
+}
+
 async function loadCompanies(){
   const c = await call('/api/companies');
   $('companyList').innerHTML = Object.entries(c).map(([ats, toks]) =>
@@ -744,9 +805,14 @@ $('btnProfSave').onclick = async () => {
 
 /* ---------- boot ---------- */
 (async function(){
-  try { await loadSettings(); } catch(e){ toast('Could not load settings: ' + e.message, true); }
+  try { await reloadConfig(); } catch(e){ toast('Could not load settings: ' + e.message, true); }
+  await loadCompanies().catch(() => {});
   await loadStats().catch(() => {});
   await loadFound().catch(() => {});
+  let tab = 'dash';
+  try { tab = localStorage.getItem('xapply.tab') || 'dash'; } catch(e) {}
+  if(!document.getElementById('view-' + tab)) tab = 'dash';
+  show(tab);
   poll(); setInterval(poll, 2500); setInterval(() => loadStats().catch(() => {}), 15000);
 })();
 </script>
