@@ -405,13 +405,13 @@ def test_mid_level_cannot_be_asked_for_so_the_search_stays_open(
 
 @pytest.mark.asyncio
 async def test_the_level_appears_in_the_query_google_is_given(
-        settings: Settings, db: Database) -> None:
+        settings: Settings, db: Database, monkeypatch: pytest.MonkeyPatch) -> None:
     settings.seniority_levels = ["intern"]
     settings.search_queries = ["Data Analyst"]
     settings.search_location = "Remote"
     src = GoogleSearchSource(settings, db, None)
     src.b = FakeBrowser(FakeGate())
-    GoogleSearchSource.SITES = ("job-boards.greenhouse.io",)
+    monkeypatch.setattr(GoogleSearchSource, "SITES", ("job-boards.greenhouse.io",))
     page = FakePage({"direct": [], "wrapped": [], "cites": []})
 
     await src.discover(page)
