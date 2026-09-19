@@ -10,130 +10,303 @@
     {
       "id": "remote_async_working",
       "asks": "How you work when the team is not in one room.",
-      "phrases": ["async", "asynchronous", "remote environment", "remote team", "distributed team",
-                  "work remotely", "working remotely", "remote work", "time zone", "timezone",
-                  "hybrid environment", "work from home"],
-      "evidence": ["experience[].location", "experience[].bullets", "summary"],
-      "guidance": "Name the roles that were actually remote and how long. Describe the practices those roles required: written updates, handover notes, documentation, pull-request review, overlap hours. If the question asks about challenges, give a real one such as delayed feedback across time zones and say what was done about it. An answer with no difficulty in it reads as evasion."
+      "phrases": [
+        "async",
+        "asynchronous",
+        "remote environment",
+        "remote team",
+        "distributed team",
+        "work remotely",
+        "working remotely",
+        "remote work",
+        "time zone",
+        "timezone",
+        "hybrid environment",
+        "work from home"
+      ],
+      "evidence": [
+        "experience[].location",
+        "experience[].bullets",
+        "summary"
+      ],
+      "guidance": "Name the roles that were actually remote and how long. Describe the practices those roles required in general terms: written updates, handover notes, documentation, pull-request review, overlap hours. Do not name a tool the profile does not list, so no Slack, Notion, Confluence or Jira unless they appear in it. If the question asks about challenges, give a real one such as delayed feedback across time zones and say what was done about it. An answer with no difficulty in it reads as evasion."
     },
     {
       "id": "open_source",
       "asks": "Whether you have public work, and where to look at it.",
-      "phrases": ["open source", "open-source", "oss contribution", "github", "public repositor",
-                  "contributed to any project", "side project", "personal project", "portfolio"],
-      "evidence": ["github", "website", "projects[].github", "projects[].url", "projects[].bullets",
-                   "experience[] where company mentions open source"],
+      "phrases": [
+        "open source",
+        "open-source",
+        "oss contribution",
+        "github",
+        "public repositor",
+        "contributed to any project",
+        "side project",
+        "personal project",
+        "portfolio"
+      ],
+      "evidence": [
+        "github",
+        "website",
+        "projects[].github",
+        "projects[].url",
+        "projects[].bullets",
+        "experience[] where company mentions open source"
+      ],
       "guidance": "Look for open-source roles, public repositories and project links before answering. Name the specific work and include the link the profile holds. Describe what you actually did on it. Only say no when the profile genuinely holds nothing public, and never invent a contribution to avoid saying no."
     },
     {
       "id": "why_this_company",
       "asks": "Whether you know who they are and why they fit you.",
-      "phrases": ["why do you want to work", "why are you interested in", "why this company",
-                  "why us", "what draws you to", "what attracts you", "why join", "interest in our"],
-      "evidence": ["job.description", "summary", "skills", "projects[].bullets"],
+      "phrases": [
+        "why do you want to work",
+        "why are you interested in",
+        "why this company",
+        "why us",
+        "what draws you to",
+        "what attracts you",
+        "why join",
+        "interest in our"
+      ],
+      "evidence": [
+        "job.description",
+        "summary",
+        "skills",
+        "projects[].bullets"
+      ],
       "guidance": "Answer from the posting in front of you, not from a general admiration of the company. Connect one thing the role actually involves to something you have genuinely built. Avoid flattery and avoid claiming knowledge of their internals you do not have."
     },
     {
       "id": "why_this_role",
       "asks": "Whether the day-to-day work is what you want.",
-      "phrases": ["why this role", "what interests you about", "why are you applying",
-                  "what excites you", "right fit for this role", "why you", "suitable for this"],
-      "evidence": ["summary", "experience[].bullets", "skills", "years_of_experience"],
+      "phrases": [
+        "why this role",
+        "what interests you about",
+        "why are you applying",
+        "what excites you",
+        "right fit for this role",
+        "why you",
+        "suitable for this"
+      ],
+      "evidence": [
+        "summary",
+        "experience[].bullets",
+        "skills",
+        "years_of_experience"
+      ],
       "guidance": "Match the responsibilities in the posting to work you have already done, naming it. Say what you want to do more of. Keep it about the work rather than about career advancement."
     },
     {
       "id": "behavioural_story",
       "asks": "A real situation, what you did, and how it turned out.",
-      "phrases": ["tell us about a time", "tell me about a time", "describe a situation",
-                  "give an example of", "walk us through a time", "share an experience where",
-                  "a time when you"],
-      "evidence": ["experience[].bullets", "projects[].bullets"],
-      "guidance": "One situation, not a summary of your career. Say the setting, what you did and what changed, in that order, in the first person. Use a real project or role from the profile. Where the profile records no figure, describe the outcome in words rather than inventing a number."
+      "phrases": [
+        "tell us about a time",
+        "tell me about a time",
+        "describe a situation",
+        "give an example of",
+        "walk us through a time",
+        "share an experience where",
+        "a time when you"
+      ],
+      "evidence": [
+        "experience[].bullets",
+        "projects[].bullets"
+      ],
+      "guidance": "One situation, not a summary of your career. Say the setting, what you did and what changed, in that order, in the first person. Build it from a real bullet in the profile and stay at the level of detail that bullet supports: no invented modules, outages, bugs, causes, releases, customers or deadlines, and no tools the profile does not name. Where the profile records no figure, describe the outcome in words."
     },
     {
       "id": "challenge_or_failure",
       "asks": "Whether you can be candid and what you learned.",
-      "phrases": ["challenge you", "challenges have you faced", "difficult situation", "a failure",
-                  "went wrong", "mistake", "conflict", "disagreement", "setback", "hardest"],
-      "evidence": ["experience[].bullets", "projects[].bullets"],
-      "guidance": "Name a genuine difficulty from real work and what you did about it. Do not use a disguised strength such as working too hard. End on what changed afterwards, not on an apology."
+      "phrases": [
+        "challenge you",
+        "challenges have you faced",
+        "difficult situation",
+        "a failure",
+        "went wrong",
+        "mistake",
+        "conflict",
+        "disagreement",
+        "setback",
+        "hardest"
+      ],
+      "evidence": [
+        "experience[].bullets",
+        "projects[].bullets"
+      ],
+      "guidance": "Name a genuine difficulty that the profile's own bullets support, and what you did about it. Do not invent an incident to have a better story, and do not use a disguised strength such as working too hard. End on what changed afterwards."
     },
     {
       "id": "impact_or_metric",
       "asks": "Whether your work changed anything measurable.",
-      "phrases": ["metric", "measure success", "impact you", "what changed as a result",
-                  "results you", "kpi", "outcome of your work", "how did you measure"],
-      "evidence": ["projects[].bullets", "experience[].bullets"],
+      "phrases": [
+        "metric",
+        "measure success",
+        "impact you",
+        "what changed as a result",
+        "results you",
+        "kpi",
+        "outcome of your work",
+        "how did you measure"
+      ],
+      "evidence": [
+        "projects[].bullets",
+        "experience[].bullets"
+      ],
       "guidance": "Pick work where the profile records an outcome. State what was defined or built, who used it and what decision it changed. If the profile carries no number, say what changed in words. A number the candidate cannot defend in an interview is worse than no number."
     },
     {
       "id": "proudest_work",
       "asks": "What you consider your best work, and why.",
-      "phrases": ["most proud", "proudest", "best work", "favourite project", "favorite project",
-                  "accomplishment", "achievement you"],
-      "evidence": ["projects[].bullets", "projects[].tech", "experience[].bullets"],
+      "phrases": [
+        "most proud",
+        "proudest",
+        "best work",
+        "favourite project",
+        "favorite project",
+        "accomplishment",
+        "achievement you"
+      ],
+      "evidence": [
+        "projects[].bullets",
+        "projects[].tech",
+        "experience[].bullets"
+      ],
       "guidance": "Choose the project closest to this role, not the largest. Say what was hard about it and what you decided, so the answer shows judgement rather than a feature list."
     },
     {
       "id": "collaboration",
       "asks": "How you work with other people.",
-      "phrases": ["work with others", "team environment", "collaborat", "cross functional",
-                  "cross-functional", "stakeholder", "work with designers", "work with product"],
-      "evidence": ["experience[].bullets", "summary"],
+      "phrases": [
+        "work with others",
+        "team environment",
+        "collaborat",
+        "cross functional",
+        "cross-functional",
+        "stakeholder",
+        "work with designers",
+        "work with product"
+      ],
+      "evidence": [
+        "experience[].bullets",
+        "summary"
+      ],
       "guidance": "Name who you actually worked with in the profile, such as product, IT or clients, and how the work was divided. Describe a concrete habit rather than claiming to be a good communicator."
     },
     {
       "id": "learning",
       "asks": "How you keep current and pick up new things.",
-      "phrases": ["keep up to date", "stay current", "learn new", "learning", "self taught",
-                  "self-taught", "how do you approach learning", "new technology"],
-      "evidence": ["projects[].tech", "skills", "certifications", "education"],
+      "phrases": [
+        "keep up to date",
+        "stay current",
+        "learn new",
+        "learning",
+        "self taught",
+        "self-taught",
+        "how do you approach learning",
+        "new technology"
+      ],
+      "evidence": [
+        "projects[].tech",
+        "skills",
+        "certifications",
+        "education"
+      ],
       "guidance": "Point at something specific and recent from the profile that you learned and used, naming the technology and what you built with it. Avoid listing sources you read."
     },
     {
       "id": "leadership",
       "asks": "Whether you have led or mentored.",
-      "phrases": ["lead a team", "leadership", "mentor", "managed a team", "led a project",
-                  "guided", "ownership of"],
-      "evidence": ["experience[].title", "experience[].bullets"],
+      "phrases": [
+        "lead a team",
+        "leadership",
+        "mentor",
+        "managed a team",
+        "led a project",
+        "guided",
+        "ownership of"
+      ],
+      "evidence": [
+        "experience[].title",
+        "experience[].bullets"
+      ],
       "guidance": "Use only the leading the profile records, such as leading an architecture or reviewing contributions. Do not promote a contributor into a manager."
     },
     {
       "id": "strengths_weaknesses",
       "asks": "Self-knowledge.",
-      "phrases": ["greatest strength", "your strengths", "your weakness", "areas for improvement",
-                  "what are you working on improving"],
-      "evidence": ["skills", "summary", "experience[].bullets"],
+      "phrases": [
+        "greatest strength",
+        "your strengths",
+        "your weakness",
+        "areas for improvement",
+        "what are you working on improving"
+      ],
+      "evidence": [
+        "skills",
+        "summary",
+        "experience[].bullets"
+      ],
       "guidance": "For a strength, give one backed by real work in the profile. For a weakness, name a real gap and what you are doing about it. Never give a disguised strength."
     },
     {
       "id": "career_goals",
       "asks": "Where you are heading.",
-      "phrases": ["career goal", "five years", "5 years", "long term", "where do you see yourself",
-                  "what are you looking for in your next"],
-      "evidence": ["summary", "headline", "experience[].title"],
+      "phrases": [
+        "career goal",
+        "five years",
+        "5 years",
+        "long term",
+        "where do you see yourself",
+        "what are you looking for in your next"
+      ],
+      "evidence": [
+        "summary",
+        "headline",
+        "experience[].title"
+      ],
       "guidance": "Describe the kind of work you want to do more of, grounded in the direction the profile already shows. Avoid titles and timelines you cannot control."
     },
     {
       "id": "how_did_you_hear",
       "asks": "Their referral tracking, not your motivation.",
-      "phrases": ["how did you hear", "how did you find", "where did you hear", "referral source",
-                  "who referred you", "how did you learn about"],
+      "phrases": [
+        "how did you hear",
+        "how did you find",
+        "where did you hear",
+        "referral source",
+        "who referred you",
+        "how did you learn about"
+      ],
       "evidence": [],
       "guidance": "A short factual answer. If it is a dropdown, pick the option matching how the posting was actually found, usually a job board or the company website. Do not write a paragraph."
     },
     {
       "id": "anything_else",
       "asks": "An optional extra, often safely left short.",
-      "phrases": ["anything else", "additional information", "is there anything", "other information",
-                  "what else should we know", "add anything"],
-      "evidence": ["summary", "projects[].url", "website"],
+      "phrases": [
+        "anything else",
+        "additional information",
+        "is there anything",
+        "other information",
+        "what else should we know",
+        "add anything"
+      ],
+      "evidence": [
+        "summary",
+        "projects[].url",
+        "website"
+      ],
       "guidance": "Two or three sentences at most, adding something the CV does not already say, such as a link to relevant public work. Never repeat the CV."
     },
     {
       "id": "accommodations",
       "asks": "Whether you need adjustments in the process.",
-      "phrases": ["accommodation", "adjustments", "accessibility needs", "support during the process"],
+      "phrases": [
+        "accommodation",
+        "adjustments",
+        "accessibility needs",
+        "support during the process"
+      ],
       "evidence": [],
       "guidance": "This is personal and the profile cannot answer it. Leave it for the candidate unless the profile states something explicitly."
     }

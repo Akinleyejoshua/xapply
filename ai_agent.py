@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Literal, Optional, TypeVar
 
 from pydantic import BaseModel, Field
@@ -298,9 +299,18 @@ There are two kinds of field, and they are answered differently.
    - Elaborate. The profile stores work as short summaries, so expand them into full
      sentences that sound like the candidate speaking, not like a list read out loud.
    - You may state the ordinary, standard way that work is done where it plainly follows
-     from what the entry already says. Someone who built a reporting dashboard chose what
-     went on it and agreed that with whoever asked for it. That is method, and it is safe
-     to say.
+     from what the entry already says, IN GENERAL TERMS. Someone who built a reporting
+     dashboard chose what went on it and agreed that with whoever asked for it. That is
+     method, and it is safe to say.
+   - You may NOT name a tool, product, service or technology that does not appear in the
+     profile. Write "a shared document" and "the issue tracker", never Slack, Notion,
+     Confluence, Jira or anything else the profile does not list. Naming one is the most
+     common way an invented answer gives itself away, and it is checked.
+   - You may NOT invent an incident. A story has to be one the candidate would recognise
+     from their own profile entry: no made-up modules, outages, bugs, causes, releases,
+     customers or deadlines. If a bullet says "release and post-release support", a story
+     about supporting a release is fair; a story about a payment module failing on a token
+     format is fabrication, because none of that is in the profile.
    - You may NOT invent outcomes. Percentages, revenue, user counts, hours saved, headcount
      and rankings are claims, not method. Where the profile gives no figure, say what
      changed in words and leave the number out. An answer with no number is fine; an answer
@@ -327,6 +337,45 @@ There are two kinds of field, and they are answered differently.
 Answer truthfully. Inventing an employer, a metric or a result is worse than leaving the
 field for the candidate to fill in.
 """
+
+#: Things an answer can claim to have used. Naming one the profile never mentions is
+#: the clearest signal that a story was invented rather than recalled, and it is the
+#: one a reader spots first.
+NAMEABLE = (
+    "slack", "jira", "confluence", "notion", "trello", "asana", "linear", "basecamp",
+    "zoom", "microsoft teams", "google meet", "miro", "figma", "loom", "airtable",
+    "github", "gitlab", "bitbucket", "jenkins", "circleci", "travis", "github actions",
+    "aws", "gcp", "google cloud", "azure", "heroku", "vercel", "netlify", "digitalocean",
+    "kubernetes", "docker", "terraform", "ansible", "datadog", "sentry", "grafana",
+    "postgres", "postgresql", "mysql", "mongodb", "redis", "elasticsearch", "snowflake",
+    "bigquery", "dynamodb", "kafka", "rabbitmq", "tableau", "power bi", "looker",
+    "python", "javascript", "typescript", "java", "golang", "rust", "php", "ruby",
+    "react", "angular", "vue", "svelte", "next.js", "node.js", "express", "django",
+    "flask", "fastapi", "rails", "spring", "laravel", "tensorflow", "pytorch",
+)
+
+
+def _mentions(name: str, text: str) -> bool:
+    """Whether `text` names this thing, on a word boundary so java misses javascript."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", text) is not None
+
+
+def unsupported_names(answer: str, profile: dict, job: Optional[JobPosting] = None) -> list[str]:
+    """Named tools in `answer` that appear in neither the profile nor the posting.
+
+    The profile is the record of what the candidate has actually used, and the posting
+    is fair game because a question can ask about the team's own stack. Anything else
+    was supplied by the model.
+    """
+    if not answer:
+        return []
+    said = answer.lower()
+    known = json.dumps(profile, ensure_ascii=False).lower()
+    if job is not None:
+        known += " " + " ".join(filter(None, [job.description, job.title, job.company])).lower()
+    return sorted({name for name in NAMEABLE
+                   if _mentions(name, said) and not _mentions(name, known)})
+
 
 class AIAgent:
     """Prompting, schemas and guardrails. Transport lives in `llm.py`."""
@@ -383,6 +432,39 @@ class AIAgent:
                  job.title, job.company, len(letter.paragraphs))
         return letter
 
+    async def _drop_invented(self, answer: FieldAnswer, prompt: str, profile: dict,
+                             job: JobPosting, label: str) -> FieldAnswer:
+        """Re-ask once when an answer names something the candidate never used.
+
+        Asking the model not to invent is necessary but not sufficient: it named Slack,
+        Confluence and a payment module that appear nowhere in the profile. One corrective
+        pass fixes almost all of it, and what survives is handed to the candidate rather
+        than sent, because an invented story is the one thing an interview exposes fastest.
+        """
+        invented = unsupported_names(answer.answer, profile, job)
+        if not invented:
+            return answer
+        log.warning("Answer to %r named %s, which the profile never mentions; asking again",
+                    label, ", ".join(invented))
+        correction = (f"\n\nYour previous answer named {', '.join(invented)}. The candidate's "
+                      f"profile does not mention any of those, so that claim is untrue. Write "
+                      f"the answer again using only what the profile contains, referring to "
+                      f"tools in general terms where you need to.")
+        try:
+            answer = await self._generate(FieldAnswer, prompt + correction, temperature=0.1)
+        except LLMError as exc:
+            log.warning("Could not re-ask %r: %s", label, exc)
+            return FieldAnswer(answer="", confidence=0.0, needs_human=True,
+                               reasoning=f"named {', '.join(invented)}, which is not in the profile")
+        still = unsupported_names(answer.answer, profile, job)
+        if still:
+            log.warning("Answer to %r still names %s; leaving it for you",
+                        label, ", ".join(still))
+            return FieldAnswer(answer=answer.answer, confidence=min(answer.confidence, 0.3),
+                               needs_human=True,
+                               reasoning=f"names {', '.join(still)}, which is not in your profile")
+        return answer
+
     async def answer_form_question(
         self,
         profile: dict,
@@ -408,6 +490,7 @@ class AIAgent:
             or "(not one the bank recognises; answer it from the rules below)",
         )
         answer = await self._generate(FieldAnswer, prompt, temperature=0.1)
+        answer = await self._drop_invented(answer, prompt, profile, job, label)
         log.info("Gemini field answer for %r -> %r (conf %.2f, human=%s)",
                  label, answer.answer, answer.confidence, answer.needs_human)
         return answer

@@ -120,3 +120,78 @@ def test_the_agent_puts_the_guidance_in_the_prompt() -> None:
 
     assert "{guidance}" in FIELD_PROMPT
     assert "WHAT THIS QUESTION IS ASKING" in FIELD_PROMPT
+
+
+# ---- catching an answer that invented its details --------------------------
+
+PROFILE = {
+    "name": "Jane Doe",
+    "experience": [{"company": "BLNR (Open Source)", "title": "Backend Developer",
+                    "location": "Remote",
+                    "bullets": ["Led backend architecture on Node.js, Express and MongoDB.",
+                                "Reviewed community contributions."]}],
+    "projects": [{"name": "DataBI", "tech": ["Next.js", "MongoDB"]}],
+}
+
+
+def _job():
+    from models import JobPosting
+
+    return JobPosting(job_id="t", url="https://example.com", title="Full Stack Developer",
+                      company="Acme", description="We run Kubernetes and Postgres.")
+
+
+def test_a_tool_the_profile_never_mentions_is_caught() -> None:
+    """Seen live: the model claimed Slack, Confluence and Notion, none of which the
+    candidate has ever named."""
+    from ai_agent import unsupported_names
+
+    said = ("I rely on written updates in Slack and shared documentation in "
+            "Confluence or Notion.")
+
+    assert unsupported_names(said, PROFILE, _job()) == ["confluence", "notion", "slack"]
+
+
+def test_what_the_profile_does_name_is_left_alone() -> None:
+    from ai_agent import unsupported_names
+
+    said = "At BLNR I led backend architecture on Node.js, Express and MongoDB."
+
+    assert unsupported_names(said, PROFILE, _job()) == []
+
+
+def test_generic_wording_passes() -> None:
+    """The honest way to say it: describe the practice, not a product."""
+    from ai_agent import unsupported_names
+
+    said = "I rely on written updates, pull-request descriptions and shared documentation."
+
+    assert unsupported_names(said, PROFILE, _job()) == []
+
+
+def test_a_tool_the_posting_itself_names_is_allowed() -> None:
+    """A question can ask about the team's own stack, so the posting is fair game."""
+    from ai_agent import unsupported_names
+
+    said = "I have deployed services with Kubernetes and stored data in Postgres."
+
+    assert unsupported_names(said, PROFILE, _job()) == []
+
+
+def test_one_name_is_not_mistaken_for_another() -> None:
+    from ai_agent import unsupported_names
+
+    assert "java" not in unsupported_names("I write JavaScript daily.", PROFILE, _job())
+
+
+def test_an_empty_answer_is_not_an_invention() -> None:
+    from ai_agent import unsupported_names
+
+    assert unsupported_names("", PROFILE, _job()) == []
+
+
+def test_the_story_guidance_forbids_inventing_an_incident() -> None:
+    """The live failure was an invented payment module and token format."""
+    bank = QuestionBank.load()
+    text = bank.guidance_for("Tell us about a time a project did not go to plan.")
+    assert "invented" in text.lower() or "do not invent" in text.lower()
