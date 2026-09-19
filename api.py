@@ -108,6 +108,7 @@ class ConfigPatch(BaseModel):
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
     fill_mode: Optional[Literal["documents", "assisted", "auto"]] = None
     auto_submit: Optional[bool] = None      # legacy alias for fill_mode="auto"
+    fill_all_at_once: Optional[bool] = None
     headless: Optional[bool] = None
     max_applications_per_run: Optional[int] = Field(None, ge=1, le=200)
     max_jobs_per_company: Optional[int] = Field(None, ge=1, le=200)
@@ -440,6 +441,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "title_match_threshold": settings.title_match_threshold,
             "match_threshold": settings.match_threshold,
             "fill_mode": settings.fill_mode,
+            "fill_all_at_once": settings.fill_all_at_once,
             "auto_submit": settings.auto_submit,
             "headless": settings.headless,
             "max_applications_per_run": settings.max_applications_per_run,

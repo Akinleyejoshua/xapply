@@ -42,6 +42,7 @@ PERSISTED_KEYS = (
     "title_match_threshold",
     "match_threshold",
     "fill_mode",
+    "fill_all_at_once",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -112,6 +113,14 @@ class Settings(BaseSettings):
     #: auto      = fill everything and press Submit
     fill_mode: Literal["documents", "assisted", "auto"] = "assisted"
     auto_submit: bool = False  # kept in step with fill_mode; auto mode implies it
+    #: Read the whole form, work out every answer at once, then fill it in one pass.
+    #: Off by default: answers are worked out one at a time and typed at human speed,
+    #: which is slower but looks like a person filling a form. On, a form with a dozen
+    #: AI-answered questions takes about as long as its slowest single answer.
+    fill_all_at_once: bool = False
+    #: How many answers to work out at the same time in that mode. Higher is faster
+    #: until the model provider starts refusing concurrent requests.
+    fill_concurrency: int = Field(4, ge=1, le=16)
     headless: bool = False  # keep False so a human can take over on CAPTCHAs
     human_gate_mode: Literal["terminal", "api"] = "terminal"
 

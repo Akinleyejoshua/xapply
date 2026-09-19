@@ -853,6 +853,54 @@ class FormFiller:
     def _loc(self, scope: Locator, idx: str) -> Locator:
         return scope.locator(f'[data-xapply-idx="{idx}"]')
 
+    #: Fields whose answer comes from somewhere other than a lookup of the field itself.
+    _NOT_PREFETCHABLE = ("file",)
+
+    async def prefetch(self, scope: Locator, fields: list[FormField],
+                       ctx: "ResolveContext", force_ai: bool = False) -> int:
+        """Work out every answer before filling anything in.
+
+        Answers are normally worked out one field at a time, so a form with a dozen
+        questions for the model waits for a dozen round trips in a row. Here they are
+        worked out together, and the filling pass afterwards reads them straight from
+        the resolver's cache. A form then takes about as long as its slowest answer
+        rather than the sum of all of them.
+
+        Returns how many answers were worked out. Failures are left for the filling
+        pass to hit again and report in the usual way.
+        """
+        if force_ai:
+            return 0            # a forced re-ask must not be served from the cache
+
+        # A dropdown's choices are part of what the answer is chosen from, so they have
+        # to be known first. Reading them means opening each menu, which is a browser
+        # action and cannot be done concurrently.
+        for f in fields:
+            if f.kind == "combobox" and not f.options and not f.current_value:
+                try:
+                    f.options = await self._combobox_options(scope, f)
+                except Exception as exc:
+                    log.debug("could not read the choices in %r: %s", f.label, exc)
+
+        wanted = [f for f in fields
+                  if f.kind not in self._NOT_PREFETCHABLE
+                  and not (f.current_value and not f.has_error)]
+        if not wanted:
+            return 0
+        gate = asyncio.Semaphore(max(1, self.s.fill_concurrency))
+
+        async def resolve(f: FormField) -> None:
+            async with gate:
+                try:
+                    await self.resolver.resolve(f, ctx)
+                except Exception as exc:
+                    # Left for the filling pass, which reports it against the field.
+                    log.debug("could not work out %r ahead of time: %s", f.label, exc)
+
+        log.info("Working out %d answer(s) at once", len(wanted))
+        await asyncio.gather(*(resolve(f) for f in wanted))
+        return len(wanted)
+
     async def fill_step(
         self,
         scope: Locator,
@@ -864,6 +912,8 @@ class FormFiller:
         result = StepResult()
         fields = await self.discover(scope)
         result.fields_seen = len(fields)
+        if self.s.fill_all_at_once and not only_errors:
+            await self.prefetch(scope, fields, ctx, force_ai=force_ai)
         for f in fields:
             if f.kind == "file":
                 continue  # resume upload is handled by the applier
@@ -913,12 +963,12 @@ class FormFiller:
         # A form stores what is typed, so the same ATS-safe flattening applies here.
         value = ats_text(value)
         if f.kind in ("text", "textarea", "email", "tel", "url", "search", "password"):
-            await self.b.human_type(self._loc(scope, f.idx), value)
+            await self._enter(self._loc(scope, f.idx), value)
             return value
         if f.kind == "number":
             n = extract_number(value)
             text = format_number(n) if n is not None else value
-            await self.b.human_type(self._loc(scope, f.idx), text)
+            await self._enter(self._loc(scope, f.idx), text)
             return text
         if f.kind == "select":
             chosen = choose_option(value, f.option_labels)
@@ -953,6 +1003,23 @@ class FormFiller:
             return await self._fill_combobox(scope, f, value)
         log.debug("Unhandled field kind %r for %r", f.kind, f.label)
         return None
+
+    async def _enter(self, locator: Locator, text: str) -> None:
+        """Put text in a field, at a person's pace or in one go.
+
+        Typing keystroke by keystroke is what makes the bot look human, and it is the
+        right default. In all-at-once mode the whole form is filled in a single pass,
+        so each field is set directly and the form is done in seconds.
+        """
+        if not self.s.fill_all_at_once:
+            await self.b.human_type(locator, text)
+            return
+        await locator.fill(text)
+        try:
+            # A React field ignores a value it did not see typed unless it is told.
+            await locator.dispatch_event("input")
+        except Exception:
+            pass
 
     async def _handle_checkbox(self, scope: Locator, f: FormField, ctx: "ResolveContext") -> Optional[dict[str, Any]]:
         """Tick a checkbox only when there is a truthful reason to.
