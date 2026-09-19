@@ -37,7 +37,7 @@ from playwright.async_api import (
 
 from ai_agent import AIAgent, JobAnalysis
 from config import Settings
-from models import JobPosting
+from models import JobPosting, ats_text
 
 log = logging.getLogger(__name__)
 
@@ -807,6 +807,8 @@ class FormFiller:
     # ---- per-kind actions ----------------------------------------------
     async def _apply(self, scope: Locator, f: FormField, value: str) -> Optional[str]:
         """Enter `value` into the field. Returns the value actually applied or None."""
+        # A form stores what is typed, so the same ATS-safe flattening applies here.
+        value = ats_text(value)
         if f.kind in ("text", "textarea", "email", "tel", "url", "search", "password"):
             await self.b.human_type(self._loc(scope, f.idx), value)
             return value

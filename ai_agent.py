@@ -42,7 +42,10 @@ def settings_model(settings: Settings) -> str:
 
 class ScreeningAnswer(BaseModel):
     question: str = Field(
-        description="Screening question, phrased the way an application form would ask it."
+        description="The question as an application form would print it, in full and in plain "
+        "English, ending in a question mark. For example 'How many years of experience do you have "
+        "with Python?' or 'Will you now or in the future require visa sponsorship?'. "
+        "Never return a settings key such as 'requires_sponsorship' or 'notice_period'."
     )
     answer: str = Field(
         description="Short literal answer. Numbers as digits (e.g. '6'), yes/no as 'Yes'/'No'. "
@@ -61,9 +64,14 @@ class TailoredBulletGroup(BaseModel):
         default="", description="Job title exactly as written in the master profile (empty for projects)."
     )
     bullets: list[str] = Field(
-        description="3-5 rewritten bullets for this entry. Each must describe real work already in the "
-        "profile; only wording, ordering and emphasis may change. One line each, start with a verb, "
-        "keep the original metrics."
+        description="3-5 rewritten bullets for this entry, ordered most relevant to this job first. "
+        "Each must describe real work already in the profile; only wording, ordering and emphasis "
+        "may change. Lead each bullet with the part of the work this job cares about, and use the "
+        "job description's own vocabulary wherever it genuinely names the same thing. Keep every "
+        "number and metric from the original. One line each, starting with a past-tense verb. "
+        "Do NOT return a bullet that differs from the original only in punctuation or hyphenation: "
+        "either re-emphasise it for this job or leave the original wording alone. "
+        "Use plain ASCII punctuation: ordinary hyphens and straight quotes."
     )
 
 
@@ -91,9 +99,11 @@ class JobAnalysis(BaseModel):
         description="One group per relevant profile experience/project, most relevant first."
     )
     answers: list[ScreeningAnswer] = Field(
-        description="Predicted answers to screening questions likely for this role: years of experience with "
-        "each key technology in the JD, work authorization, visa sponsorship, notice period / start date, "
-        "salary expectation, remote/on-site/relocation, and anything the JD explicitly asks."
+        description="8-14 predicted screening questions for THIS role, each written as a form would "
+        "ask it, with the candidate's answer. Cover: years of experience with each key technology "
+        "named in the job description, work authorization, visa sponsorship, notice period and "
+        "start date, salary expectation, remote or on-site and relocation, and anything the job "
+        "description explicitly asks about. Prefer job-specific questions over generic ones."
     )
 
     @property
@@ -133,7 +143,8 @@ STRICT GUARDRAILS - violating any of these makes the output unusable:
   vocabulary only where it genuinely describes the same work. Keep all quantified results.
 - Screening answers must agree with the profile's `screening_defaults` and `years_of_experience`.
   When the profile lacks the information, answer exactly "UNKNOWN" instead of guessing.
-- Output plain text values: no markdown, no bullet symbols inside strings.
+- Output plain text with ASCII punctuation only: ordinary hyphens, straight quotes, no em dashes
+  or non-breaking hyphens. No markdown, no bullet symbols inside strings.
 """
 
 ANALYSIS_PROMPT = """MASTER PROFILE (JSON, source of truth):
@@ -154,9 +165,18 @@ TASK
 1. Score how well the candidate's real profile matches this job (match_score, match_rationale, missing_requirements).
 2. Write a two-sentence tailored_summary for this posting.
 3. Pick highlighted_skills strictly from the profile, most relevant first.
-4. For each relevant experience/project in the profile, rewrite its bullets to mirror this JD (tailored_bullets).
-   Use the exact company/project name and title from the profile so the bullets can be mapped back.
-5. Predict screening answers (answers) using screening_defaults and years_of_experience from the profile.
+4. For each relevant experience/project in the profile, rewrite its bullets for this JD
+   (tailored_bullets). Use the exact company/project name and title from the profile so the
+   bullets can be mapped back. Reorder so the work this employer cares about comes first, and
+   reword so their vocabulary appears wherever it truthfully describes the same work. A bullet
+   that comes back with only its punctuation changed is a wasted bullet.
+5. Predict screening answers (answers), each phrased as a real form would ask it, using
+   screening_defaults and years_of_experience from the profile.
+
+WRITING RULES
+- Plain ASCII punctuation only: ordinary hyphens (-), straight quotes (' and "), no em dashes,
+  no non-breaking hyphens, no ellipsis characters. Applicant tracking systems mis-parse them.
+- No markdown, no bullet symbols inside strings.
 """
 
 FIELD_PROMPT = """You are filling ONE field of an online job application on behalf of the candidate.

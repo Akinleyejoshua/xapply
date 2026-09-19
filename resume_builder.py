@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 from ai_agent import JobAnalysis
 from config import Settings
 from config import settings as default_settings
-from models import JobPosting
+from models import JobPosting, ats_text
 
 log = logging.getLogger(__name__)
 
@@ -135,7 +135,9 @@ class ResumeBuilder:
 
     def render_html(self, profile: dict, analysis: JobAnalysis) -> str:
         template = self.env.get_template("resume.html")
-        return template.render(**self.build_context(profile, analysis))
+        # Flatten typographic characters so an applicant tracking system reads the same
+        # words a human does: "Full\u2011stack" must not hide from a search for "Full-stack".
+        return template.render(**ats_text(self.build_context(profile, analysis)))
 
     # ---- PDF ------------------------------------------------------------
     def output_path(self, job: JobPosting, analysis: JobAnalysis) -> Path:
@@ -167,7 +169,7 @@ class ResumeBuilder:
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
         path = self.output_path(job, analysis)
         template = self.env.get_template("resume.html")
-        context = self.build_context(profile, analysis)
+        context = ats_text(self.build_context(profile, analysis))
         variants = [(name, template.render(**ctx)) for name, ctx in self._variants(context)]
         used = await render_first_that_fits(variants, path)
         log.info("Resume written to %s (%s)", path, used)

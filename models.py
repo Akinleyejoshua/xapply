@@ -16,6 +16,36 @@ UNKNOWN = "unknown"
 
 _LINKEDIN_JOB_RE = re.compile(r"linkedin\.com/jobs/view/(\d+)")
 
+#: Typographic characters an LLM produces freely, and which applicant tracking systems
+#: parse badly. A resume containing "Full\u2011stack" does not match a recruiter's search
+#: for "Full-stack", so every string that reaches a PDF or a form field is flattened.
+TYPOGRAPHIC = {
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2015": "-",
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"', "\u2033": '"',
+    "\u2026": "...", "\u2022": "-", "\u00b7": "-", "\u2024": ".",
+    "\u00a0": " ", "\u2007": " ", "\u2009": " ", "\u200a": " ", "\u202f": " ",
+    "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+    "\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl",
+    "\u2122": "(TM)", "\u00ae": "(R)", "\u00a9": "(c)",
+}
+_TYPO_RE = re.compile("|".join(map(re.escape, TYPOGRAPHIC)))
+
+
+def ats_text(value: Any) -> Any:
+    """Flatten typographic characters so a parser reads what a human reads.
+
+    Applied to everything written into a resume or typed into an application form.
+    Lists and dicts are walked, so a whole analysis can be passed through at once.
+    """
+    if isinstance(value, str):
+        return _TYPO_RE.sub(lambda m: TYPOGRAPHIC[m.group(0)], value)
+    if isinstance(value, list):
+        return [ats_text(v) for v in value]
+    if isinstance(value, dict):
+        return {k: ats_text(v) for k, v in value.items()}
+    return value
+
 
 def detect_ats(url: str) -> str:
     """Map a URL to the ATS that hosts it."""
