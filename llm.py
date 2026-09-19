@@ -47,19 +47,14 @@ class ModelUnavailable(LLMError):
     """
 
 
-def extract_json(text: str) -> str:
-    """Pull a JSON object out of a model response that may be fenced or chatty."""
-    if not text:
-        raise LLMError("empty response from model")
-    fenced = FENCE_RE.search(text)
-    if fenced:
-        text = fenced.group(1)
-    text = text.strip()
-    if text.startswith("{") and text.endswith("}"):
-        return text
-    start = text.find("{")
-    if start == -1:
-        raise LLMError(f"no JSON object in response: {text[:200]!r}")
+#: How many opening braces are worth trying as the start of the real object.
+MAX_JSON_STARTS = 4
+#: How many times to step back to the previous field when closing a cut-off object.
+MAX_REPAIR_STEPS = 8
+
+
+def _balanced_object(text: str, start: int) -> Optional[str]:
+    """The complete JSON object beginning at `start`, or None if it never closes."""
     depth, in_string, escape = 0, False, False
     for i, ch in enumerate(text[start:], start):
         if escape:
@@ -79,6 +74,92 @@ def extract_json(text: str) -> str:
             depth -= 1
             if depth == 0:
                 return text[start : i + 1]
+    return None
+
+
+def _unfinished(fragment: str) -> tuple[int, bool]:
+    """How many braces a fragment leaves open, and whether it stops inside a string."""
+    depth, in_string, escape = 0, False, False
+    for ch in fragment:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    return depth, in_string
+
+
+def repair_truncated_json(text: str, start: int) -> Optional[str]:
+    """Close an object the model stopped writing, when nothing was left half-said.
+
+    Models sometimes stop mid-response. If the break falls between fields, the values
+    already written are whole and the object is worth keeping: throwing it away costs
+    a retry, and four failed retries leave the question unanswered altogether.
+
+    If the break falls inside a string the answer itself is half a sentence, so it is
+    refused. Closing the quote would put an unfinished sentence into an application,
+    which is worse than asking again.
+    """
+    fragment = text[start:].rstrip()
+    for _ in range(MAX_REPAIR_STEPS):
+        candidate = fragment.rstrip().rstrip(",").rstrip()
+        depth, in_string = _unfinished(candidate)
+        if in_string or depth <= 0:
+            return None
+        closed = candidate + "}" * depth
+        try:
+            parsed = json.loads(closed)
+        except json.JSONDecodeError:
+            parsed = None
+        # An empty object is not a repair, it is the wreckage of one. Stepping back far
+        # enough always reaches "{}", which would parse and answer nothing.
+        if isinstance(parsed, dict) and parsed:
+            return closed
+        # Step back over the field that was cut off and try again without it.
+        cut = max(candidate.rfind(","), candidate.rfind("{"))
+        if cut <= 0:
+            return None
+        fragment = candidate[:cut]
+    return None
+
+
+def extract_json(text: str) -> str:
+    """Pull a JSON object out of a model response that may be fenced, chatty or cut short."""
+    if not text:
+        raise LLMError("empty response from model")
+    fenced = FENCE_RE.search(text)
+    if fenced:
+        text = fenced.group(1)
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+
+    starts = [i for i, ch in enumerate(text) if ch == "{"][:MAX_JSON_STARTS]
+    if not starts:
+        raise LLMError(f"no JSON object in response: {text[:200]!r}")
+
+    # A stray brace before the real object is common, so every opening brace is tried
+    # as a starting point. Each one is fully exhausted before moving on, so that an
+    # outer object that merely needs closing wins over an inner one that happens to
+    # be complete.
+    for start in starts:
+        found = _balanced_object(text, start)
+        if found is not None:
+            return found
+        repaired = repair_truncated_json(text, start)
+        if repaired is not None:
+            log.debug("closed a truncated JSON response from the model")
+            return repaired
     raise LLMError(f"unbalanced JSON in response: {text[:200]!r}")
 
 

@@ -159,7 +159,9 @@ class FieldAnswer(BaseModel):
         ge=0, le=1, description="0-1 confidence that this is truthful and what the candidate would answer."
     )
     needs_human: bool = Field(
-        description="True when the master profile lacks the information needed to answer truthfully."
+        description="True when the profile lacks the information needed to answer truthfully. "
+        "An open question asking the candidate to write about their own experience is not such "
+        "a case: compose the answer from the profile instead of setting this."
     )
     reasoning: str = Field(description="One sentence.")
 
@@ -267,10 +269,30 @@ Options (choose exactly one, verbatim, if non-empty): {options}
 Current value: {current_value}
 Validation error shown by the form (if any): {error}
 
-Answer truthfully from the profile. If the profile does not contain the information, set needs_human=true
-and keep confidence low. For yes/no questions answer with the option that matches the profile.
-For "years of experience" questions use `years_of_experience` from the profile (digits only).
-For free-text motivation/cover-letter fields write 2-4 concise, factual sentences grounded in the profile.
+There are two kinds of field, and they are answered differently.
+
+1. A FACT about the candidate: name, email, location, years of experience, visa status,
+   salary expectation, notice period, a yes/no screening question, or any choice field.
+   Answer it from the profile alone. If the profile does not contain it, set
+   needs_human=true and keep confidence low. Never guess a fact.
+   For "years of experience" questions use `years_of_experience` (digits only).
+   For yes/no questions answer with the option that matches the profile.
+
+2. An OPEN QUESTION asking the candidate to write something: "tell us about a time...",
+   "describe a project...", "what metric did you define", "why this role", "what interests
+   you", or any motivation or cover-letter box. These are the candidate's own words, so
+   write them. The profile will never contain the finished sentence, and that is not a
+   reason to refuse.
+   - Choose the most relevant real role, project or skill in the profile and answer from it.
+   - Answer every part of the question that was asked, in the order it was asked.
+   - Write in the first person, 3 to 6 sentences, specific and plain. No headings, no bullets.
+   - Use only the employers, dates, technologies and figures that appear in the profile.
+     Where the profile gives no figure, describe the outcome in words rather than inventing
+     a number.
+   - Set needs_human=true only when the profile holds nothing relevant at all.
+
+Answer truthfully. Inventing an employer, a metric or a result is worse than leaving the
+field for the candidate to fill in.
 """
 
 class AIAgent:
