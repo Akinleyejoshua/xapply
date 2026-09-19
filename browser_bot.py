@@ -701,11 +701,15 @@ class StepResult:
 
 #: Reads back what each field actually contains now, by the marker discovery left on it.
 READBACK_JS = r"""
-(ids) => {
+(root, ids) => {
+  // Locator.evaluate hands the element in first, so the list of fields is the second
+  // argument. Taking it as the first silently read back nothing at all.
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const out = {};
+  const scope = root && root.querySelector ? root : document;
   for (const id of ids) {
-    const el = document.querySelector('[data-xapply-idx="' + id + '"]');
+    const el = scope.querySelector('[data-xapply-idx="' + id + '"]')
+            || document.querySelector('[data-xapply-idx="' + id + '"]');
     if (!el) { out[id] = null; continue; }        // the form replaced it
     const tag = el.tagName;
     if (tag === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
