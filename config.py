@@ -36,6 +36,7 @@ PERSISTED_KEYS = (
     "search_location",
     "remote_only",
     "seniority_levels",
+    "countries",
     "match_threshold",
     "auto_submit",
     "headless",
@@ -101,6 +102,8 @@ class Settings(BaseSettings):
     remote_only: bool = False          # keep only postings that are genuinely remote (not hybrid)
     #: intern | junior | mid | senior | lead. Empty means every level.
     seniority_levels: Annotated[list[str], NoDecode] = []
+    #: Country names from `countries.COUNTRIES`. Empty means anywhere.
+    countries: Annotated[list[str], NoDecode] = []
 
     # ---- Discovery (public board APIs + aggregators) ----
     company_file: Path = BASE_DIR / "companies.json"
@@ -145,7 +148,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     admin_token: str = "change-me"
 
-    @field_validator("sources", "search_queries", "seniority_levels", mode="before")
+    @field_validator("sources", "search_queries", "seniority_levels", "countries", mode="before")
     @classmethod
     def _csv(cls, value: Any) -> Any:
         return _split_csv(value)

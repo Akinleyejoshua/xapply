@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, ValidationError
 from config import PERSISTED_KEYS, Settings
 from config import settings as default_settings
 from database import STATUSES, Database
+from countries import COUNTRIES
 from discovery import SENIORITY_LEVELS
 from models import JobPosting
 
@@ -90,6 +91,7 @@ class ConfigPatch(BaseModel):
     search_location: Optional[str] = None
     remote_only: Optional[bool] = None
     seniority_levels: Optional[list[Literal["intern", "junior", "mid", "senior", "lead"]]] = None
+    countries: Optional[list[str]] = None
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
     auto_submit: Optional[bool] = None
     headless: Optional[bool] = None
@@ -104,6 +106,7 @@ class DiscoverRequest(BaseModel):
     location: Optional[str] = None
     remote_only: Optional[bool] = None
     seniority_levels: Optional[list[str]] = None
+    countries: Optional[list[str]] = None
 
 
 class RunRequest(BaseModel):
@@ -347,6 +350,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "remote_only": settings.remote_only,
             "seniority_levels": settings.seniority_levels,
             "known_seniority": list(SENIORITY_LEVELS),
+            "countries": settings.countries,
+            "known_countries": COUNTRIES,
             "match_threshold": settings.match_threshold,
             "auto_submit": settings.auto_submit,
             "headless": settings.headless,
@@ -363,6 +368,10 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     @app.patch("/api/config", dependencies=[Depends(auth)], tags=["settings"])
     def patch_config(body: ConfigPatch) -> dict[str, Any]:
         """Change settings and remember them, so every page and a later restart agree."""
+        if body.countries is not None:
+            unknown = [c for c in body.countries if c not in COUNTRIES]
+            if unknown:
+                raise HTTPException(422, f"Unknown country/countries: {', '.join(unknown)}")
         changed = []
         for key, value in body.model_dump(exclude_none=True).items():
             try:
@@ -487,12 +496,15 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             settings.remote_only = body.remote_only
         if body.seniority_levels is not None:
             settings.seniority_levels = body.seniority_levels
+        if body.countries is not None:
+            settings.countries = body.countries
 
         async def _go() -> None:
             from browser_bot import HumanGate
             from job_search import LazyBrowser, build_sources
 
-            scope = "remote only" if settings.remote_only else f"location {settings.search_location!r}"
+            where = ", ".join(settings.countries) if settings.countries else settings.search_location
+            scope = ("remote only, " if settings.remote_only else "") + (where or "anywhere")
             levels = ", ".join(settings.seniority_levels) if settings.seniority_levels else "any level"
             note(f"scanning {', '.join(settings.sources)} for "
                  f"{', '.join(settings.search_queries)} ({scope}, {levels})")

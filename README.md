@@ -223,6 +223,31 @@ ATS's own "remote" boolean: Ashby marks hybrid roles remote, so 505 of OpenAI's 
 jobs are actually hybrid. The `workplaceType` field is used when present, and the location text
 otherwise.
 
+**Countries.** Pick any number from the dropdown on the scan card, or:
+
+```bash
+python main.py run --countries "Nigeria,United Kingdom"
+python main.py countries-list --search king      # 53 accepted names
+```
+
+```
+# .env
+COUNTRIES=Nigeria,United Kingdom
+```
+
+Postings almost never name a country, so each one is matched on the phrases that actually appear
+in listings: the country name, its short forms, and its main tech cities. "San Francisco" matches
+United States, "Bengaluru" matches India, "Lagos" matches Nigeria. Regional shorthand counts too,
+so "Remote, EMEA" matches Germany but not India. Matching is word-bounded, so "Indiana Township"
+is not India and "Chinatown" is not China.
+
+`Anywhere / Worldwide` is a pseudo-country for postings that state no location at all.
+
+The filters stack. With **United Kingdom** and **Remote roles only** both set, a posting has to be
+genuinely remote *and* name the UK, so "London (Hybrid)" is dropped and "Remote, United Kingdom"
+is kept. Choosing any country makes the free-text **Location** box inactive, so the two can never
+disagree.
+
 ---
 
 ## Deleting applications
@@ -286,6 +311,7 @@ python main.py export --out apps.csv
 | `make models` | `models` | List the models the provider offers |
 | `make companies` | `companies --probe` | Count open roles on each company board |
 | | `delete` | Remove applications so their postings can be retried |
+| | `countries-list` | The 53 country names the location filter accepts |
 | `make login` | `login` | Sign in once, LinkedIn only |
 | `make test` | | Offline test suite: no network, no browser, no LLM calls |
 | `make check` | | Byte-compile and import every module |
@@ -382,6 +408,7 @@ map onto range options properly: 6 years picks "5-10 years", not the nearest sta
 | `discovery.py` | Board APIs, aggregator feeds, Google search |
 | `job_search.py` | LinkedIn search, posting extraction, lazy browser |
 | `pipeline.py` | Orchestration and audit logging |
+| `countries.py` | Country names, their aliases and cities, and regional shorthand |
 | `reports.py` | Terminal dashboard rendering |
 | `api.py` | FastAPI app: every flow the CLI has |
 | `static/index.html` | The web dashboard. One store drives every page |
@@ -421,6 +448,7 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | Clicking Continue does nothing | Fixed: the pause now accepts the terminal, the dashboard button and `logs/CONTINUE`, whichever comes first |
 | Every job is skipped | Lower `MATCH_THRESHOLD`, or read the rationale with `python main.py show <id>` |
 | A scan finds nothing | Your search terms need a majority of their words in the title. Try fewer, broader terms |
+| A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
 | A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |

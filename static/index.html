@@ -508,8 +508,17 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <label class="field"><span>Sources</span><div class="chips" id="srcChips"></div></label>
             <label class="field"><span>Search terms, comma separated</span>
               <input id="scanQueries" placeholder="Full Stack Developer, Backend Engineer"></label>
+            <label class="field"><span>Countries &mdash; none chosen means anywhere</span>
+              <div class="row" style="margin-bottom:9px">
+                <select id="countryPick" style="flex:1; min-width:170px"></select>
+                <button class="sm" id="btnAddCountry">Add</button>
+                <button class="sm ghost" id="btnClearCountries">Clear</button>
+              </div>
+              <div class="chips" id="countryChips"></div>
+            </label>
             <div class="row" style="align-items:flex-end; margin-bottom:16px">
-              <label class="field" style="margin:0; flex:1; min-width:180px"><span>Location</span>
+              <label class="field" style="margin:0; flex:1; min-width:180px">
+                <span>Location text &mdash; used only when no country is chosen</span>
                 <input id="scanLocation" placeholder="Remote"></label>
             </div>
             <label class="field"><span>Seniority &mdash; none ticked means any level</span>
@@ -640,6 +649,8 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <input type="number" id="cfgMaxCompany" min="1" max="200"></label>
             <label class="field"><span>Default seniority &mdash; none ticked means any level</span>
               <div class="chips" id="cfgLevels"></div></label>
+            <label class="field"><span>Default countries &mdash; none chosen means anywhere</span>
+              <div class="chips" id="cfgCountryChips"></div></label>
             <label class="check"><input type="checkbox" id="cfgAuto">
               <span><b>Auto-submit</b><span class="dim">The agent clicks Submit. It still pauses on CAPTCHAs.</span></span></label>
             <label class="check"><input type="checkbox" id="cfgRemote">
@@ -766,6 +777,7 @@ function renderConfig(){
     <input type="checkbox" value="${esc(l)}" ${onLvl.has(l) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
   $('scanLevels').innerHTML = levelChips();
   $('cfgLevels').innerHTML = levelChips();
+  renderCountries();
   setVal('scanQueries', (CONFIG.search_queries || []).join(', '));
   setVal('scanLocation', CONFIG.search_location || '');
   setChecked('scanRemote', CONFIG.remote_only);
@@ -791,6 +803,30 @@ function renderConfig(){
       `<button class="sm ghost" onclick="resetConfig()">Reset to .env</button>`
     : `Nothing saved yet; these come from <span class="mono">.env</span>.`;
   renderModels();
+}
+/** The country picker: a dropdown of everything, plus a chip per chosen country. */
+function renderCountries(){
+  const chosen = CONFIG.countries || [];
+  const all = CONFIG.known_countries || [];
+  const pick = $('countryPick');
+  const keep = pick.value;
+  pick.innerHTML = all.filter(c => !chosen.includes(c))
+    .map(c => `<option>${esc(c)}</option>`).join('') || '<option value="">all added</option>';
+  if(keep && all.includes(keep) && !chosen.includes(keep)) pick.value = keep;
+  const chips = chosen.length
+    ? chosen.map(c => `<span class="chip">${esc(c)}<button title="Remove"
+        onclick="removeCountry('${esc(c).replace(/'/g, "\\'")}')">&times;</button></span>`).join('')
+    : '<span class="dim" style="font-size:12.5px">Anywhere &mdash; no country filter</span>';
+  $('countryChips').innerHTML = chips;
+  $('cfgCountryChips').innerHTML = chips;
+}
+function addCountry(){
+  const c = $('countryPick').value;
+  if(!c) return;
+  saveConfig({countries: [...(CONFIG.countries || []), c]}, true);
+}
+function removeCountry(c){
+  saveConfig({countries: (CONFIG.countries || []).filter(x => x !== c)}, true);
 }
 function setVal(id, v){ const el = $(id); if(el && v !== undefined && v !== null && el.value != v) el.value = v; }
 function setChecked(id, v){ const el = $(id); if(el) el.checked = !!v; }
@@ -908,7 +944,7 @@ $('btnScan').onclick = async () => {
   if(!queries.length) return toast('Enter at least one search term', true);
   // Persist first so the scan uses exactly what the page shows, even mid-debounce.
   if(!await saveConfig({sources, search_queries: queries, search_location: $('scanLocation').value,
-        remote_only: $('scanRemote').checked,
+        remote_only: $('scanRemote').checked, countries: CONFIG.countries || [],
         seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true)) return;
   try{
     await call('/admin/discover', {method:'POST', body: JSON.stringify({})});
@@ -1087,6 +1123,9 @@ $('srcChips').addEventListener('change', () => saveConfig(
 $('scanLevels').addEventListener('change', () => saveConfig(
   {seniority_levels: [...document.querySelectorAll('#scanLevels input:checked')].map(i => i.value)}, true));
 $('scanRemote').onchange = () => saveConfig({remote_only: $('scanRemote').checked}, true);
+$('btnAddCountry').onclick = addCountry;
+$('countryPick').ondblclick = addCountry;
+$('btnClearCountries').onclick = () => saveConfig({countries: []}, true);
 $('scanQueries').oninput = debounced(() => saveConfig(
   {search_queries: $('scanQueries').value.split(',').map(x => x.trim()).filter(Boolean)}, true));
 $('scanLocation').oninput = debounced(() => saveConfig({search_location: $('scanLocation').value}, true));

@@ -7,6 +7,7 @@
   python main.py discover                 preview what the sources would find
   python main.py models [--search x]      list the LLM models available
   python main.py settings                 show the settings in force (--reset to clear saved ones)
+  python main.py countries-list           country names the location filter accepts
   python main.py companies [--probe]      inspect the company board tokens
   python main.py serve                    FastAPI admin dashboard
   python main.py list [--status ...]      terminal overview of all applications
@@ -40,6 +41,30 @@ def setup_logging(verbose: bool = False) -> None:
                         handlers=handlers, force=True)
     for noisy in ("httpx", "httpcore", "google_genai.models", "urllib3", "asyncio"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def resolve_countries(raw: str) -> list[str]:
+    """Turn `--countries "nigeria, uk"` into canonical names, case-insensitively."""
+    from countries import COUNTRIES
+
+    lookup = {c.lower(): c for c in COUNTRIES}
+    lookup.update({"uk": "United Kingdom", "usa": "United States", "us": "United States",
+                   "uae": "United Arab Emirates", "anywhere": "Anywhere / Worldwide",
+                   "worldwide": "Anywhere / Worldwide"})
+    out, unknown = [], []
+    for item in raw.split(","):
+        key = item.strip().lower()
+        if not key:
+            continue
+        match = lookup.get(key)
+        if match:
+            out.append(match)
+        else:
+            unknown.append(item.strip())
+    if unknown:
+        print(f"Unknown country name(s): {', '.join(unknown)}")
+        print("List them with: python main.py countries-list")
+    return out
 
 
 def apply_llm_overrides(args: argparse.Namespace) -> None:
@@ -101,6 +126,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         settings.remote_only = True
     if args.seniority:
         settings.seniority_levels = [x.strip().lower() for x in args.seniority.split(",") if x.strip()]
+    if args.countries:
+        settings.countries = resolve_countries(args.countries)
     urls = None
     if args.url:
         urls = list(args.url)
@@ -113,8 +140,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"  XApply | mode: {mode}")
     print(f"  Threshold: {settings.match_threshold}   Max applications: {args.limit or settings.max_applications_per_run}")
     levels = ", ".join(settings.seniority_levels) if settings.seniority_levels else "any level"
-    print(f"  Sources: {', '.join(settings.sources)}   Levels: {levels}"
-          + ("   Remote only" if settings.remote_only else ""))
+    where = ", ".join(settings.countries) if settings.countries else (settings.search_location or "anywhere")
+    print(f"  Sources: {', '.join(settings.sources)}   Levels: {levels}")
+    print(f"  Where:   {where}" + ("   (remote only)" if settings.remote_only else ""))
     print(f"  LLM: {settings.llm_provider} / {settings.active_model}")
     print("=" * 72 + "\n")
 
@@ -160,6 +188,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
         settings.remote_only = True
     if args.seniority:
         settings.seniority_levels = [x.strip().lower() for x in args.seniority.split(",") if x.strip()]
+    if args.countries:
+        settings.countries = resolve_countries(args.countries)
     db = _db()
 
     async def go() -> list:
@@ -349,6 +379,20 @@ def cmd_audits(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_countries_list(args: argparse.Namespace) -> int:
+    from countries import COUNTRIES, countries_for
+
+    names = COUNTRIES
+    if args.search:
+        names = [c for c in names if args.search.lower() in c.lower()]
+    print(f"\n  {len(names)} country name(s) the --countries filter accepts:\n")
+    for i in range(0, len(names), 3):
+        print("   " + "".join(f"{n:<28}" for n in names[i:i + 3]).rstrip())
+    print(f"\n  Currently selected: {', '.join(settings.countries) or '(anywhere)'}")
+    print('  Set with: python main.py run --countries "Nigeria,United Kingdom"\n')
+    return 0
+
+
 def cmd_settings(args: argparse.Namespace) -> int:
     """Show the settings in force, and where each one came from."""
     from config import PERSISTED_KEYS
@@ -446,6 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--headless", action="store_true", help="run headless (not recommended)")
     r.add_argument("--remote-only", action="store_true", help="apply only to genuinely remote postings")
     r.add_argument("--seniority", help="comma separated: intern,junior,mid,senior,lead")
+    r.add_argument("--countries", help="comma separated country names, e.g. \"Nigeria,United Kingdom\"")
     r.add_argument("--url", action="append", help="apply to this URL only (repeatable)")
     r.add_argument("--urls-file", help="file of URLs, one per line")
     r.set_defaults(func=cmd_run)
@@ -463,6 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--location", help="override SEARCH_LOCATION")
     d.add_argument("--remote-only", action="store_true", help="keep only genuinely remote postings")
     d.add_argument("--seniority", help="comma separated: intern,junior,mid,senior,lead")
+    d.add_argument("--countries", help="comma separated country names, e.g. \"Nigeria,United Kingdom\"")
     d.add_argument("--save", help="write the discovered URLs to this file")
     d.add_argument("--json", action="store_true")
     d.set_defaults(func=cmd_discover)
@@ -508,6 +554,10 @@ def build_parser() -> argparse.ArgumentParser:
     au = sub.add_parser("audits", help="list the per-application audit JSON files")
     au.add_argument("--limit", type=int, default=20)
     au.set_defaults(func=cmd_audits)
+
+    cl = sub.add_parser("countries-list", help="list the country names the filter accepts")
+    cl.add_argument("--search", help="filter the list")
+    cl.set_defaults(func=cmd_countries_list)
 
     se = sub.add_parser("settings", help="show the settings in force and where they came from")
     se.add_argument("--reset", action="store_true", help="forget the choices saved from the dashboard")

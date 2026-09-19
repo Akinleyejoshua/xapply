@@ -37,6 +37,7 @@ from urllib.parse import quote_plus, urlparse
 import httpx
 
 from config import Settings
+from countries import ANYWHERE, COUNTRIES, country_matches
 from database import Database
 from models import ASHBY, GREENHOUSE, LEVER, UNKNOWN, JobPosting, detect_ats, job_id_from_url
 
@@ -127,9 +128,20 @@ def looks_remote(location_text: str, workplace_type: Optional[str] = None) -> bo
 
 
 def location_matches(text: str, wanted: str, remote_only: bool,
-                     workplace_type: Optional[str] = None) -> bool:
+                     workplace_type: Optional[str] = None,
+                     countries: Optional[list[str]] = None) -> bool:
+    """Gate a posting on where it is.
+
+    Remote-only and the country list stack: with both set, a posting has to be
+    genuinely remote *and* name one of the chosen countries. `search_location` is
+    only consulted when no countries are chosen, so the two never fight.
+    """
+    if remote_only and not looks_remote(text, workplace_type):
+        return False
+    if countries:
+        return country_matches(text, countries)
     if remote_only:
-        return looks_remote(text, workplace_type)
+        return True
     w = (wanted or "").strip().lower()
     if not w or w in ("remote", "anywhere", "worldwide"):
         return True
@@ -277,7 +289,8 @@ class GreenhouseBoardSource(ApiJobSource):
                     if title_matches(j.get("title", ""), self.tokens)
                     and seniority_matches(j.get("title", ""), self.s.seniority_levels)
                     and location_matches((j.get("location") or {}).get("name", ""),
-                                         self.s.search_location, self.s.remote_only)
+                                         self.s.search_location, self.s.remote_only,
+                                         countries=self.s.countries)
                 ][: self.s.max_jobs_per_company]
                 kept = 0
                 for j in candidates:
@@ -338,7 +351,8 @@ class LeverBoardSource(ApiJobSource):
                     if not seniority_matches(title, self.s.seniority_levels):
                         continue
                     if not location_matches(loc, self.s.search_location, self.s.remote_only,
-                                            workplace_type=p.get("workplaceType")):
+                                            workplace_type=p.get("workplaceType"),
+                                            countries=self.s.countries):
                         continue
                     description = (p.get("descriptionPlain") or "") + "\n\n" + (p.get("additionalPlain") or "")
                     hosted = p.get("hostedUrl") or ""
@@ -390,7 +404,8 @@ class AshbyBoardSource(ApiJobSource):
                     locs = " ".join([p.get("location") or ""] +
                                     [s.get("location", "") for s in (p.get("secondaryLocations") or [])])
                     if not location_matches(locs, self.s.search_location, self.s.remote_only,
-                                            workplace_type=p.get("workplaceType")):
+                                            workplace_type=p.get("workplaceType"),
+                                            countries=self.s.countries):
                         continue
                     hosted = p.get("jobUrl") or ""
                     job = JobPosting(
@@ -514,10 +529,14 @@ class RemoteOKSource(AggregatorSource):
                 if not ats_url:
                     log.debug("remoteok: no ATS link behind %s", link)
                     continue
+                loc = (d.get("location") or "Remote").strip()
+                if not location_matches(loc, self.s.search_location, self.s.remote_only,
+                                        countries=self.s.countries):
+                    continue
                 job = JobPosting(
                     job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
                     title=(d.get("position") or "").strip(), company=(d.get("company") or "").strip(),
-                    location=(d.get("location") or "Remote").strip(),
+                    location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),
                 )
                 if self._new(job):
@@ -547,10 +566,14 @@ class HimalayasSource(AggregatorSource):
                 if not ats_url:
                     log.debug("himalayas: no ATS link behind %s", link)
                     continue
+                loc = ", ".join(d.get("locationRestrictions") or []) or "Remote"
+                if not location_matches(loc, self.s.search_location, self.s.remote_only,
+                                        countries=self.s.countries):
+                    continue
                 job = JobPosting(
                     job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
                     title=(d.get("title") or "").strip(), company=(d.get("companyName") or "").strip(),
-                    location=", ".join(d.get("locationRestrictions") or []) or "Remote",
+                    location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),
                 )
                 if self._new(job):
