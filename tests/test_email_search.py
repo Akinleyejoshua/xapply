@@ -175,12 +175,45 @@ BLOG = ("Ten things recruiters wish you knew. Most people send your CV to the wr
 
 @pytest.mark.asyncio
 async def test_a_job_board_index_page_is_not_a_posting(settings, db) -> None:
-    """The reported problem: results came back that were job boards, with nobody to
-    write to. A board's own hiring address is not the posting's."""
+    """Results came back that were job boards, with nobody to write to. A board's own
+    hiring address is not the posting's."""
     page = FakePage(text=BOARD_INDEX, url="https://www.indeed.com/q-data-analyst")
 
     assert await source(settings, db).read_posting(
         page, "https://www.indeed.com/q-data-analyst") is None
+
+
+@pytest.mark.asyncio
+async def test_a_recruiters_post_is_kept(settings, db) -> None:
+    """These were being dropped for their domain, which is where they all live."""
+    post = ("URGENT: we are hiring a Data Analyst for a remote team. Send your CV to "
+            "jane@ascendion.com and mention where you saw this. We are looking for "
+            "someone comfortable with SQL and dashboards who can start soon.")
+    page = FakePage(text=post, title="Yevgeniya on LinkedIn",
+                    url="https://www.linkedin.com/posts/y_urgent")
+
+    job = await source(settings, db).read_posting(
+        page, "https://www.linkedin.com/posts/y_urgent")
+
+    assert job is not None and job.email_to == "jane@ascendion.com"
+
+
+def test_a_single_post_is_kept_and_a_profile_is_not() -> None:
+    """A profile or a feed is not an advert; one post is."""
+    from urllib.parse import urlparse
+
+    from discovery import is_social, is_social_post
+
+    def kept(url: str) -> bool:
+        u = urlparse(url)
+        host = (u.hostname or "").lower()
+        return (not is_social(host)) or is_social_post(host, u.path)
+
+    assert kept("https://x.com/r/status/2101178396546089178") is True
+    assert kept("https://www.linkedin.com/posts/y_urgent-hiring") is True
+    assert kept("https://x.com/Yuj_recruit") is False
+    assert kept("https://www.linkedin.com/feed/") is False
+    assert kept("https://northwind.com/jobs/1") is True
 
 
 @pytest.mark.asyncio

@@ -109,6 +109,15 @@ class Pipeline:
             self._bump(STATUS_FAILED)
             return STATUS_FAILED
 
+        if len(job.description) < 120 and self.s.email_apply:
+            # A recruiter's post carries the whole advert in a couple of lines, and the
+            # hydrated description of one is often almost empty. The page itself has the
+            # words, so it is used rather than throwing the posting away unread.
+            page_text = await self._page_text(browser)
+            if len(page_text) > len(job.description):
+                log.info("Short description for %s; using the page itself", job.url)
+                job.description = page_text
+
         if len(job.description) < 120:
             note = "Job description too short to analyze"
             self.db.record(job, STATUS_SKIPPED, notes=note)

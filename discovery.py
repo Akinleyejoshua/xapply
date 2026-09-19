@@ -1236,6 +1236,23 @@ def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
     return tips
 
 
+#: Sites where an advert is a single post rather than a page of its own.
+SOCIAL_HOSTS = ("x.com", "twitter.com", "linkedin.com", "facebook.com", "instagram.com",
+                "threads.net", "mastodon.social", "bsky.app")
+#: The shape of a single post on each, as opposed to a profile or a feed.
+SOCIAL_POST_PATHS = ("/status/", "/posts/", "/feed/update/", "/p/", "/post/")
+
+
+def is_social(host: str) -> bool:
+    host = (host or "").lower()
+    return any(host == site or host.endswith("." + site) for site in SOCIAL_HOSTS)
+
+
+def is_social_post(host: str, path: str) -> bool:
+    """Whether this link is one post rather than somebody's profile or feed."""
+    return any(marker in (path or "").lower() for marker in SOCIAL_POST_PATHS)
+
+
 class EmailSearchSource(GoogleSearchSource):
     """Roles that are advertised with an address rather than a form.
 
@@ -1355,9 +1372,14 @@ class EmailSearchSource(GoogleSearchSource):
             target = unwrap_result_link(href)
             if not target or not target.startswith("http"):
                 continue
-            host = (urlparse(target).hostname or "").lower()
-            if any(bad in host for bad in ("google.", "gstatic.", "youtube.", "x.com",
-                                           "twitter.", "facebook.", "instagram.")):
+            parsed = urlparse(target)
+            host = (parsed.hostname or "").lower()
+            if any(bad in host for bad in ("google.", "gstatic.", "youtube.")):
+                continue
+            if is_social(host) and not is_social_post(host, parsed.path):
+                # A profile or a home page is not an advert. A single post is exactly
+                # where a recruiter writes "send your CV to", which is what this looks
+                # for, so those are kept.
                 continue
             out.append(target.split("#")[0])
         if not out and wrapped:

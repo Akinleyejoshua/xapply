@@ -131,12 +131,15 @@ def application_address(text: str, url: str = "") -> Optional[str]:
     """The address a posting is asking you to write to, or None.
 
     Two things separate that from any other address on a page. It sits next to the
-    wording that offers it, and neither it nor the page belongs to a site that lists
-    other people's jobs. Without both checks a scan returns job board index pages and
-    blog posts, which have addresses but nobody to apply to.
+    wording that offers it, and it does not belong to a site that lists other people's
+    jobs. Without those, a scan returns board index pages and blog posts, which have
+    addresses and nobody to apply to.
+
+    The page it appears on is deliberately not judged. A recruiter posting "send your CV
+    to jane@company.com" on LinkedIn or X is exactly the kind of advert this exists to
+    find, and rejecting the whole page for its domain threw those away. A board's index
+    page is still refused, because the only addresses on it are its own.
     """
-    if url and is_job_board(url):
-        return None
     body = text or ""
     near: list[str] = []
     for match in EMAIL_RE.finditer(body):
@@ -420,8 +423,15 @@ class GmailTransport:
             await uploader.set_input_files([str(p) for p in draft.attachments])
             await self._await_attachments(page, len(draft.attachments))
 
+        # Proof that the compose window really is open, before anything is claimed about
+        # it closing. Without this, a compose that never opened reads as one that closed,
+        # which is a message reported as sent that was never written.
+        if not await self._present(page, self.BODY):
+            raise SendRefused("The Gmail compose window did not open, so nothing was written.")
+
         await (await self._first(page, self.SEND, "Send button")).click()
         await self.confirm_sent(page, draft)
+        await self.verify_in_sent(page, draft)
 
     #: Gmail says so in a small bar at the bottom. Wording varies by language, so the
     #: compose window closing is the signal that matters most.
@@ -449,15 +459,57 @@ class GmailTransport:
             f"Gmail did not confirm sending to {draft.to}. The message is most likely "
             f"still in your Drafts. Nothing has been recorded as sent.")
 
-    async def _gone(self, page: Any, selectors: Iterable[str]) -> bool:
-        """Whether none of these is on the page any more, which is how compose closes."""
+    async def _present(self, page: Any, selectors: Iterable[str]) -> bool:
+        """Whether any of these is on the page."""
         for selector in selectors:
             try:
                 if await page.locator(selector).count():
-                    return False
+                    return True
             except Exception:
-                return False
-        return True
+                continue
+        return False
+
+    async def _gone(self, page: Any, selectors: Iterable[str]) -> bool:
+        """Whether none of these is on the page any more, which is how compose closes."""
+        return not await self._present(page, selectors)
+
+    #: Where Gmail lists what it has actually sent. Searched by subject, because that is
+    #: the only evidence that does not depend on reading the compose window correctly.
+    SENT_SEARCH = "https://mail.google.com/mail/u/0/#search/in%3Asent+subject%3A{q}"
+    SENT_ROWS = "tr.zA"
+    #: Gmail files a sent message within a second or two, but not instantly.
+    SENT_TIMEOUT = 30.0
+
+    async def verify_in_sent(self, page: Any, draft: Draft) -> None:
+        """Look in Sent for the message, and refuse to claim anything until it is there.
+
+        The reading of the compose window turned out not to be trustworthy: a window
+        that never opened looks exactly like one that closed after sending. This asks
+        Gmail what it actually sent, which is the only answer that cannot be faked by a
+        selector matching the wrong thing.
+        """
+        from urllib.parse import quote
+
+        needle = (draft.subject or "").strip()
+        if not needle:
+            return
+        url = self.SENT_SEARCH.format(q=quote(needle))
+        deadline = asyncio.get_running_loop().time() + self.SENT_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await page.goto(url, wait_until="domcontentloaded")
+                await asyncio.sleep(3.0)
+                rows = await page.locator(self.SENT_ROWS).count()
+            except Exception as exc:
+                log.debug("could not read Sent: %s", exc)
+                rows = 0
+            if rows:
+                log.info("Gmail has it in Sent: %r to %s", needle[:60], draft.to)
+                return
+            await asyncio.sleep(2.0)
+        raise SendRefused(
+            f"Gmail has nothing in Sent matching {needle!r}, so the message to "
+            f"{draft.to} was not sent. Nothing has been recorded as sent.")
 
     async def _text_of(self, page: Any, selectors: Iterable[str]) -> str:
         for selector in selectors:

@@ -415,17 +415,28 @@ def test_the_address_has_to_sit_next_to_the_wording_that_offers_it() -> None:
     assert application_address(incidental, "https://somebody.blog/p") is None
 
 
-def test_a_job_board_is_never_the_employer() -> None:
-    """The reported problem: scans returned board pages with nobody to write to."""
-    from email_apply import application_address, is_job_board
+def test_a_job_boards_own_address_is_never_the_employers() -> None:
+    """A board index page offers only its own address, so it yields nothing."""
+    from email_apply import application_address
 
     board = ("Data Analyst jobs. Interested in working at Indeed? Send your CV to "
              "careers@indeed.com.")
 
     assert application_address(board, "https://www.indeed.com/q-data-analyst") is None
     assert application_address("Apply: jobs@greenhouse.io", "https://a.blog/p") is None
-    assert is_job_board("https://www.linkedin.com/jobs/1") is True
-    assert is_job_board("https://northwind.com/jobs/1") is False
+
+
+def test_a_recruiters_post_is_a_posting() -> None:
+    """The reported failure: rejecting a page by its domain threw away LinkedIn and X
+    posts, which is exactly where somebody writes "send your CV to"."""
+    from email_apply import application_address
+
+    post = "URGENT: hiring a Data Engineer. Send your CV to jane@ascendion.com"
+
+    assert application_address(
+        post, "https://www.linkedin.com/posts/y_urgent") == "jane@ascendion.com"
+    assert application_address(
+        post, "https://x.com/r/status/210117") == "jane@ascendion.com"
 
 
 def test_the_address_named_for_applications_is_preferred() -> None:
