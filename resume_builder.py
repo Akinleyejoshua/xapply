@@ -319,7 +319,7 @@ class ResumeBuilder:
         # 3. last resort, and only if allowed: drop the oldest roles
         if self.settings.resume_may_drop_experience:
             base = out[-1][1]
-            for keep in (4, 3, 2):
+            for keep in (4, 3, 2, 1):
                 if keep < len(base["experience"]):
                     dropped = [e["company"] for e in base["experience"][keep:]]
                     out.append((f"dropped {', '.join(dropped)}",
