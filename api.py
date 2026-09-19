@@ -100,6 +100,7 @@ class DiscoverRequest(BaseModel):
     sources: Optional[list[str]] = None
     queries: Optional[list[str]] = None
     location: Optional[str] = None
+    remote_only: Optional[bool] = None
 
 
 class RunRequest(BaseModel):
@@ -117,6 +118,27 @@ class UrlCheck(BaseModel):
     """Job URLs pasted by hand, to be inspected before applying."""
 
     urls: list[str]
+
+
+class DeleteRequest(BaseModel):
+    """Exactly one of ids / status / all selects what to remove."""
+
+    ids: Optional[list[int]] = None
+    status: Optional[str] = None
+    all: bool = False
+    files: bool = False          # also delete the generated PDF and the screenshot
+
+
+def _remove_artifacts(row: dict[str, Any]) -> None:
+    """Delete the generated resume and review screenshot belonging to one application."""
+    for key in ("resume_path", "screenshot_path"):
+        raw = row.get(key)
+        if not raw:
+            continue
+        try:
+            Path(raw).unlink(missing_ok=True)
+        except OSError as exc:
+            log.debug("could not remove %s: %s", raw, exc)
 
 
 # ---- app ------------------------------------------------------------------
@@ -210,6 +232,42 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         if not database.update_status(app_id, body.status, body.notes):
             raise HTTPException(404, "Application not found")
         return database.get(app_id) or {}
+
+    @app.delete("/api/applications/{app_id}", dependencies=[Depends(auth)], tags=["overview"])
+    def delete_application(app_id: int, files: bool = Query(False, description="also delete the PDF and screenshot")) -> dict[str, Any]:
+        """Remove one application. The posting becomes eligible for discovery again."""
+        row = database.get(app_id)
+        if not row:
+            raise HTTPException(404, "Application not found")
+        if files:
+            _remove_artifacts(row)
+        database.delete(app_id)
+        note(f"deleted application #{app_id} ({row.get('company')} / {row.get('title')})")
+        return {"deleted": 1, "id": app_id}
+
+    @app.post("/api/applications/delete", dependencies=[Depends(auth)], tags=["overview"])
+    def delete_applications(body: DeleteRequest) -> dict[str, Any]:
+        """Bulk delete: a list of ids, everything with one status, or the whole table."""
+        rows: list[dict[str, Any]] = []
+        if body.ids:
+            rows = [r for r in (database.get(i) for i in body.ids) if r]
+        elif body.status:
+            rows = database.list(status=body.status, limit=100_000)
+        elif body.all:
+            rows = database.list(limit=100_000)
+        else:
+            raise HTTPException(400, "Provide ids, a status, or all=true")
+        if body.files:
+            for r in rows:
+                _remove_artifacts(r)
+        if body.ids:
+            n = database.delete_many(body.ids)
+        elif body.status:
+            n = database.delete_by_status(body.status)
+        else:
+            n = database.delete_all()
+        note(f"deleted {n} application(s)")
+        return {"deleted": n}
 
     @app.get("/api/applications/{app_id}/resume", dependencies=[Depends(auth)], tags=["files"])
     def get_resume(app_id: int) -> FileResponse:
@@ -402,12 +460,16 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             settings.search_queries = body.queries
         if body.location is not None:
             settings.search_location = body.location
+        if body.remote_only is not None:
+            settings.remote_only = body.remote_only
 
         async def _go() -> None:
             from browser_bot import HumanGate
             from job_search import LazyBrowser, build_sources
 
-            note(f"scanning {', '.join(settings.sources)} for {', '.join(settings.search_queries)}")
+            scope = "remote roles only" if settings.remote_only else f"location {settings.search_location!r}"
+            note(f"scanning {', '.join(settings.sources)} for "
+                 f"{', '.join(settings.search_queries)} ({scope})")
             gate = app.state.gate or HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
             app.state.gate = gate
             # LazyBrowser only opens a real window if a source actually asks for a page,

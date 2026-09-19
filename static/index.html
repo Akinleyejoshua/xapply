@@ -185,6 +185,8 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
         <label class="field"><span>Search terms, comma separated</span>
           <input id="scanQueries" placeholder="Full Stack Developer, Backend Engineer"></label>
         <label class="field"><span>Location</span><input id="scanLocation" placeholder="Remote"></label>
+        <label class="check"><input type="checkbox" id="scanRemote">
+          <span><b>Remote roles only</b><span class="dim">Drop any posting that is not remote, whatever the location says.</span></span></label>
         <div class="row">
           <button class="primary" id="btnScan">Scan now</button>
           <button class="danger" id="btnScanStop" disabled>Stop</button>
@@ -248,9 +250,14 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
         </select>
         <button class="sm" id="btnAppRefresh">Refresh</button>
         <button class="sm" id="btnExport">Export CSV</button>
+        <button class="sm danger" id="btnDelSel" disabled>Delete selected</button>
+        <button class="sm danger ghost" id="btnDelStatus">Delete all shown</button>
       </div>
+      <label class="check" style="margin:10px 0 0"><input type="checkbox" id="delFiles">
+        <span class="dim">Also delete the generated PDF and screenshot files</span></label>
       <table style="margin-top:10px">
-        <thead><tr><th>ID</th><th>Status</th><th>Score</th><th>Company</th><th>Role</th><th>ATS</th><th>Updated</th></tr></thead>
+        <thead><tr><th style="width:30px"><input type="checkbox" id="appAll"></th><th>ID</th><th>Status</th>
+          <th>Score</th><th>Company</th><th>Role</th><th>ATS</th><th>Updated</th><th></th></tr></thead>
         <tbody id="appRows"></tbody>
       </table>
     </div>
@@ -321,6 +328,7 @@ ul{margin:5px 0;padding-left:19px}li{margin-bottom:3px}
 </main>
 
 <dialog id="dlg"><div class="dh"><b id="dlgTitle"></b><div class="sp"></div>
+  <button class="danger" id="dlgDelete">Delete</button>
   <button onclick="document.getElementById('dlg').close()">Close</button></div>
   <div class="db" id="dlgBody"></div></dialog>
 
@@ -440,7 +448,8 @@ $('btnScan').onclick = async () => {
   const queries = $('scanQueries').value.split(',').map(s => s.trim()).filter(Boolean);
   try{
     await call('/admin/discover', {method:'POST', body: JSON.stringify(
-      {sources, queries: queries.length ? queries : null, location: $('scanLocation').value})});
+      {sources, queries: queries.length ? queries : null, location: $('scanLocation').value,
+       remote_only: $('scanRemote').checked})});
     toast('Scanning ' + sources.join(', '));
     FOUND = []; SELECTED.clear(); renderFound();
   } catch(e){ toast(e.message, true); }
@@ -518,14 +527,59 @@ async function applyManual(auto){
 }
 
 /* ---------- applications ---------- */
+let APP_SEL = new Set();
 async function loadApps(){
   const rows = await call(`/api/applications?limit=400&status=${encodeURIComponent($('appStatus').value)}&search=${encodeURIComponent($('appSearch').value)}`);
-  $('appRows').innerHTML = rows.map(r => `<tr class="click" onclick="detail(${r.id})">
-    <td class="dim mono">${r.id}</td><td><span class="pill ${r.status}">${LBL[r.status] || r.status}</span></td>
-    <td class="score">${r.match_score ?? '-'}</td><td>${esc(r.company)}</td><td>${esc(r.title)}</td>
-    <td class="dim">${esc(r.ats)}</td><td class="dim">${ago(r.updated_at)}</td></tr>`).join('')
-    || '<tr><td colspan="7" class="empty">No applications match.</td></tr>';
+  APP_SEL = new Set([...APP_SEL].filter(id => rows.some(r => r.id === id)));
+  $('appRows').innerHTML = rows.map(r => `<tr>
+    <td onclick="event.stopPropagation()"><input type="checkbox" data-id="${r.id}"
+        ${APP_SEL.has(r.id) ? 'checked' : ''} onchange="toggleApp(this)"></td>
+    <td class="dim mono click" onclick="detail(${r.id})">${r.id}</td>
+    <td class="click" onclick="detail(${r.id})"><span class="pill ${r.status}">${LBL[r.status] || r.status}</span></td>
+    <td class="score click" onclick="detail(${r.id})">${r.match_score ?? '-'}</td>
+    <td class="click" onclick="detail(${r.id})">${esc(r.company)}</td>
+    <td class="click" onclick="detail(${r.id})">${esc(r.title)}</td>
+    <td class="dim click" onclick="detail(${r.id})">${esc(r.ats)}</td>
+    <td class="dim click" onclick="detail(${r.id})">${ago(r.updated_at)}</td>
+    <td><button class="sm ghost" title="Delete" onclick="delApp(${r.id})">×</button></td></tr>`).join('')
+    || '<tr><td colspan="9" class="empty">No applications match.</td></tr>';
+  updateAppSel();
 }
+function toggleApp(cb){ const id = +cb.dataset.id; cb.checked ? APP_SEL.add(id) : APP_SEL.delete(id); updateAppSel(); }
+function updateAppSel(){
+  $('btnDelSel').disabled = !APP_SEL.size;
+  $('btnDelSel').textContent = APP_SEL.size ? `Delete ${APP_SEL.size} selected` : 'Delete selected';
+}
+$('appAll').onchange = e => {
+  document.querySelectorAll('#appRows input[type=checkbox]').forEach(cb => {
+    cb.checked = e.target.checked; toggleApp(cb); });
+};
+async function delApp(id){
+  if(!confirm(`Delete application #${id}? The posting becomes eligible for discovery again.`)) return;
+  try{
+    await call(`/api/applications/${id}?files=${$('delFiles').checked}`, {method:'DELETE'});
+    APP_SEL.delete(id); toast('Deleted'); loadApps(); loadStats();
+  } catch(e){ toast(e.message, true); }
+}
+$('btnDelSel').onclick = async () => {
+  const ids = [...APP_SEL];
+  if(!confirm(`Delete ${ids.length} application(s)? This cannot be undone.`)) return;
+  try{
+    const r = await call('/api/applications/delete', {method:'POST',
+      body: JSON.stringify({ids, files: $('delFiles').checked})});
+    APP_SEL.clear(); toast(`Deleted ${r.deleted}`); loadApps(); loadStats();
+  } catch(e){ toast(e.message, true); }
+};
+$('btnDelStatus').onclick = async () => {
+  const st = $('appStatus').value;
+  const what = st ? `every application with status "${LBL[st] || st}"` : 'EVERY application in the database';
+  if(!confirm(`Delete ${what}? This cannot be undone.`)) return;
+  try{
+    const body = st ? {status: st, files: $('delFiles').checked} : {all: true, files: $('delFiles').checked};
+    const r = await call('/api/applications/delete', {method:'POST', body: JSON.stringify(body)});
+    APP_SEL.clear(); toast(`Deleted ${r.deleted}`); loadApps(); loadStats();
+  } catch(e){ toast(e.message, true); }
+};
 $('btnAppRefresh').onclick = loadApps;
 $('appStatus').onchange = loadApps;
 $('appSearch').onkeyup = e => { if(e.key === 'Enter') loadApps(); };
@@ -557,6 +611,7 @@ async function detail(id){
         <td class="dim mono">${esc(x.source)} ${x.confidence ?? ''}</td><td>${x.ok ? '✓' : '✗'}</td></tr>`).join('')}
       </tbody></table>` : '<div class="dim">None recorded</div>'}
     <div class="sec">Job description</div><div class="desc mono">${esc(d.description || '(not stored)')}</div>`;
+  $('dlgDelete').onclick = async () => { await delApp(d.id); $('dlg').close(); };
   $('dlg').showModal();
 }
 
@@ -575,6 +630,7 @@ async function loadSettings(){
   $('runLimit').value = CONFIG.max_applications_per_run;
   $('scanQueries').value = (CONFIG.search_queries || []).join(', ');
   $('scanLocation').value = CONFIG.search_location || '';
+  $('scanRemote').checked = !!CONFIG.remote_only;
   renderSources();
   $('runProvider').value = CONFIG.llm_provider;
   await Promise.all([loadModels(), loadRunModels()]);

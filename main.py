@@ -96,6 +96,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         settings.match_threshold = args.threshold
     if args.headless:
         settings.headless = True
+    if args.remote_only:
+        settings.remote_only = True
     urls = None
     if args.url:
         urls = list(args.url)
@@ -149,6 +151,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
         settings.search_queries = [q.strip() for q in args.queries.split(",") if q.strip()]
     if args.location:
         settings.search_location = args.location
+    if args.remote_only:
+        settings.remote_only = True
     db = _db()
 
     async def go() -> list:
@@ -327,6 +331,47 @@ def cmd_audits(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_delete(args: argparse.Namespace) -> int:
+    """Remove applications so their postings become eligible for discovery again."""
+    db = _db()
+    if args.id:
+        rows = [r for r in (db.get(i) for i in args.id) if r]
+        missing = set(args.id) - {r["id"] for r in rows}
+        if missing:
+            print(f"No application with id {sorted(missing)}")
+    elif args.status:
+        rows = db.list(status=args.status, limit=100_000)
+    elif args.all:
+        rows = db.list(limit=100_000)
+    else:
+        print("Give an id, --status, or --all. See `python main.py delete --help`.")
+        return 2
+    if not rows:
+        print("Nothing to delete.")
+        return 0
+    print(f"\nAbout to delete {len(rows)} application(s):")
+    for r in rows[:10]:
+        print(f"  #{r['id']:<5} {r['status']:<20} {(r.get('company') or '?')[:24]:24} {(r.get('title') or '?')[:40]}")
+    if len(rows) > 10:
+        print(f"  ... and {len(rows) - 10} more")
+    if not args.yes:
+        try:
+            if input("\nType 'yes' to confirm: ").strip().lower() != "yes":
+                print("Cancelled.")
+                return 1
+        except (EOFError, OSError):
+            print("Not interactive; pass --yes to confirm.")
+            return 1
+    if args.files:
+        for r in rows:
+            for key in ("resume_path", "screenshot_path"):
+                if r.get(key):
+                    Path(r[key]).unlink(missing_ok=True)
+    n = db.delete_many([r["id"] for r in rows])
+    print(f"Deleted {n} application(s).")
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     import reports
 
@@ -353,6 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--limit", type=int, help="max applications this run")
     r.add_argument("--threshold", type=int, help="override MATCH_THRESHOLD")
     r.add_argument("--headless", action="store_true", help="run headless (not recommended)")
+    r.add_argument("--remote-only", action="store_true", help="apply only to postings that look remote")
     r.add_argument("--url", action="append", help="apply to this URL only (repeatable)")
     r.add_argument("--urls-file", help="file of URLs, one per line")
     r.set_defaults(func=cmd_run)
@@ -368,6 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--sources", help="override SOURCES, e.g. greenhouse,ashby,lever")
     d.add_argument("--queries", help="override SEARCH_QUERIES, comma separated")
     d.add_argument("--location", help="override SEARCH_LOCATION")
+    d.add_argument("--remote-only", action="store_true", help="keep only postings that look remote")
     d.add_argument("--save", help="write the discovered URLs to this file")
     d.add_argument("--json", action="store_true")
     d.set_defaults(func=cmd_discover)
@@ -413,6 +460,15 @@ def build_parser() -> argparse.ArgumentParser:
     au = sub.add_parser("audits", help="list the per-application audit JSON files")
     au.add_argument("--limit", type=int, default=20)
     au.set_defaults(func=cmd_audits)
+
+    dl = sub.add_parser("delete", help="delete applications from the database")
+    dl.add_argument("id", type=int, nargs="*", help="application id(s) to delete")
+    dl.add_argument("--status", choices=["submitted", "pending_human_review", "skipped", "failed", "in_progress"],
+                    help="delete everything with this status")
+    dl.add_argument("--all", action="store_true", help="delete every application")
+    dl.add_argument("--files", action="store_true", help="also delete the generated PDF and screenshot")
+    dl.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    dl.set_defaults(func=cmd_delete)
 
     e = sub.add_parser("export", help="dump the database to CSV")
     e.add_argument("--out", default="applications.csv")

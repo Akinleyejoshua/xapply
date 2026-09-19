@@ -165,6 +165,29 @@ class Database:
             )
         return cur.rowcount > 0
 
+    def delete(self, app_id: int) -> bool:
+        """Remove one application. The job becomes eligible for discovery again."""
+        with self._conn() as c:
+            return c.execute("DELETE FROM applications WHERE id=?", (app_id,)).rowcount > 0
+
+    def delete_many(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        with self._conn() as c:
+            return c.execute(f"DELETE FROM applications WHERE id IN ({marks})", ids).rowcount
+
+    def delete_by_status(self, status: str) -> int:
+        """Clear out everything with one status, e.g. every failed attempt."""
+        if status not in STATUSES:
+            raise ValueError(f"unknown status {status!r}")
+        with self._conn() as c:
+            return c.execute("DELETE FROM applications WHERE status=?", (status,)).rowcount
+
+    def delete_all(self) -> int:
+        with self._conn() as c:
+            return c.execute("DELETE FROM applications").rowcount
+
     # ---- reads --------------------------------------------------------
     def get(self, app_id: int) -> Optional[dict[str, Any]]:
         with self._conn() as c:
