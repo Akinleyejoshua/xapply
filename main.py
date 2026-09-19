@@ -6,6 +6,7 @@
   python main.py analyze --url URL        dry run on one posting (no application)
   python main.py discover                 preview what the sources would find
   python main.py models [--search x]      list the LLM models available
+  python main.py settings                 show the settings in force (--reset to clear saved ones)
   python main.py companies [--probe]      inspect the company board tokens
   python main.py serve                    FastAPI admin dashboard
   python main.py list [--status ...]      terminal overview of all applications
@@ -337,6 +338,34 @@ def cmd_audits(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_settings(args: argparse.Namespace) -> int:
+    """Show the settings in force, and where each one came from."""
+    from config import PERSISTED_KEYS
+
+    saved = settings.saved_overrides()
+    if args.reset:
+        settings.clear_overrides()
+        print(f"Cleared {settings.overrides_path.name}. Settings now come from .env.")
+        return 0
+    if args.json:
+        print(json.dumps({k: getattr(settings, k) for k in PERSISTED_KEYS}, indent=2, default=str))
+        return 0
+    print(f"\n  Settings in force   (saved values live in {settings.overrides_path.name})")
+    print("  " + "-" * 74)
+    for key in PERSISTED_KEYS:
+        value = getattr(settings, key)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value) or "(any)"
+        origin = "saved in the UI" if key in saved else ".env or default"
+        print(f"  {key:26} {str(value)[:30]:30} {origin}")
+    print(f"\n  LLM in use: {settings.llm_provider} / {settings.active_model}")
+    if saved:
+        print(f"  {len(saved)} setting(s) saved from the dashboard. "
+              f"Undo with: python main.py settings --reset")
+    print()
+    return 0
+
+
 def cmd_delete(args: argparse.Namespace) -> int:
     """Remove applications so their postings become eligible for discovery again."""
     db = _db()
@@ -468,6 +497,11 @@ def build_parser() -> argparse.ArgumentParser:
     au = sub.add_parser("audits", help="list the per-application audit JSON files")
     au.add_argument("--limit", type=int, default=20)
     au.set_defaults(func=cmd_audits)
+
+    se = sub.add_parser("settings", help="show the settings in force and where they came from")
+    se.add_argument("--reset", action="store_true", help="forget the choices saved from the dashboard")
+    se.add_argument("--json", action="store_true")
+    se.set_defaults(func=cmd_settings)
 
     dl = sub.add_parser("delete", help="delete applications from the database")
     dl.add_argument("id", type=int, nargs="*", help="application id(s) to delete")

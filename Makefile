@@ -63,6 +63,12 @@ scan-save: dirs  ## Scan and write the URLs to jobs.txt
 models: ## List the models the current provider offers
 	$(PY) main.py models
 
+settings: ## Show the settings in force and where each came from
+	$(PY) main.py settings
+
+settings-reset: ## Forget the settings saved from the dashboard, back to .env
+	$(PY) main.py settings --reset
+
 companies: ## Show the company board tokens and count their open roles
 	$(PY) main.py companies --probe
 
@@ -95,7 +101,7 @@ clean:  ## Remove caches (keeps DB, resumes and browser session)
 	rm -rf .pytest_cache
 
 reset: clean  ## DANGER: remove venv, DB, generated resumes, logs and browser session
-	rm -rf $(VENV) applications.db output_resumes/*.pdf logs/*.log .browser_profile
+	rm -rf $(VENV) applications.db output_resumes/*.pdf logs/*.log .browser_profile settings.local.json
 
-.PHONY: help venv deps browsers env dirs install login scan scan-save models companies run run-auto \
+.PHONY: help venv deps browsers env dirs install login scan scan-save models settings settings-reset companies run run-auto \
 	analyze serve ui db-init check test clean reset
