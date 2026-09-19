@@ -557,9 +557,19 @@ their own site, and that is the whole process. No board API can see those, becau
 is no board.
 
 This searches for the wording people use when they do that, opens each result, and keeps
-the pages that name an address. Those are then applied to by email, so it needs **Apply
-by email** on. Tick **Also search X** to include X as well, which needs you signed in
-there.
+only the pages that name somebody to write to. Every result it returns carries that
+address, shown under the link in the results table.
+
+Two rules keep job boards out, because a scan full of board index pages has addresses
+and nobody to apply to:
+
+- The address has to sit next to the wording offering it. An article that merely
+  mentions sending a CV, with the author's address at the bottom, is not a posting.
+- Neither the page nor the address may belong to a site that lists other people's jobs.
+  Indeed's own hiring address is not the posting's.
+
+Those are then applied to by email, so it needs **Apply by email** on. Tick **Also
+search X** to include X as well, which needs you signed in there.
 
 ### Applying by email
 
