@@ -451,6 +451,38 @@ def cmd_settings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gmail_login(args: argparse.Namespace) -> int:
+    """Open Gmail once so the browser profile remembers the session.
+
+    Nothing is typed for you and no password is stored anywhere in this project. You
+    sign in yourself, including whatever two-factor step your account uses, and the
+    profile directory keeps the cookies afterwards.
+    """
+    import asyncio
+
+    from browser_bot import HumanGate, StealthBrowser
+
+    async def go() -> None:
+        gate = HumanGate(mode="terminal", marker_file=settings.log_dir / "CONTINUE")
+        opened = dict(settings.__dict__)          # untouched; only the window matters here
+        settings.headless = False
+        settings.hide_browser = False
+        async with StealthBrowser(settings, gate) as browser:
+            await browser.goto(browser.page, settings.gmail_url)
+            print("\n  Sign in to the Gmail account you want applications sent from.")
+            print("  This browser profile keeps the session, so you only do this once.\n")
+            await gate.wait("Sign in to Gmail in the window, then continue.",
+                            allow_skip=False)
+            url = browser.page.url
+            if any(mark in url for mark in ("accounts.google.com", "/signin")):
+                print("\n  Still on the sign-in page, so nothing was saved. Try again.\n")
+                return
+            print("\n  Signed in. Set EMAIL_TRANSPORT=gmail in .env to send this way.\n")
+
+    asyncio.run(go())
+    return 0
+
+
 def cmd_question(args: argparse.Namespace) -> int:
     """Show which of the usual application questions a wording is recognised as."""
     from question_bank import QuestionBank
@@ -696,6 +728,10 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("--files", action="store_true", help="also delete the generated PDF and screenshot")
     dl.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     dl.set_defaults(func=cmd_delete)
+
+    sub.add_parser("gmail-login",
+                   help="sign in to Gmail once so applications can be sent from it"
+                   ).set_defaults(func=cmd_gmail_login)
 
     q = sub.add_parser("question", help="see how an application question is recognised")
     q.add_argument("text", help="the question, in quotes")

@@ -228,3 +228,78 @@ def test_a_listing_with_no_address_is_still_a_dead_end(settings, tmp_path: Path)
 
     assert HimalayasSource(settings, db, None).email_route(
         "Apply through our website.", "https://example.com/jobs/1") is None
+
+
+# ---- sending through a signed-in Gmail instead of a mail server ------------
+
+def test_gmail_needs_no_credentials_at_all(settings) -> None:
+    """The session is the credential, so there is no password anywhere in the project."""
+    settings.email_transport = "gmail"
+
+    assert EmailApplier(settings).missing_settings() == []
+
+
+def test_smtp_still_says_what_it_needs(settings) -> None:
+    settings.email_transport = "smtp"
+
+    assert "SMTP_HOST" in EmailApplier(settings).missing_settings()
+
+
+@pytest.mark.asyncio
+async def test_gmail_without_a_browser_is_refused(settings, job) -> None:
+    """It drives a real page, so there has to be one."""
+    settings.email_transport = "gmail"
+    draft = EmailApplier(settings).compose(job, "careers@example-corp.com", PROFILE, "Hi.", [])
+
+    with pytest.raises(NotConfigured) as caught:
+        await EmailApplier(settings, browser=None).send(draft)
+
+    assert "browser" in str(caught.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_a_lapsed_gmail_session_is_reported_not_guessed_at(settings) -> None:
+    from email_apply import GmailTransport
+
+    class SignedOutPage:
+        url = "https://accounts.google.com/ServiceLogin?continue=mail"
+
+    class Browser:
+        page = SignedOutPage()
+
+        async def goto(self, page, url):
+            return url
+
+    with pytest.raises(NotConfigured) as caught:
+        await GmailTransport(settings, Browser()).open_mail()
+
+    assert "make gmail-login" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_good_session_is_accepted(settings) -> None:
+    from email_apply import GmailTransport
+
+    class InboxPage:
+        url = "https://mail.google.com/mail/u/0/#inbox"
+
+    class Browser:
+        page = InboxPage()
+
+        async def goto(self, page, url):
+            return url
+
+    assert await GmailTransport(settings, Browser()).open_mail() is Browser.page
+
+
+def test_the_smtp_message_still_says_gmail_is_an_option(settings, job) -> None:
+    """Someone stuck on app passwords should be told there is another way."""
+    settings.email_transport = "smtp"
+    import asyncio
+
+    draft = EmailApplier(settings).compose(job, "careers@example-corp.com", PROFILE, "Hi.", [])
+    with pytest.raises(NotConfigured) as caught:
+        asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+            EmailApplier(settings).send(draft))
+
+    assert "EMAIL_TRANSPORT=gmail" in str(caught.value)

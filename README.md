@@ -534,6 +534,20 @@ to careers@example.com" and that is the whole process. Turn on **Apply by email*
 Settings and add your mail server to `.env`, and a posting with no form is applied to by
 writing to the address it gives.
 
+There are two ways to send. **Your signed-in Gmail** is the simpler one:
+
+```bash
+make gmail-login          # sign in once, in a window, including two-factor
+```
+
+Nothing is typed for you and no password is stored in this project. The browser profile
+keeps the session, the message is composed in a real Gmail window, and it lands in your
+Sent folder where you can see it and reply from it. Set `EMAIL_TRANSPORT=gmail`.
+
+The other way is **a mail server**, with `SMTP_HOST`, `SMTP_USER` and `SMTP_PASSWORD` in
+`.env`. For Gmail that password is an app password, not your account password, which is
+the reason the browser route exists.
+
 It is off by default, and stays careful when it is on:
 
 - The recipient is only ever an address found in the posting. It is never guessed, and
@@ -543,9 +557,8 @@ It is off by default, and stays careful when it is on:
 - `EMAIL_AUTO_SEND=true` skips that pause. It is a separate setting from turning the
   feature on, because they are different decisions.
 - Your mail credentials live in `.env` only. They are never written to
-  `settings.local.json` and never sent to the browser.
-
-For Gmail, `SMTP_PASSWORD` is an app password, not your account password.
+  `settings.local.json` and never sent to the browser. With the Gmail route there are
+  none to leak.
 
 ### Open questions on a form
 

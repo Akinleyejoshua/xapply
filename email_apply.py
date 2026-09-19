@@ -147,9 +147,15 @@ class EmailApplier:
     #: Subject lines recruiters expect. The role first, because that is what they filter on.
     SUBJECT = "Application for {title}{company} - {name}"
 
-    def __init__(self, settings: Settings, gate: Any = None):
+    def __init__(self, settings: Settings, gate: Any = None, browser: Any = None):
         self.s = settings
         self.gate = gate
+        #: Needed only by the gmail transport, which drives a real signed-in session.
+        self.browser = browser
+
+    @property
+    def transport(self) -> str:
+        return (self.s.email_transport or "smtp").lower()
 
     # ---- configuration -------------------------------------------------
     @property
@@ -157,7 +163,13 @@ class EmailApplier:
         return (self.s.email_from or self.s.smtp_user or "").strip()
 
     def missing_settings(self) -> list[str]:
-        """Which settings are still needed before anything can be sent."""
+        """Which settings are still needed before anything can be sent.
+
+        Nothing, for the gmail transport: the session is the credential, and whether it
+        is still good is only knowable by opening Gmail, which `send` does.
+        """
+        if self.transport == "gmail":
+            return []
         needed = {"SMTP_HOST": self.s.smtp_host, "SMTP_USER": self.s.smtp_user,
                   "SMTP_PASSWORD": self.s.smtp_password}
         missing = [name for name, value in needed.items() if not str(value or "").strip()]
@@ -215,13 +227,22 @@ class EmailApplier:
 
     async def send(self, draft: Draft) -> None:
         """Send, after checking there is somewhere to send from and to."""
+        if not parseaddr(draft.to)[1]:
+            raise ValueError(f"{draft.to!r} is not an address to send to")
+        if self.transport == "gmail":
+            if self.browser is None:
+                raise NotConfigured(
+                    "The gmail transport sends through the browser, and there is none "
+                    "open. Use the smtp transport, or run this from an apply run.")
+            log.info("Sending the application to %s through your signed-in Gmail", draft.to)
+            await GmailTransport(self.s, self.browser).send(draft)
+            return
         missing = self.missing_settings()
         if missing:
             raise NotConfigured(
-                "Email applying needs " + ", ".join(missing) + " in .env. "
-                "For Gmail use an app password, not your account password.")
-        if not parseaddr(draft.to)[1]:
-            raise ValueError(f"{draft.to!r} is not an address to send to")
+                "Email applying needs " + ", ".join(missing) + " in .env, or set "
+                "EMAIL_TRANSPORT=gmail to send through your signed-in Gmail instead. "
+                "For an SMTP password Gmail wants an app password, not your account one.")
         log.info("Sending the application to %s via %s", draft.to, self.s.smtp_host)
         await asyncio.to_thread(self._send_blocking, draft)
 

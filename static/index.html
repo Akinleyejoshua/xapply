@@ -815,6 +815,12 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <span><b>Check the form afterwards</b><span class="dim">Reads every field back
               and fills again anything that did not take, such as a box you clicked out of
               while it was being typed into.</span></span></label>
+            <label class="field" style="margin:2px 0 10px">
+              <span>Send applications through</span>
+              <select id="cfgTransport">
+                <option value="gmail">My signed-in Gmail, in the browser</option>
+                <option value="smtp">A mail server (SMTP settings in .env)</option>
+              </select></label>
             <label class="check"><input type="checkbox" id="cfgEmail">
               <span><b>Apply by email</b><span class="dim" id="emailNote">For postings that
               say to send your CV to an address instead of offering a form. Needs SMTP settings
@@ -995,12 +1001,18 @@ function renderConfig(){
   setChecked('cfgAtOnce', CONFIG.fill_all_at_once);
   setChecked('cfgVerify', CONFIG.verify_after_fill);
   setChecked('cfgEmail', CONFIG.email_apply);
+  setVal('cfgTransport', CONFIG.email_transport || 'smtp');
   setChecked('cfgHide', CONFIG.hide_browser);
   setVal('cfgChallenge', CONFIG.challenge_action || 'wait');
   const note = $('emailNote');
-  if(note && CONFIG.email_apply && (CONFIG.email_missing || []).length){
-    note.innerHTML = `<b style="color:var(--err)">Not ready:</b> set ` +
-      CONFIG.email_missing.map(esc).join(', ') + ' in .env, then restart.';
+  if(note && CONFIG.email_apply){
+    if(CONFIG.email_transport === 'gmail'){
+      note.innerHTML = 'Sends from your own Gmail, so no password is stored here and the ' +
+        'message lands in your Sent folder. Sign in once with <span class="mono">make gmail-login</span>.';
+    } else if((CONFIG.email_missing || []).length){
+      note.innerHTML = `<b style="color:var(--err)">Not ready:</b> set ` +
+        CONFIG.email_missing.map(esc).join(', ') + ' in .env, then restart. Or switch to Gmail above.';
+    }
   }
   $('keyState').innerHTML =
     `GEMINI ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
@@ -1596,6 +1608,7 @@ $('btnDelStatus').onclick = async () => {
 };
 $('btnAppRefresh').onclick = loadApps;
 $('cfgChallenge').onchange = () => saveConfig({challenge_action: $('cfgChallenge').value}, true);
+$('cfgTransport').onchange = () => saveConfig({email_transport: $('cfgTransport').value}, true);
 $('appStatus').onchange = () => { loadApps(); updateAppSel(); };
 $('appSearch').onkeyup = e => { if(e.key === 'Enter') loadApps(); };
 $('btnExport').onclick = () => location.href = api('/api/export.csv');

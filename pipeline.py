@@ -158,7 +158,7 @@ class Pipeline:
         cover_letter.cache["analysis"] = analysis
         if applier is None:
             return await self._apply_by_email(job, analysis, resume_path, trimmed,
-                                              email_to, cover_letter)
+                                              email_to, cover_letter, browser=browser)
         if applier.cover_letter is not None:
             applier.cover_letter.cache["analysis"] = analysis
         mode = {"documents": "attaching documents only", "assisted": "filling the form",
@@ -192,11 +192,11 @@ class Pipeline:
 
     async def _apply_by_email(self, job: JobPosting, analysis: JobAnalysis,
                               resume_path: Path, trimmed: str, email_to: str,
-                              cover_letter: Any) -> str:
+                              cover_letter: Any, browser: Any = None) -> str:
         """Send the documents to the address the posting gives, once you have read it."""
         from email_apply import EmailApplier
 
-        mailer = EmailApplier(self.s, self.gate)
+        mailer = EmailApplier(self.s, self.gate, browser=browser)
         missing = mailer.missing_settings()
         if missing:
             note = ("Apply by email is on, but " + ", ".join(missing) +
