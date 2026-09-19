@@ -15,9 +15,12 @@ come from somewhere else. Five routes, in descending order of reliability:
      one is resolved to the underlying Greenhouse/Lever/Ashby application URL.
 
   3. Google search (google)
-     `site:job-boards.greenhouse.io "Full Stack Developer" "Remote"` driven through
-     Playwright. Last resort: Google rate-limits and challenges automation, so this
-     source pauses for a human when it is challenged.
+     `site:job-boards.greenhouse.io "Full Stack Developer"` driven through Playwright.
+     Google no longer puts result URLs in the page, so this source reads the company
+     board named under each result and hands it to route 1, which returns the jobs in
+     full. Boards that answer are written to companies.json, so what Google finds once
+     keeps working without it. Google may refuse an automated search, and then this
+     source pauses for a human rather than reporting an empty result.
 
 Everything here is read-only HTTP except the Google source. None of it needs a
 login, which is why these boards are far more stable to automate than LinkedIn.

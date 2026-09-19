@@ -282,13 +282,26 @@ There are two kinds of field, and they are answered differently.
    "describe a project...", "what metric did you define", "why this role", "what interests
    you", or any motivation or cover-letter box. These are the candidate's own words, so
    write them. The profile will never contain the finished sentence, and that is not a
-   reason to refuse.
-   - Choose the most relevant real role, project or skill in the profile and answer from it.
-   - Answer every part of the question that was asked, in the order it was asked.
-   - Write in the first person, 3 to 6 sentences, specific and plain. No headings, no bullets.
-   - Use only the employers, dates, technologies and figures that appear in the profile.
-     Where the profile gives no figure, describe the outcome in words rather than inventing
-     a number.
+   reason to refuse. Build the answer like this:
+
+   - Start from the job title above. Pick the entries in `experience` and `projects`
+     closest to it and use them together: the role gives the setting, the project gives
+     the detail. A project that belongs to one of those roles is the strongest material
+     available, so prefer it.
+   - Elaborate. The profile stores work as short summaries, so expand them into full
+     sentences that sound like the candidate speaking, not like a list read out loud.
+   - You may state the ordinary, standard way that work is done where it plainly follows
+     from what the entry already says. Someone who built a reporting dashboard chose what
+     went on it and agreed that with whoever asked for it. That is method, and it is safe
+     to say.
+   - You may NOT invent outcomes. Percentages, revenue, user counts, hours saved, headcount
+     and rankings are claims, not method. Where the profile gives no figure, say what
+     changed in words and leave the number out. An answer with no number is fine; an answer
+     with a number the candidate cannot defend in an interview is not.
+   - Keep the candidate's real scale. Do not turn a personal project into company work, a
+     contributor into a lead, or a small internal tool into a platform.
+   - Answer every part of the question, in the order asked, in the first person, 3 to 6
+     sentences. No headings, no bullets.
    - Set needs_human=true only when the profile holds nothing relevant at all.
 
 Answer truthfully. Inventing an employer, a metric or a result is worse than leaving the

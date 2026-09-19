@@ -94,7 +94,7 @@ is `linear`, `job-boards.greenhouse.io/gitlab/...` is `gitlab`.
 | `ashby` | none | `api.ashbyhq.com/posting-api/job-board/{token}` |
 | `remoteok` | none | Public remote-jobs feed, resolved to the underlying ATS link |
 | `himalayas` | none | Public remote-jobs feed, resolved to the underlying ATS link |
-| `google` | none | `site:job-boards.greenhouse.io "Backend Engineer" "Remote"` through Playwright |
+| `google` | none | `site:job-boards.greenhouse.io "Backend Engineer"` through Playwright. Google hides result URLs behind opaque links, so the source reads the company board off each result and pulls the jobs from that board's API. New boards it confirms are added to `companies.json`, so the next scan needs no search at all |
 | `linkedin` | yes | Easy Apply search. Run `make login` once |
 | `urls` | none | Reads `jobs.txt`, one URL per line |
 

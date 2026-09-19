@@ -253,6 +253,32 @@ def test_extract_json_rejects_garbage(bad) -> None:
         extract_json(bad)
 
 
+def test_a_stray_brace_before_the_object_is_stepped_over() -> None:
+    """Seen live from NVIDIA: the model opens a brace, then starts the object again."""
+    raw = '{\n{\n  "answer": "Corvendra",\n  "confidence": 0.9,\n  "needs_human": false'
+    assert json.loads(extract_json(raw)) == {
+        "answer": "Corvendra", "confidence": 0.9, "needs_human": False}
+
+
+def test_an_object_cut_off_between_fields_is_closed_and_kept() -> None:
+    """Four retries of a half-written response leave the field blank; closing it does not."""
+    assert json.loads(extract_json('{"answer": "Full answer.", "confidence": 0.8,')) == {
+        "answer": "Full answer.", "confidence": 0.8}
+    assert json.loads(extract_json('{"a": {"b": 1}, "c": 2')) == {"a": {"b": 1}, "c": 2}
+
+
+def test_an_answer_cut_off_mid_sentence_is_refused() -> None:
+    """Half a sentence must not reach someone's application, so this one is retried."""
+    with pytest.raises(LLMError):
+        extract_json('{"answer": "I defined a metric that')
+
+
+def test_repair_never_degrades_to_an_empty_object() -> None:
+    """Stepping back far enough always reaches '{}', which parses and says nothing."""
+    with pytest.raises(LLMError):
+        extract_json("{ {")
+
+
 def test_schema_of_inlines_refs() -> None:
     from ai_agent import JobAnalysis
 
