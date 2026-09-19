@@ -341,6 +341,10 @@ class LinkedInEasyApplyApplier(BaseApplier):
                 submit = await self._button(modal, self.SUBMIT_RE)
                 if submit is not None:
                     await self._uncheck_follow(modal)
+                    if await self.b.guard(page) == HumanGate.SKIP:
+                        await self._discard(page)
+                        return self._result(STATUS_SKIPPED, "Skipped by you at the challenge",
+                                            answers, shot, job.url)
                     shot = await self.b.screenshot(page, f"review_linkedin_{job.job_id}")
                     if self.s.auto_submit:
                         await self.b.human_click(submit)
@@ -571,9 +575,15 @@ class SinglePageApplier(BaseApplier):
             res = await self.filler.fill_step(scope, ctx)
             answers.extend(res.filled)
             if res.unresolved:
-                await self.gate.wait("Could not confidently answer required field(s): "
-                                     + "; ".join(res.unresolved) + ". Fill them in the browser, then continue.")
-            await self.b.guard(page)
+                if await self.gate.wait(
+                        "Could not confidently answer required field(s): "
+                        + "; ".join(res.unresolved) + ". Fill them in the browser, then continue.",
+                ) == HumanGate.SKIP:
+                    return self._result(STATUS_SKIPPED, "Skipped by you at the review step",
+                                        answers, shot, url)
+            # The form is filled by now, so this is the right moment to deal with a CAPTCHA.
+            if await self.b.guard(page) == HumanGate.SKIP:
+                return self._result(STATUS_SKIPPED, "Skipped by you at the challenge", answers, shot, url)
             shot = await self.b.screenshot(page, f"review_{self.ats}_{job.job_id}")
             submit = await self.find_submit(scope, page)
             if submit is None:
@@ -591,7 +601,9 @@ class SinglePageApplier(BaseApplier):
                 await self.b.human_click(submit)
                 if await self.confirmed(page, timeout=15_000):
                     return self._result(STATUS_SUBMITTED, "Auto-submitted", answers, shot, url)
-                await self.b.guard(page)  # a CAPTCHA may appear only after Submit
+                if await self.b.guard(page) == HumanGate.SKIP:   # a CAPTCHA may follow Submit
+                    return self._result(STATUS_SKIPPED, "Skipped by you after submitting",
+                                        answers, shot, url)
                 if await self.confirmed(page, timeout=4000):
                     return self._result(STATUS_SUBMITTED, "Submitted after human solved challenge", answers, shot, url)
                 errs = await self.errors(scope)

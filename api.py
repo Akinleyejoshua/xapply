@@ -685,6 +685,18 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         g = app.state.gate
         return g.status() if g else {"paused": False, "reason": "", "paused_since": None}
 
+    @app.post("/admin/skip", dependencies=[Depends(auth)], tags=["control"])
+    def skip_job() -> dict[str, Any]:
+        """Abandon the posting the agent is paused on and move to the next one."""
+        g = app.state.gate
+        if not g:
+            raise HTTPException(409, "No run is attached to this API process")
+        if not g.paused:
+            return {"skipped": False, "detail": "Bot is not waiting for a human"}
+        g.skip()
+        note("human skipped this job")
+        return {"skipped": True}
+
     @app.post("/admin/continue", dependencies=[Depends(auth)], tags=["control"])
     def release_gate() -> dict[str, Any]:
         g = app.state.gate

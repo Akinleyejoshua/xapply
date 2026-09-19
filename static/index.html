@@ -936,8 +936,12 @@ async function poll(){
   const bar = $('gatebar');
   if(g.paused){
     bar.style.display = 'block';
-    bar.innerHTML = '<b>The bot is waiting for you.</b><br>' + esc(g.reason) +
-      '<br><button class="sm" style="margin-top:9px" onclick="release()">I have handled it, continue</button>';
+    bar.innerHTML = '<b>The agent is waiting for you.</b><br>' + esc(g.reason) +
+      '<div class="row" style="margin-top:11px">' +
+      '<button class="sm primary" onclick="release()">I have handled it, continue</button>' +
+      (g.allow_skip === false ? '' :
+        '<button class="sm danger ghost" onclick="skipJob()">Skip this job</button>') +
+      '</div>';
   } else bar.style.display = 'none';
 
   // Refresh when a scan finishes, even if it found nothing: an empty result still carries
@@ -950,6 +954,11 @@ async function poll(){
      st.auto_submit !== CONFIG.auto_submit) reloadConfig();
 }
 async function release(){ try { await call('/admin/continue', {method:'POST'}); } catch(e){ toast(e.message, true); } }
+/** For a challenge that will not clear: give up on this posting and move on. */
+async function skipJob(){
+  try { await call('/admin/skip', {method:'POST'}); toast('Skipping this job'); }
+  catch(e){ toast(e.message, true); }
+}
 
 /* ---------- dashboard ---------- */
 async function loadStats(){

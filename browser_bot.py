@@ -45,6 +45,26 @@ log = logging.getLogger(__name__)
 # Stealth + CAPTCHA heuristics
 # --------------------------------------------------------------------------
 
+#: Enough visible inputs to be worth filling. Used to decide whether a CAPTCHA on the
+#: page is an inline form widget (fill first) or a wall standing in front of content.
+FILLABLE_FORM_JS = r"""
+() => {
+  const sel = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=search]), textarea, select';
+  const visible = n => {
+    const st = getComputedStyle(n);
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    const r = n.getBoundingClientRect();
+    return r.width > 0 || r.height > 0 || n.type === 'file';
+  };
+  const nodes = [...document.querySelectorAll(sel)];
+  const shown = nodes.filter(visible);
+  const hasFile = nodes.some(n => (n.getAttribute('type') || '').toLowerCase() === 'file');
+  const hasPassword = shown.some(n => (n.getAttribute('type') || '').toLowerCase() === 'password');
+  if (hasPassword) return false;          // a sign-in page is a wall, not a form to fill
+  return hasFile || shown.length >= 4;
+}
+"""
+
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 if (!window.chrome) { window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} }; }
@@ -220,21 +240,34 @@ class HumanGate:
     a server blocked on `input()` never sees the button.
     """
 
+    CONTINUE = "continue"
+    SKIP = "skip"
+
     def __init__(self, mode: str = "terminal", marker_file: Optional[Path] = None):
         self.mode = mode
         self.marker_file = marker_file or Path("logs/CONTINUE")
+        self.skip_file = self.marker_file.with_name("SKIP")
         self._event = asyncio.Event()
+        self._outcome = self.CONTINUE
         self.paused = False
         self.reason = ""
+        self.allow_skip = True
         self.paused_since: Optional[float] = None
         self.history: list[dict[str, Any]] = []
 
     # ---- waiting ------------------------------------------------------
-    async def wait(self, reason: str) -> None:
+    async def wait(self, reason: str, allow_skip: bool = True) -> str:
+        """Block until a human continues or skips. Returns CONTINUE or SKIP.
+
+        Skipping matters when a challenge cannot be solved: a Cloudflare interstitial
+        that never clears would otherwise hold the whole run on one posting.
+        """
         self.paused, self.reason, self.paused_since = True, reason, time.time()
+        self.allow_skip = allow_skip
+        self._outcome = self.CONTINUE
         self.history.append({"reason": reason, "at": time.time()})
         self._event.clear()
-        self._print_banner(reason)
+        self._print_banner(reason, allow_skip)
         log.warning("Paused for human: %s", reason)
         waiters = [asyncio.create_task(self._event.wait(), name="gate-release"),
                    asyncio.create_task(self._wait_marker(), name="gate-marker")]
@@ -248,24 +281,34 @@ class HumanGate:
             await asyncio.gather(*pending, return_exceptions=True)
             released_by = next(iter(done)).get_name()
         finally:
+            outcome = self._outcome if allow_skip else self.CONTINUE
             self.paused, self.reason, self.paused_since = False, "", None
             self._event.clear()
             self.marker_file.unlink(missing_ok=True)
-        log.info("Human released the gate (%s)", released_by)
-        print("Continuing.\n", flush=True)
+            self.skip_file.unlink(missing_ok=True)
+        log.info("Human %s the job (%s)", "skipped" if outcome == self.SKIP else "released",
+                 released_by)
+        print("Skipping this job.\n" if outcome == self.SKIP else "Continuing.\n", flush=True)
+        return outcome
 
-    def _print_banner(self, reason: str) -> None:
+    def _print_banner(self, reason: str, allow_skip: bool = True) -> None:
         interactive = self._stdin_is_tty()
         how = []
         if interactive:
             how.append("press Enter here")
         how.append("click Continue in the dashboard")
         how.append(f"or create {self.marker_file}")
+        skip_line = ""
+        if allow_skip:
+            skip_line = ("  If the challenge will not clear, skip this job instead: "
+                         + ("type s then Enter, " if interactive else "")
+                         + "click Skip, or create " + str(self.skip_file) + "\n")
         print(
             "\n" + "=" * 78 + "\n"
             "  HUMAN INPUT NEEDED\n"
             f"  {reason}\n"
             f"  -> Handle it in the browser window, then {', '.join(how)}.\n"
+            + skip_line
             + "=" * 78 + "\a",
             flush=True,
         )
@@ -289,10 +332,13 @@ class HumanGate:
         future: asyncio.Future[None] = loop.create_future()
 
         def on_readable() -> None:
+            line = ""
             try:
-                sys.stdin.readline()
+                line = sys.stdin.readline()
             except Exception:
                 pass
+            if self.allow_skip and line.strip().lower() in ("s", "skip"):
+                self._outcome = self.SKIP
             if not future.done():
                 future.set_result(None)
 
@@ -315,6 +361,10 @@ class HumanGate:
 
     async def _wait_marker(self) -> None:
         while True:
+            if self.skip_file.exists():
+                self.skip_file.unlink(missing_ok=True)
+                self._outcome = self.SKIP
+                return
             if self.marker_file.exists():
                 self.marker_file.unlink(missing_ok=True)
                 return
@@ -322,12 +372,18 @@ class HumanGate:
 
     # ---- releasing ----------------------------------------------------
     def release(self) -> None:
-        """Called from the API thread/loop. Safe whether or not anything is waiting."""
+        """Continue with the current job. Safe whether or not anything is waiting."""
+        self._outcome = self.CONTINUE
+        self._event.set()
+
+    def skip(self) -> None:
+        """Abandon the current job and move to the next one."""
+        self._outcome = self.SKIP
         self._event.set()
 
     def status(self) -> dict[str, Any]:
         return {"paused": self.paused, "reason": self.reason, "paused_since": self.paused_since,
-                "waited": len(self.history)}
+                "allow_skip": self.allow_skip, "waited": len(self.history)}
 
 
 # --------------------------------------------------------------------------
@@ -437,10 +493,11 @@ class StealthBrowser:
         await self.sleep(0.4, 0.15)
 
     # ---- navigation + guards -------------------------------------------
-    async def goto(self, page: Page, url: str) -> None:
+    async def goto(self, page: Page, url: str) -> str:
+        """Navigate, then stop only for something that genuinely blocks the page."""
         await page.goto(url, wait_until="domcontentloaded")
         await self.sleep(1.6, 0.5)
-        await self.guard(page)
+        return await self.guard(page, blocking_only=True)
 
     async def detect_captcha(self, page: Page) -> Optional[str]:
         try:
@@ -480,15 +537,42 @@ class StealthBrowser:
             pass
         return None
 
-    async def guard(self, page: Page, max_rounds: int = 6) -> None:
-        """Pause for a human while a CAPTCHA / login wall is on screen."""
+    async def has_fillable_form(self, page: Page) -> bool:
+        """Whether the page is showing something worth filling in right now."""
+        try:
+            return bool(await page.evaluate(FILLABLE_FORM_JS))
+        except Exception:
+            return False
+
+    async def guard(self, page: Page, max_rounds: int = 6, blocking_only: bool = False) -> str:
+        """Pause for a human when something is genuinely in the way.
+
+        `blocking_only` is used while navigating. An application form very often carries
+        its own inline reCAPTCHA or Turnstile widget, and stopping for it on arrival
+        means the form is never filled: the person sees a CAPTCHA and a set of empty
+        boxes. So during navigation only a real wall counts, meaning a login page or a
+        challenge on a page with no form on it. The full check runs before submitting,
+        which is the only moment the CAPTCHA actually has to be solved.
+
+        Returns HumanGate.CONTINUE or HumanGate.SKIP.
+        """
         for _ in range(max_rounds):
-            reason = await self.detect_captcha(page) or await self.detect_login_wall(page)
+            wall = await self.detect_login_wall(page)
+            reason = wall
             if not reason:
-                return
-            await self.gate.wait(reason)
+                captcha = await self.detect_captcha(page)
+                if captcha and blocking_only and await self.has_fillable_form(page):
+                    log.info("%s, but a form is present: filling it first", captcha)
+                    return HumanGate.CONTINUE
+                reason = captcha
+            if not reason:
+                return HumanGate.CONTINUE
+            outcome = await self.gate.wait(reason)
+            if outcome == HumanGate.SKIP:
+                return HumanGate.SKIP
             await asyncio.sleep(1.5)
         log.warning("Guard gave up after %d rounds, continuing anyway", max_rounds)
+        return HumanGate.CONTINUE
 
     async def screenshot(self, page: Page, name: str) -> str:
         self.s.log_dir.mkdir(parents=True, exist_ok=True)
