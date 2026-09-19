@@ -146,19 +146,40 @@ Two backends. Switch at any time, in `.env`, in the UI, or per command.
 | Provider | Key | Notes |
 | --- | --- | --- |
 | `gemini` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Native structured outputs |
-| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Free to start, OpenAI-compatible, 80+ models |
+| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Free, OpenAI-compatible, 82 listed models |
+| `opencode` | [opencode.ai](https://opencode.ai) | One key reaches Claude, GPT, Gemini, DeepSeek, Qwen, Grok and more |
 
 ```bash
-# .env
+# .env, keys only
 LLM_PROVIDER=nvidia
 NVIDIA_API_KEY=nvapi-...
-NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
+OPENCODE_API_KEY=sk-...
 ```
+
+**OpenCode Zen** lists 74 models across every major vendor, but two things gate them:
+
+- Models whose id ends in `-free` answer **403: "OpenCode's free tier can only be used from
+  within OpenCode"**. That restriction is enforced on their side and no request header changes
+  it, so `mimo-v2.5-free` and the other free ids cannot be used from here.
+- Every other model answers **401: "No payment method"** until you add one to your workspace.
+
+Both are reported in those words rather than as a generic failure, so you know which one you are
+looking at. NVIDIA remains the free option.
 
 ```bash
 python main.py models --provider nvidia --search nemotron   # browse what is available
 python main.py run --provider nvidia --model openai/gpt-oss-20b
 ```
+
+**Custom request headers.** Under **Settings**, *Custom request headers* takes a JSON object sent
+with every LLM request, for a gateway that wants a `User-Agent`, a `Referer` or an app title:
+
+```json
+{"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0", "X-Title": "XApply"}
+```
+
+It can also be set as `LLM_EXTRA_HEADERS` in `.env`. Invalid JSON is refused rather than silently
+ignored.
 
 **Picking a model.** The provider and model controls sit on the **Dashboard**, next to the run
 buttons, and under **Settings**. The model field is a search box: type any part of a name to
@@ -616,7 +637,9 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A model you want is not in the list | Type its id anyway and press **Test this model**. The answer is definitive |
 | A run fails with a model error | Press **Find a model that works**, or run `python main.py models --verify` |
 | Every posting fails with a 404 | The model is listed but not deployed. Only nine of NVIDIA's 61 chat models answer |
-| The model changed by itself | Fixed: the picker now saves only a deliberate choice, never a half-typed filter |
+| The model changed by itself | Fixed: the picker saves only a deliberate choice, and the server refuses a model that cannot answer |
+| An OpenCode `-free` model gives 403 | Its free tier only works inside OpenCode's own client. Use a paid model, or NVIDIA |
+| An OpenCode model gives 401 | The workspace has no payment method |
 | A country returns nothing | Check the location strings with `python main.py discover`. Combining a country with remote-only is strict by design |
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
