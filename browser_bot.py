@@ -83,10 +83,24 @@ CAPTCHA_TEXT_RE = re.compile(
 )
 LOGIN_URL_HINTS = ("/login", "/checkpoint/", "/authwall", "/uas/login", "/signin", "/sign-in")
 
-PLACEHOLDER_OPTION_RE = re.compile(r"^(select|choose|please (select|choose)|-+|\s*)", re.I)
+PLACEHOLDER_OPTION_RE = re.compile(
+    r"^(please\s+)?(select|choose|pick)(\s+(an?|your|one|the))?(\s+(option|answer|value|item|choice))?$", re.I
+)
+PLACEHOLDER_LITERALS = {"", "-", "--", "---", "n/a", "na", "none", "null", "\u2014", "\u2013"}
 AGREE_RE = re.compile(r"(agree|consent|acknowledge|certify|confirm|accept|i have read|authorize)", re.I)
 FOLLOW_RE = re.compile(r"follow", re.I)
 NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
+RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*(\d+(?:\.\d+)?)")
+AT_LEAST_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*\+|(?:more than|over|at least|above|greater than|\u2265|>=?)\s*(\d+(?:\.\d+)?)", re.I
+)
+AT_MOST_RE = re.compile(r"(?:less than|under|below|fewer than|at most|up to|\u2264|<=?)\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def is_placeholder_option(option: str) -> bool:
+    """True for 'Select an option', '---', 'N/A' style entries that are not real answers."""
+    o = (option or "").strip().strip(".:\u2026 ").lower()
+    return o in PLACEHOLDER_LITERALS or bool(PLACEHOLDER_OPTION_RE.fullmatch(o))
 
 
 def extract_number(text: str) -> Optional[float]:
@@ -103,34 +117,68 @@ def format_number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:g}"
 
 
+def _numeric_option_match(n: float, options: list[str]) -> Optional[str]:
+    """Map a number onto options that may be ranges ('3-5 years', '10+', 'under 2')."""
+    scored: list[tuple[str, float]] = []
+    for o in options:
+        r = RANGE_RE.search(o)
+        if r:
+            lo, hi = float(r.group(1)), float(r.group(2))
+            if lo <= n <= hi:
+                return o
+            scored.append((o, min(abs(n - lo), abs(n - hi))))
+            continue
+        at_least = AT_LEAST_RE.search(o)
+        if at_least:
+            bound = float(at_least.group(1) or at_least.group(2))
+            if n >= bound:
+                return o
+            scored.append((o, bound - n))
+            continue
+        at_most = AT_MOST_RE.search(o)
+        if at_most:
+            bound = float(at_most.group(1))
+            if n < bound:
+                return o
+            scored.append((o, n - bound))
+            continue
+        v = extract_number(o)
+        if v is not None:
+            scored.append((o, abs(v - n)))
+    return min(scored, key=lambda t: t[1])[0] if scored else None
+
+
 def choose_option(answer: str, options: list[str]) -> Optional[str]:
     """Map a free-form answer onto one of the concrete options of a select/radio."""
-    opts = [o for o in options if o and not PLACEHOLDER_OPTION_RE.fullmatch(o.strip())]
-    opts = [o for o in opts if not PLACEHOLDER_OPTION_RE.match(o.strip()) or len(o.strip()) > 20]
+    opts = [o for o in options if o and not is_placeholder_option(o)]
     if not opts or not answer:
         return None
     a = answer.strip().lower()
-    for o in opts:
+
+    for o in opts:  # exact match
         if o.strip().lower() == a:
             return o
-    yes_no = None
-    if re.match(r"^(yes|y|true|i am|i do)\b", a):
+
+    yes_no = None  # yes/no questions
+    if re.match(r"^(yes|y|true|i am|i do|i have|i will)\b", a):
         yes_no = "yes"
-    elif re.match(r"^(no|n|false|i am not|i do not|i don't)\b", a):
+    elif re.match(r"^(no|n|false|i am not|i do not|i don'?t|i have not|i haven'?t)\b", a):
         yes_no = "no"
     if yes_no:
         for o in opts:
             if o.strip().lower().startswith(yes_no):
                 return o
-    n = extract_number(answer)
-    if n is not None:
-        numbered = [(o, extract_number(o)) for o in opts]
-        numbered = [(o, v) for o, v in numbered if v is not None]
-        if numbered and not any(re.search(r"[a-z]", o.lower().replace("years", "").replace("year", "")) for o, _ in numbered):
-            return min(numbered, key=lambda t: abs(t[1] - n))[0]
+
+    n = extract_number(answer)  # numeric answers against numeric / range options
+    if n is not None and any(extract_number(o) is not None for o in opts):
+        match = _numeric_option_match(n, opts)
+        if match:
+            return match
+
     contains = [o for o in opts if a in o.lower() or o.lower() in a]
     if contains:
         return min(contains, key=lambda o: abs(len(o) - len(a)))
+
     m = difflib.get_close_matches(answer, opts, n=1, cutoff=0.5)
     return m[0] if m else None
 

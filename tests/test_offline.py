@@ -20,6 +20,7 @@ from browser_bot import (  # noqa: E402
     choose_option,
     extract_number,
     format_number,
+    is_placeholder_option,
 )
 from config import Settings  # noqa: E402
 from database import STATUS_PENDING, STATUS_SKIPPED, STATUS_SUBMITTED, Database  # noqa: E402
@@ -96,15 +97,35 @@ def test_job_id_is_stable_and_unique() -> None:
 @pytest.mark.parametrize("answer,options,expected", [
     ("Yes", ["Select an option", "Yes", "No"], "Yes"),
     ("no", ["Yes", "No"], "No"),
-    ("6", ["0-2 years", "3-5 years", "5-10 years"], None),          # ranges are ambiguous -> AI decides
+    ("I do not wish to answer", ["Yes", "No", "I do not wish to answer"], "I do not wish to answer"),
     ("6", ["1", "2", "5", "6", "7"], "6"),
-    ("7", ["1", "2", "5", "10"], "5"),                               # nearest numeric
+    ("7", ["1", "2", "5", "10"], "5"),                                   # nearest single number
     ("Bachelor's Degree", ["High School", "Bachelor's Degree", "Master's Degree"], "Bachelor's Degree"),
     ("Remote", ["On-site", "Hybrid", "Remote"], "Remote"),
     ("something unrelated zzz", ["Yes", "No"], None),
 ])
 def test_choose_option(answer, options, expected) -> None:
     assert choose_option(answer, options) == expected
+
+
+@pytest.mark.parametrize("answer,options,expected", [
+    ("6", ["0-2 years", "3-5 years", "5-10 years"], "5-10 years"),       # falls inside the range
+    ("2", ["0-2 years", "3-5 years", "5-10 years"], "0-2 years"),        # boundary belongs to the lower band
+    ("4", ["0-2 years", "3-5 years", "5-10 years"], "3-5 years"),
+    ("12", ["0-2 years", "3-5 years", "10+ years"], "10+ years"),        # open-ended upper band
+    ("1", ["Less than 2 years", "2-5 years", "5+ years"], "Less than 2 years"),
+    ("20", ["0-2 years", "3-5 years"], "3-5 years"),                     # out of range -> nearest band
+])
+def test_choose_option_numeric_ranges(answer, options, expected) -> None:
+    assert choose_option(answer, options) == expected
+
+
+@pytest.mark.parametrize("option,is_ph", [
+    ("Select an option", True), ("Please choose one", True), ("---", True), ("N/A", True),
+    ("", True), ("Select...", True), ("Yes", False), ("No", False), ("Bachelor's Degree", False),
+])
+def test_placeholder_detection(option, is_ph) -> None:
+    assert is_placeholder_option(option) is is_ph
 
 
 def test_choose_option_ignores_placeholder() -> None:
