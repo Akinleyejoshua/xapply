@@ -324,16 +324,26 @@ async def test_revealing_is_a_no_op_when_a_window_is_already_up() -> None:
 
 @pytest.mark.asyncio
 async def test_a_hidden_browser_stays_hidden() -> None:
-    """Hiding the browser means you do not want to see it. Nothing opens one behind
-    your back, and a pause that needs a window becomes a skip instead of a hang."""
+    """Hiding it means you do not want to see it. Nothing opens one behind your back."""
     hidden = _browser(hide_browser=True)
-    hidden.gate.skip = lambda: setattr(hidden.gate, "_skipped", True)
 
     await hidden.attention("Submit it yourself")
 
     assert hidden.hidden is True
-    assert getattr(hidden.gate, "_skipped", False) is True
-    assert hidden.auto_skipped == "Submit it yourself"
+
+
+@pytest.mark.asyncio
+async def test_a_pause_with_no_window_still_waits_for_you() -> None:
+    """The dashboard's Continue and Skip work whether or not a window exists, so a
+    hidden browser is not a reason to give up on a posting. Only a CAPTCHA is, because
+    that genuinely cannot be solved without one."""
+    hidden = _browser(hide_browser=True)
+    skipped = []
+    hidden.gate.skip = lambda: skipped.append(True)
+
+    await hidden.attention("Documents attached, submit it yourself")
+
+    assert skipped == []
 
 
 @pytest.mark.asyncio

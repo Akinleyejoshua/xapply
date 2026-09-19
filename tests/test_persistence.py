@@ -158,9 +158,17 @@ def test_run_status_reports_the_saved_model(settings: Settings) -> None:
 
 
 def test_persisted_keys_hold_no_secrets_or_paths() -> None:
-    forbidden = ("key", "token", "password", "secret", "path", "dir", "host", "port", "url")
-    leaky = [k for k in PERSISTED_KEYS if any(word in k for word in forbidden)]
+    # Whole words, not substrings. These names are snake_case, and a substring rule
+    # calls "email_transport" a leak because "transport" contains "port".
+    forbidden = {"key", "token", "password", "secret", "path", "dir", "host", "port",
+                 "url", "user", "credentials"}
+    leaky = [k for k in PERSISTED_KEYS if forbidden & set(k.split("_"))]
     assert leaky == [], f"these would be written to settings.local.json: {leaky}"
+
+    # The rule has to still catch the things it exists for.
+    for secret in ("gemini_api_key", "admin_token", "smtp_password", "smtp_host",
+                   "db_path", "api_port", "start_url", "smtp_user"):
+        assert forbidden & set(secret.split("_")), secret
 
 
 def test_dashboard_renders_from_one_store() -> None:

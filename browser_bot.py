@@ -510,25 +510,24 @@ class StealthBrowser:
         return self
 
     async def attention(self, reason: str = "") -> None:
-        """Deal with a pause according to whether there is a window to deal with it in.
+        """Put the window in front of you, because something needs doing in it.
 
-        With a window, it comes to the front so the thing that needs doing is on screen.
-        With none, nothing is opened: hiding the browser means you do not want to see
-        it, and opening one anyway would also restart the browser and discard every
-        answer already entered. Instead the pause is released as a skip, because waiting
-        for someone to act on a window that does not exist is a hang.
+        Never opens one. Hiding the browser means you do not want to see it, and opening
+        one means restarting the browser, which by this point would discard a form full
+        of answers.
         """
-        if not self.hidden:
-            try:
-                if self.page:
-                    await self.page.bring_to_front()
-            except Exception as exc:
-                log.debug("could not bring the window forward: %s", exc)
+        if self.hidden:
+            # Nothing to bring forward, and nothing is opened: hiding the browser means
+            # you do not want to see it. The pause still stands, because the dashboard's
+            # Continue and Skip buttons work whether or not a window exists. Only a
+            # CAPTCHA genuinely needs a browser, and that is handled by `on_challenge`.
+            log.debug("Paused with the browser hidden; use the dashboard to continue")
             return
-        log.warning("This needs a person and the browser is hidden, so the posting is "
-                    "being skipped: %s", reason)
-        self.auto_skipped = reason
-        self.gate.skip()
+        try:
+            if self.page:
+                await self.page.bring_to_front()
+        except Exception as exc:
+            log.debug("could not bring the window forward: %s", exc)
 
     async def reveal(self, reason: str = "") -> bool:
         """Open a window, for a page that needs a person rather than a bot.
