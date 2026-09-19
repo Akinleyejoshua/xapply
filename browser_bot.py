@@ -324,6 +324,12 @@ class StealthBrowser:
         self.context.set_default_timeout(self.s.action_timeout_ms)
         self.context.set_default_navigation_timeout(self.s.navigation_timeout_ms)
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+        if self.s.start_url:
+            # A bare about:blank window looks like the bot has hung; show something instead.
+            try:
+                await self.page.goto(self.s.start_url, wait_until="domcontentloaded", timeout=15_000)
+            except Exception as exc:
+                log.debug("start page %s did not load: %s", self.s.start_url, exc)
         log.info("Browser started (profile: %s)", self.s.user_data_dir)
         return self
 

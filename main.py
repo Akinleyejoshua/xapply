@@ -140,8 +140,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def cmd_discover(args: argparse.Namespace) -> int:
     """Preview what the configured sources would find. Applies to nothing."""
     import reports
-    from browser_bot import HumanGate, StealthBrowser
-    from job_search import build_sources
+    from browser_bot import HumanGate
+    from job_search import LazyBrowser, build_sources
 
     if args.sources:
         settings.sources = [s.strip() for s in args.sources.split(",") if s.strip()]
@@ -153,16 +153,12 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
     async def go() -> list:
         gate = HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
-        needs_browser = any(s in ("linkedin", "urls", "google", "remoteok", "himalayas")
-                            for s in settings.sources)
         found = []
-        if needs_browser:
-            async with StealthBrowser(settings, gate) as browser:
-                for src in build_sources(settings, browser, db):
-                    found.extend(await src.discover(browser.page))
-        else:
-            for src in build_sources(settings, None, db):
-                found.extend(await src.discover(None))
+        # LazyBrowser opens a window only if a source actually needs a rendered page.
+        async with LazyBrowser(settings, gate) as lazy:
+            for src in build_sources(settings, lazy, db):
+                page = await lazy.page_for(src.name)
+                found.extend(await src.discover(page))
         return found
 
     jobs = asyncio.run(go())

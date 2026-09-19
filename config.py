@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     timezone_id: str = "America/Los_Angeles"
     delay_mean_s: float = 1.4
     delay_std_s: float = 0.5
+    start_url: str = "https://www.google.com/robots.txt"  # avoids a blank window on launch
     action_timeout_ms: int = 12_000
     navigation_timeout_ms: int = 45_000
     max_form_steps: int = 15

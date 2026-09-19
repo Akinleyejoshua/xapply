@@ -398,24 +398,19 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             settings.search_location = body.location
 
         async def _go() -> None:
-            from browser_bot import HumanGate, StealthBrowser
-            from job_search import build_sources
+            from browser_bot import HumanGate
+            from job_search import LazyBrowser, build_sources
 
             note(f"scanning {', '.join(settings.sources)} for {', '.join(settings.search_queries)}")
             gate = app.state.gate or HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
             app.state.gate = gate
-            needs_browser = any(s in ("linkedin", "urls", "google", "remoteok", "himalayas")
-                                for s in settings.sources)
+            # LazyBrowser only opens a real window if a source actually asks for a page,
+            # so a pure board-API scan never pops a blank browser.
             found: list[Any] = []
-            if needs_browser:
-                async with StealthBrowser(settings, gate) as browser:
-                    for src in build_sources(settings, browser, database):
-                        got = await src.discover(browser.page)
-                        note(f"{src.name}: {len(got)} posting(s)")
-                        found.extend(got)
-            else:
-                for src in build_sources(settings, None, database):
-                    got = await src.discover(None)
+            async with LazyBrowser(settings, gate) as lazy:
+                for src in build_sources(settings, lazy, database):
+                    page = await lazy.page_for(src.name)
+                    got = await src.discover(page)
                     note(f"{src.name}: {len(got)} posting(s)")
                     found.extend(got)
             app.state.discovered = [j.to_dict() for j in found]

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode, urlparse
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
@@ -313,3 +313,73 @@ def build_sources(settings: Settings, browser: StealthBrowser, db: Database, url
             log.warning("Unknown source %r ignored (known: linkedin, urls, %s)",
                         name, ", ".join(sorted(SOURCE_REGISTRY)))
     return sources
+
+
+# --------------------------------------------------------------------------
+# Lazy browser
+# --------------------------------------------------------------------------
+
+#: Sources that need a rendered page. Everything else is plain HTTP, so opening a
+#: browser for them just leaves a blank window on screen while nothing happens.
+BROWSER_SOURCES = {LINKEDIN, "urls", "google"}
+#: These prefer HTTP but fall back to a page when a feed is behind Cloudflare.
+BROWSER_FALLBACK_SOURCES = {"remoteok", "himalayas"}
+
+
+class LazyBrowser:
+    """Opens a real browser on first use and not before.
+
+    It stands in for `StealthBrowser` and forwards every attribute, so sources and
+    appliers cannot tell the difference. A scan that only touches the Greenhouse,
+    Lever and Ashby APIs therefore never launches a window.
+    """
+
+    def __init__(self, settings: Settings, gate):
+        self.s = settings
+        self.gate = gate
+        self._browser: Optional[StealthBrowser] = None
+
+    async def __aenter__(self) -> "LazyBrowser":
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.close()
+
+    async def ensure(self) -> StealthBrowser:
+        if self._browser is None:
+            log.info("Launching browser (a source asked for a page)")
+            self._browser = await StealthBrowser(self.s, self.gate).start()
+        return self._browser
+
+    async def page_for(self, source_name: str):
+        """The page a source should use, or None when it does not need one."""
+        if source_name in BROWSER_SOURCES:
+            return (await self.ensure()).page
+        if source_name in BROWSER_FALLBACK_SOURCES:
+            return (await self.ensure()).page
+        return None
+
+    @property
+    def started(self) -> bool:
+        return self._browser is not None
+
+    @property
+    def page(self):
+        if self._browser is None:
+            raise RuntimeError("Browser has not been started; call ensure() or page_for() first")
+        return self._browser.page
+
+    async def close(self) -> None:
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+
+    def __getattr__(self, item):
+        """Forward sleep/goto/guard/human_click/... to the real browser once it exists."""
+        browser = self.__dict__.get("_browser")
+        if browser is None:
+            raise AttributeError(
+                f"LazyBrowser has no {item!r} yet: the browser has not been started. "
+                "Call page_for()/ensure() first."
+            )
+        return getattr(browser, item)
