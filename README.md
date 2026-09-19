@@ -492,7 +492,37 @@ no application link behind the listing.
 ## Deleting applications
 
 Deleting a row removes the dedupe record too, so the posting becomes eligible for discovery again.
-That is how you retry something that failed.
+### Trying an application again
+
+Failed attempts and ones still waiting on you can be run again from the start. The old record is
+replaced by the new attempt, because discovery skips anything already in the database, so leaving
+it would mean the retry quietly did nothing. The audit file in `logs/applications/` keeps what
+happened the first time.
+
+In the **Applications** tab: the circular arrow on any failed or awaiting row, **Retry selected**,
+or filter by Failed or Awaiting you and press **Retry all shown**.
+
+```bash
+python main.py retry 42                       # one application
+python main.py retry --status failed --yes    # every failed attempt
+python main.py retry --status pending_human_review
+```
+
+### Scan results
+
+What a scan finds is kept in the database, not in the browser, so a ten-minute scan survives a
+restart and the terminal and the dashboard always show the same list. Removing a posting from
+this list does not touch your applications.
+
+```bash
+python main.py saved                          # everything scans have found
+python main.py saved --search stripe          # filter by company, role or link
+python main.py saved --delete gh-4109216      # remove one
+python main.py saved --clear                  # remove all of them
+```
+
+In the **Scan** tab: tick rows and press **Delete selected**, or **Clear results**.
+
 
 In the **Applications** tab: the × on any row, the checkboxes plus **Delete selected**, or
 **Delete all shown**, which respects the current status filter. Tick **Also delete the generated
@@ -553,6 +583,7 @@ python main.py export --out apps.csv
 | | `countries-list` | The 53 country names the location filter accepts |
 | `make login` | `login` | Sign in once, LinkedIn only |
 | `make test` | | Offline test suite: no network, no browser, no LLM calls |
+| `make dev` | | Dashboard with autoreload, for editing the code or the UI while it runs |
 | `make check` | | Byte-compile and import every module |
 | `make clean` / `make reset` | | Remove caches / remove everything including the database |
 
