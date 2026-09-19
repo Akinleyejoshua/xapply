@@ -6,6 +6,7 @@ smaller scale until it fits (max 5 attempts).
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 from pathlib import Path
@@ -33,6 +34,31 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+def _match_entry(name: str, candidates: list[str]) -> Optional[str]:
+    """Find the profile entry a tailored bullet group refers to.
+
+    The model is asked to copy the company name verbatim and usually does, but it
+    shortens "BLNR (Open Source)" to "BLNR" often enough to matter. An exact lookup
+    silently dropped those bullets, so the resume quietly lost a whole role's tailoring.
+    Matching is therefore exact first, then containment, then close similarity.
+    """
+    target = _norm(name)
+    if not target:
+        return None
+    flat = {c: _norm(c) for c in candidates if c}
+    for candidate, value in flat.items():
+        if value == target:
+            return candidate
+    contained = [c for c, value in flat.items()
+                 if value and (value.startswith(target) or target.startswith(value))]
+    if len(contained) == 1:
+        return contained[0]
+    close = difflib.get_close_matches(target, list(flat.values()), n=1, cutoff=0.8)
+    if close:
+        return next(c for c, value in flat.items() if value == close[0])
+    return None
+
+
 def _count_pages(path: Path) -> Optional[int]:
     try:
         from pypdf import PdfReader
@@ -58,35 +84,48 @@ class ResumeBuilder:
     # ---- view model -----------------------------------------------------
     def build_context(self, profile: dict, analysis: JobAnalysis) -> dict[str, Any]:
         """Merge the tailored content back into the profile with code-level guardrails."""
-        groups = {(g.kind, _norm(g.name)): g for g in analysis.tailored_bullets}
-
-        # The AI orders tailored_bullets most-relevant-first. Preserve that rank so that,
-        # if the page overflows, the entries dropped are the ones it judged least relevant.
-        rank = {(g.kind, _norm(g.name)): i for i, g in enumerate(analysis.tailored_bullets)}
+        # Attach each tailored group to the profile entry it names, tolerating a shortened
+        # or lengthened name. The AI orders groups most-relevant-first, and that rank is
+        # kept so an overflowing page drops what it judged least relevant.
+        exp_names = [e.get("company", "") for e in profile.get("experience", [])]
+        proj_names = [p.get("name", "") for p in profile.get("projects", [])]
+        by_entry: dict[tuple[str, str], Any] = {}
+        rank: dict[tuple[str, str], int] = {}
+        unmatched: list[str] = []
+        for i, g in enumerate(analysis.tailored_bullets):
+            kind = g.kind
+            hit = _match_entry(g.name, exp_names if kind == "experience" else proj_names)
+            if hit is None:
+                # The model sometimes files a project under experience, or the reverse.
+                kind = "project" if kind == "experience" else "experience"
+                hit = _match_entry(g.name, proj_names if kind == "project" else exp_names)
+            if hit is None:
+                unmatched.append(g.name)
+                continue
+            key = (kind, hit)
+            by_entry.setdefault(key, g)
+            rank.setdefault(key, i)
 
         experience = []
         for pos, exp in enumerate(profile.get("experience", [])):
-            key = ("experience", _norm(exp.get("company", "")))
-            g = groups.get(key)
+            key = ("experience", exp.get("company", ""))
+            g = by_entry.get(key)
             bullets = [b.strip() for b in (g.bullets if g else exp.get("bullets", [])) if b.strip()]
             experience.append({**exp, "bullets": bullets or exp.get("bullets", []),
                                "_pos": pos, "_rank": rank.get(key, 999)})
 
         projects = []
         for pos, proj in enumerate(profile.get("projects", [])):
-            key = ("project", _norm(proj.get("name", "")))
-            g = groups.get(key)
+            key = ("project", proj.get("name", ""))
+            g = by_entry.get(key)
             bullets = [b.strip() for b in (g.bullets if g else proj.get("bullets", [])) if b.strip()]
             projects.append({**proj, "bullets": bullets or proj.get("bullets", []),
                              "_pos": pos, "_rank": rank.get(key, 999)})
-        # Experience stays in reverse-chronological order (profile order); projects follow AI relevance.
+        # Experience stays in reverse-chronological order; projects follow AI relevance.
         projects.sort(key=lambda p: (p["_rank"], p["_pos"]))
 
-        unmatched = [g.name for (kind, _), g in groups.items()
-                     if not any(_norm(g.name) == _norm(e.get("company", "")) for e in profile.get("experience", []))
-                     and not any(_norm(g.name) == _norm(p.get("name", "")) for p in profile.get("projects", []))]
         if unmatched:
-            log.warning("Dropping tailored bullet groups that match no profile entry: %s", unmatched)
+            log.warning("Dropping tailored bullet groups that name no profile entry: %s", unmatched)
 
         # Skills: only keep highlighted skills that exist in the profile (hallucination guard).
         skill_groups_raw: dict[str, list[str]] = profile.get("skills", {}) or {}
