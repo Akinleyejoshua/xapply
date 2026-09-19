@@ -692,7 +692,7 @@ def test_the_compose_window_must_really_be_open_before_anything_is_claimed() -> 
 
     source = inspect.getsource(GmailTransport.send)
     assert "_present(page, self.BODY)" in source
-    assert source.index("_present(page, self.BODY)") < source.index("self.SEND")
+    assert source.index("_present(page, self.BODY)") < source.index("_dispatch")
 
 
 def test_gmail_is_asked_what_it_actually_sent() -> None:
@@ -701,7 +701,7 @@ def test_gmail_is_asked_what_it_actually_sent() -> None:
 
     from email_apply import GmailTransport
 
-    assert "verify_in_sent" in inspect.getsource(GmailTransport.send)
+    assert "verify_in_sent" in inspect.getsource(GmailTransport._dispatch)
     assert "in%3Asent" in GmailTransport.SENT_SEARCH
 
 
@@ -768,3 +768,68 @@ def test_wrapping_and_ellipses_do_not_break_the_match() -> None:
            "Plus… , has attachment")
 
     assert _comparable(subject)[:50] in _comparable(row)
+
+
+@pytest.mark.asyncio
+async def test_the_keyboard_shortcut_is_tried_when_the_button_does_not_send(settings) -> None:
+    """Seen live: clicking Send closed the compose window and left the message in
+    Drafts, which looks exactly like success from the window and is not."""
+    from email_apply import GmailTransport, SendRefused
+
+    tried: list[str] = []
+
+    class Transport(GmailTransport):
+        async def _click_send(self, page):
+            tried.append("button")
+
+        async def _press_send(self, page):
+            tried.append("shortcut")
+
+        async def confirm_sent(self, page, draft):
+            return None
+
+        async def verify_in_sent(self, page, draft):
+            if tried == ["shortcut"]:
+                raise SendRefused("nothing in Sent")   # the first way did not send it
+
+        async def _reopen_draft(self, page):
+            return None
+
+    draft = EmailApplier(settings).compose(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        "careers@example.com", PROFILE, "Hello.", [])
+
+    await Transport(settings, GmailBrowser(GmailPage("sent")))._dispatch(None, draft)
+
+    assert tried == ["shortcut", "button"], "both ways must be tried"
+
+
+@pytest.mark.asyncio
+async def test_when_neither_way_works_the_draft_is_left_for_you(settings) -> None:
+    from email_apply import GmailTransport, SendRefused
+
+    class Transport(GmailTransport):
+        async def _click_send(self, page):
+            return None
+
+        async def _press_send(self, page):
+            return None
+
+        async def confirm_sent(self, page, draft):
+            return None
+
+        async def verify_in_sent(self, page, draft):
+            raise SendRefused("nothing in Sent")
+
+        async def _reopen_draft(self, page):
+            return None
+
+    draft = EmailApplier(settings).compose(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        "careers@example.com", PROFILE, "Hello.", [])
+
+    with pytest.raises(SendRefused) as caught:
+        await Transport(settings, GmailBrowser(GmailPage("stuck")))._dispatch(None, draft)
+
+    assert "in your Drafts" in str(caught.value)
+    assert "Nothing was recorded as sent" in str(caught.value)

@@ -434,9 +434,69 @@ class GmailTransport:
         if not await self._present(page, self.BODY):
             raise SendRefused("The Gmail compose window did not open, so nothing was written.")
 
+        await self._dispatch(page, draft)
+
+    async def _dispatch(self, page: Any, draft: Draft) -> None:
+        """Send it, and keep trying the other way until Gmail's Sent folder agrees.
+
+        Clicking Send is not reliable. A click has been seen to close the compose window
+        while leaving the message in Drafts, which looks exactly like success from the
+        window and is not. The keyboard shortcut goes through Gmail's own handler rather
+        than a button this code had to find, so it is tried as well, and neither is
+        believed until Sent says so.
+        """
+        # The shortcut first. Clicking the button has been seen to close the compose
+        # window while leaving the message in Drafts, on the same account and the same
+        # day the shortcut worked, so the button is the fallback rather than the default.
+        ways = (("the keyboard shortcut", self._press_send), ("the Send button", self._click_send))
+        last: Optional[Exception] = None
+        for name, attempt in ways:
+            try:
+                await attempt(page)
+            except Exception as exc:
+                log.info("Could not send with %s: %s", name, exc)
+                last = exc
+                continue
+            await self.confirm_sent(page, draft)
+            try:
+                await self.verify_in_sent(page, draft)
+                return
+            except SendRefused as exc:
+                last = exc
+                log.warning("%s did not send it; trying another way", name.capitalize())
+                await self._reopen_draft(page)
+        raise SendRefused(
+            f"Gmail would not send to {draft.to}. The message is in your Drafts with its "
+            f"attachments, so you can send it by hand. Nothing was recorded as sent."
+            + (f" Last problem: {last}" if last else ""))
+
+    async def _click_send(self, page: Any) -> None:
         await (await self._first(page, self.SEND, "Send button")).click()
-        await self.confirm_sent(page, draft)
-        await self.verify_in_sent(page, draft)
+
+    async def _press_send(self, page: Any) -> None:
+        """Gmail's own shortcut, which does not depend on finding the right button."""
+        body = await self._first(page, self.BODY, "message body")
+        await body.click()
+        await page.keyboard.press("Meta+Enter")
+        await asyncio.sleep(0.6)
+        await page.keyboard.press("Control+Enter")
+
+    #: Where an unsent message ends up, so a second attempt has something to open.
+    DRAFT_ROW = 'tr.zA'
+    DRAFTS_URL = "https://mail.google.com/mail/u/0/#drafts"
+
+    async def _reopen_draft(self, page: Any) -> None:
+        """Open the draft Gmail kept, so the next attempt acts on the same message."""
+        try:
+            await page.goto(self.DRAFTS_URL, wait_until="domcontentloaded")
+            await asyncio.sleep(3.0)
+            rows = page.locator(self.DRAFT_ROW)
+            if not await rows.count():
+                return
+            await rows.first.click()
+            await asyncio.sleep(2.5)
+        except Exception as exc:
+            log.debug("could not reopen the draft: %s", exc)
 
     #: Gmail says so in a small bar at the bottom. Wording varies by language, so the
     #: compose window closing is the signal that matters most.
