@@ -8,6 +8,7 @@ search that found nothing.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,10 @@ class FakePage:
         self.body = body
         self.url = url
         self.context = FakeContext(landings or [])
+        self.visited: list[str] = []
+
+    async def goto(self, url: str, **_: Any) -> None:
+        self.visited.append(url)
 
     async def evaluate(self, script: str, *_: Any) -> Any:
         if "document.body ?" in script:
@@ -110,6 +115,14 @@ class FakeGate:
     async def wait(self, reason: str, allow_skip: bool = True) -> str:
         self.reasons.append(reason)
         return self.outcome
+
+
+class SilentGate:
+    """Nobody is watching the dashboard, so the wait never ends on its own."""
+
+    async def wait(self, reason: str, allow_skip: bool = True) -> str:
+        await asyncio.sleep(3600)
+        return "continue"
 
 
 class FakeBrowser:
@@ -327,3 +340,33 @@ async def test_only_boards_that_answered_are_written_down(settings: Settings, db
     assert src.found_boards == {GREENHOUSE: {"nift"}}
     stored = json.loads(settings.company_file.read_text(encoding="utf-8"))
     assert stored[GREENHOUSE] == ["nift"]
+
+
+@pytest.mark.asyncio
+async def test_a_bot_check_nobody_clears_does_not_hang_the_whole_scan(
+        settings: Settings, db: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scan used to stop dead here, waiting for a person who was not watching."""
+    src = GoogleSearchSource(settings, db, None)
+    src.b = FakeBrowser(SilentGate())            # type: ignore[arg-type]
+    monkeypatch.setattr(GoogleSearchSource, "HELP_TIMEOUT_S", 0.05)
+    page = FakePage({"direct": [], "wrapped": [], "cites": []}, body=BLOCK_PAGE)
+
+    urls, boards = await asyncio.wait_for(src.search(page, "site:x"), timeout=5)
+
+    assert (urls, boards) == (set(), {})
+    assert src.blocked_searches == 1
+
+
+@pytest.mark.asyncio
+async def test_a_search_page_is_not_stopped_for_by_the_browser_guard(
+        settings: Settings, db: Database) -> None:
+    """Going through the guard stopped twice for one problem: the reCAPTCHA widget on
+    Google's block page, and then the block itself."""
+    src = source(settings, db)
+    page = FakePage({"direct": [], "wrapped": [],
+                     "cites": ["https://job-boards.greenhouse.io \u203a nift \u203a jobs"]})
+
+    await src.search(page, 'site:job-boards.greenhouse.io "Data Analyst"')
+
+    assert page.visited and "udm=14" in page.visited[0]
+    assert src.b.visited == [], "the guarded navigation path must not be used here"

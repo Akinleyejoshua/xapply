@@ -586,3 +586,86 @@ def test_application_form_shape_rules() -> None:
     assert 'counts.get("password")' in shape       # sign-in forms rejected
     assert 'counts.get("search")' in shape         # site search rejected
     assert "total >= 6" in shape                   # a lone email box is not an application
+
+
+class _StubAI:
+    """An AI that writes a good answer but is modest about it."""
+
+    def __init__(self, answer: str, confidence: float) -> None:
+        self.answer, self.confidence = answer, confidence
+
+    async def answer_form_question(self, *_a, **_k):
+        from ai_agent import FieldAnswer
+
+        return FieldAnswer(answer=self.answer, confidence=self.confidence,
+                           needs_human=False, reasoning="")
+
+
+ESSAY = ("Tell us about a metric you defined that helped your business make better "
+         "decisions. What was it? What changed as a result?")
+DRAFT = ("I defined a data-quality score on the reporting platform I built, combining "
+         "completeness and timeliness so the team could see which sources to trust.")
+
+
+@pytest.mark.asyncio
+async def test_a_modest_essay_draft_is_still_entered_for_you_to_edit(
+        profile, analysis, settings) -> None:
+    """An empty box helps nobody. The model doubting its own prose is not evidence
+    that the prose is wrong, and in assisted mode you read it before it is sent."""
+    settings.fill_mode = "assisted"
+    r = AnswerResolver(_StubAI(DRAFT, 0.40), settings)
+    ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), analysis)
+
+    answer = await r.resolve(_field(ESSAY, kind="textarea"), ctx)
+
+    assert answer.value == DRAFT
+    assert answer.needs_human is False
+
+
+@pytest.mark.asyncio
+async def test_a_modest_answer_in_a_one_line_box_is_left_blank(
+        profile, analysis, settings) -> None:
+    """A single-line box holds a fact, and a wrong fact is worse than an empty box."""
+    settings.fill_mode = "assisted"
+    r = AnswerResolver(_StubAI("120000", 0.40), settings)
+    ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), analysis)
+
+    answer = await r.resolve(_field(ESSAY, kind="text"), ctx)
+
+    assert answer.needs_human is True
+
+
+@pytest.mark.asyncio
+async def test_a_modest_one_line_shrug_is_not_treated_as_a_draft(
+        profile, analysis, settings) -> None:
+    """Keeping a draft is worth it because there is something to edit. "I have not" is not."""
+    settings.fill_mode = "assisted"
+    r = AnswerResolver(_StubAI("Not really.", 0.40), settings)
+    ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), analysis)
+
+    answer = await r.resolve(_field(ESSAY, kind="textarea"), ctx)
+
+    assert answer.needs_human is True
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_keeps_the_stricter_bar_on_essays(profile, analysis, settings) -> None:
+    """Keeping a shaky draft rests on you reading it. In auto mode nobody does."""
+    settings.fill_mode = "auto"
+    r = AnswerResolver(_StubAI(DRAFT, 0.40), settings)
+    ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), analysis)
+
+    answer = await r.resolve(_field(ESSAY, kind="textarea"), ctx)
+
+    assert answer.needs_human is True
+
+
+@pytest.mark.asyncio
+async def test_a_confident_essay_answer_is_entered_in_every_mode(
+        profile, analysis, settings) -> None:
+    for mode in ("assisted", "auto"):
+        settings.fill_mode = mode
+        r = AnswerResolver(_StubAI(DRAFT, 0.92), settings)
+        ctx = ResolveContext(profile, JobPosting.from_url("https://jobs.lever.co/a/b"), analysis)
+        answer = await r.resolve(_field(ESSAY, kind="textarea"), ctx)
+        assert answer.value == DRAFT and answer.needs_human is False, mode

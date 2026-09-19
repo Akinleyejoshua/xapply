@@ -803,8 +803,13 @@ class GoogleSearchSource(ApiJobSource):
          navigation per result.
 
     So Google is used for what it is good at, finding *which companies are hiring*,
-    and the board APIs do the rest. When Google serves its bot check instead, the run
-    pauses so you can clear it, because only a person can.
+    and the board APIs do the rest. Boards that answer are written to companies.json,
+    so a board found once keeps working without Google.
+
+    When Google serves its bot check instead, the scan pauses so you can clear it in
+    the browser window, because only a person can. It does not pause forever: a scan
+    runs unattended, and a wait nobody answers is indistinguishable from a crash, so
+    after a few minutes that search is given up and the rest of the scan continues.
     """
 
     name = "google"
@@ -815,6 +820,10 @@ class GoogleSearchSource(ApiJobSource):
     MAX_LINK_RESOLVES = 6
     #: Google tolerates a handful of searches per minute from one browser.
     PAUSE_S = 4.0
+    #: How long a scan will wait for someone to clear a bot check before giving up on
+    #: that search. A scan runs unattended over dozens of boards, so waiting forever
+    #: turns the whole run into a hang with nothing on screen.
+    HELP_TIMEOUT_S = 180.0
 
     RESULTS_JS = """() => {
         const HOSTS = ['job-boards.greenhouse.io', 'boards.greenhouse.io',
@@ -836,6 +845,8 @@ class GoogleSearchSource(ApiJobSource):
         super().__init__(settings, db, browser)
         #: Boards this run found, so a caller can offer to remember them.
         self.found_boards: dict[str, set[str]] = {}
+        #: Boards newly written to companies.json, for the scan log to report.
+        self.remembered: dict[str, list[str]] = {}
         self.blocked_searches = 0
 
     # ---- one results page ---------------------------------------------
@@ -903,17 +914,45 @@ class GoogleSearchSource(ApiJobSource):
         return urls, boards
 
     # ---- the search itself ---------------------------------------------
+    async def ask_for_help(self, reason: str) -> str:
+        """Pause for a person, but never for longer than a scan can afford.
+
+        Returns "skip" when nobody answers. Hanging indefinitely is the worse failure:
+        the scan stops dead with no explanation, and the boards that would have been
+        read without any search engine are never reached.
+        """
+        gate = getattr(self.b, "gate", None)
+        if gate is None:
+            return "skip"
+        waiting = asyncio.ensure_future(gate.wait(reason))
+        try:
+            return await asyncio.wait_for(waiting, timeout=self.HELP_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            await asyncio.gather(waiting, return_exceptions=True)
+            log.warning("Nobody cleared Google's check within %.0f seconds, so this search "
+                        "is being given up. The rest of the scan carries on.",
+                        self.HELP_TIMEOUT_S)
+            return "skip"
+
     async def search(self, page: Any, terms: str) -> tuple[set[str], dict[str, set[str]]]:
         log.info("google: %s", terms)
         try:
-            await self.b.goto(page, self.SEARCH_URL.format(q=quote_plus(terms)))
+            # Navigated directly rather than through the browser's guard. A results page
+            # has nothing to fill in, and its one failure mode is the bot check, which is
+            # detected below with a message that says what it actually is. Going through
+            # the guard stops twice for the same problem: once for the reCAPTCHA widget
+            # on the block page, and once here.
+            await page.goto(self.SEARCH_URL.format(q=quote_plus(terms)),
+                            wait_until="domcontentloaded",
+                            timeout=self.s.navigation_timeout_ms)
+            await self.b.sleep(1.6, 0.5)
         except Exception as exc:
             log.warning("google search failed: %s", exc)
             return set(), {}
 
         if await self.is_blocked(page):
             log.warning("Google served its bot check instead of results")
-            outcome = await self.b.gate.wait(
+            outcome = await self.ask_for_help(
                 "Google is showing its 'unusual traffic' check instead of search results. "
                 "Clear it in the browser window, then continue. Skipping is fine: the "
                 "Greenhouse, Lever and Ashby board APIs cover the same boards without a "
@@ -979,6 +1018,9 @@ class GoogleSearchSource(ApiJobSource):
             if source_cls is None or not tokens:
                 continue
             for token in sorted(tokens):
+                # Logged before the read, not after: some boards carry thousands of
+                # postings and take a minute, and silence looks like a hang.
+                log.info("google: reading %s/%s", ats, token)
                 source = source_cls(self.s, self.db, self.b, tokens=[token])
                 source.on_batch = lambda _name, batch: self._report(batch)
                 try:
@@ -1031,6 +1073,7 @@ class GoogleSearchSource(ApiJobSource):
         for ats, fresh in added.items():
             log.info("google: remembered %d new %s board(s): %s",
                      len(fresh), ats, ", ".join(fresh))
+        self.remembered = added
         return added
 
     def remaining_urls(self, urls: set[str], found: list[JobPosting]) -> list[JobPosting]:

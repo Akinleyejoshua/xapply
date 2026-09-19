@@ -275,13 +275,21 @@ class HumanGate:
         stdin_task = self._stdin_task()
         if stdin_task is not None:
             waiters.append(stdin_task)
+        released_by = "unknown"
         try:
-            done, pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
             released_by = next(iter(done)).get_name()
         finally:
+            # Cancelled here as well as on the normal path, because a caller may give up
+            # on waiting: an unattended scan does. Leaving these behind would leak a file
+            # poller and a stdin reader on every pause that nobody answers.
+            for task in waiters:
+                if not task.done():
+                    task.cancel()
+            try:
+                await asyncio.gather(*waiters, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
             outcome = self._outcome if allow_skip else self.CONTINUE
             self.paused, self.reason, self.paused_since = False, "", None
             self._event.clear()
@@ -1194,6 +1202,25 @@ class AnswerResolver:
                 return ResolvedAnswer(value, f"profile.screening_defaults.{key}", 0.9)
         return None
 
+    #: A written answer shorter than this is a shrug, not a draft.
+    MIN_DRAFT_CHARS = 40
+
+    def _draft_worth_keeping(self, f: FormField, value: str) -> bool:
+        """Whether a low-confidence written answer should still be entered.
+
+        For a fact, low confidence means leave it blank: a wrong salary or visa status
+        is worse than an empty box. For an essay question it means the opposite. The
+        model rating its own prose at 0.5 is not evidence the prose is wrong, and an
+        empty box helps nobody, so the draft goes in and you edit it.
+
+        Not in auto mode, though. The argument above rests entirely on you reading it
+        before it is sent, and in auto mode nobody does.
+        """
+        if self.s.fill_mode == "auto":
+            return False
+        return (f.kind == "textarea" and not f.options
+                and len(value.strip()) >= self.MIN_DRAFT_CHARS)
+
     async def _from_ai(self, f: FormField, ctx: ResolveContext) -> ResolvedAnswer:
         if self.ai is None:
             return ResolvedAnswer(None, "none", 0.0, needs_human=True, reasoning="no AI agent configured")
@@ -1208,7 +1235,9 @@ class AnswerResolver:
         value = fa.answer.strip()
         if value.lower() in UNKNOWN_VALUES and not (f.kind in ("textarea",) and value == ""):
             value = ""
-        needs_human = fa.needs_human or fa.confidence < self.s.ai_min_confidence
+        needs_human = fa.needs_human
+        if fa.confidence < self.s.ai_min_confidence and not self._draft_worth_keeping(f, value):
+            needs_human = True
         if f.options and value and choose_option(value, f.option_labels) is None:
             needs_human = True
         return ResolvedAnswer(value or None, "ai_live", fa.confidence, needs_human=needs_human, reasoning=fa.reasoning)

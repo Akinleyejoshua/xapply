@@ -786,6 +786,19 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                             totals.kept = len(found)
                         note(f"{src.name}: {len(found) - before} posting(s)"
                              + (f" ({stats.summary()})" if stats else ""))
+                        # The Google source has two outcomes worth saying out loud: the
+                        # boards it added, which make the next scan faster, and the
+                        # searches Google refused, which otherwise look like "found none".
+                        remembered = getattr(src, "remembered", None)
+                        if remembered:
+                            for ats, fresh in remembered.items():
+                                note(f"added {len(fresh)} new {ats} board(s) to your company "
+                                     f"list: {', '.join(fresh[:8])}"
+                                     + (" and more" if len(fresh) > 8 else ""))
+                        refused = getattr(src, "blocked_searches", 0)
+                        if refused:
+                            note(f"Google refused {refused} search(es) with its bot check. "
+                                 f"The board APIs need no search engine.")
                         publish()
             except asyncio.CancelledError:
                 publish()
