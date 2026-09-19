@@ -543,10 +543,9 @@ class AggregatorSource(ApiJobSource):
         """The address to apply to when there is no form, or None."""
         if not self.s.email_apply:
             return None
-        from email_apply import find_addresses
+        from email_apply import application_address
 
-        found = find_addresses(description, link)
-        return found[0] if found else None
+        return application_address(description, link)
 
     """Shared logic: aggregator links have to be resolved to the real ATS application URL.
 
@@ -1313,6 +1312,9 @@ class EmailSearchSource(GoogleSearchSource):
             self.stats.kept += 1
             found.append(job)
             self._report([job])
+        for job in found:
+            log.info("emails: %s at %s -> write to %s", job.title[:40], job.company,
+                     job.email_to)
         log.info("emails: %d posting(s) that name an address", len(found))
         return found
 
@@ -1365,8 +1367,14 @@ class EmailSearchSource(GoogleSearchSource):
         return list(dict.fromkeys(out))
 
     async def read_posting(self, page: Any, url: str) -> Optional[JobPosting]:
-        """Open a page and keep it only if it is a posting that names an address."""
-        from email_apply import find_addresses
+        """Open a page and keep it only if it is a posting that names an address.
+
+        The address has to be one the page is offering, sitting next to the wording
+        that offers it, on a site that is not a job board. Without that the scan comes
+        back full of board index pages and blog posts: they contain addresses, and none
+        of them is anybody you could apply to.
+        """
+        from email_apply import application_address
 
         try:
             await page.goto(url, wait_until="domcontentloaded",
@@ -1380,8 +1388,9 @@ class EmailSearchSource(GoogleSearchSource):
             return None
         if len(text or "") < self.MIN_DESCRIPTION:
             return None
-        addresses = find_addresses(text, url)
-        if not addresses:
+        write_to = application_address(text, url)
+        if not write_to:
+            log.debug("no application address on %s", url)
             return None
         host = (urlparse(url).hostname or "").replace("www.", "")
         return JobPosting(
@@ -1391,6 +1400,7 @@ class EmailSearchSource(GoogleSearchSource):
             location=self.s.search_location or "",
             description=text.strip(), source=self.name, ats=UNKNOWN,
             relevance=title_relevance(title, self.tokens),
+            email_to=write_to,
         )
 
 

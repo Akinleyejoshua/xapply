@@ -120,6 +120,9 @@ class JobPosting:
     apply_url: str = ""  # external application URL when the posting hands off to another ATS
     easy_apply: bool = False
     relevance: float = 0.0   # 0-1, how well the title answered the search terms
+    #: Where an application is sent when there is no form. Found on the posting itself,
+    #: never guessed, and empty for everything that has a form to fill in.
+    email_to: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

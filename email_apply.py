@@ -21,6 +21,7 @@ import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid, parseaddr
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -94,10 +95,75 @@ def find_addresses(*texts: Optional[str]) -> list[str]:
     return sorted(seen, key=rank)
 
 
+#: Sites that list other people's jobs. Their own addresses are never where an
+#: application goes, and their pages are indexes rather than postings, so a scan that
+#: keeps them returns a pile of results with nobody to write to.
+JOB_BOARDS = (
+    "indeed.com", "linkedin.com", "glassdoor.com", "ziprecruiter.com", "monster.com",
+    "simplyhired.com", "careerbuilder.com", "totaljobs.com", "reed.co.uk", "seek.com",
+    "jobberman.com", "myjobmag.com", "brightermonday.com", "jobsdb.com", "naukri.com",
+    "wellfound.com", "angel.co", "otta.com", "welcometothejungle.com", "workable.com",
+    "greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com", "bamboohr.com",
+    "jobvite.com", "icims.com", "taleo.net", "successfactors.com", "workday.com",
+    "remoteok.com", "weworkremotely.com", "himalayas.app", "remotive.com", "flexjobs.com",
+    "glassdoor.co.uk", "jooble.org", "adzuna.com", "talent.com", "jobstreet.com",
+)
+
+#: The wording that means "this is where to send it". An address has to sit near one of
+#: these, or any address anywhere on the page counts, including a blog author's.
+APPLY_NEAR_RE = re.compile(
+    r"(send|email|e-mail|forward|submit|share|apply|applications?|cv|r[ée]sum[ée]|"
+    r"interested|write)\b", re.I)
+#: How far from that wording an address may sit and still be the one being offered.
+NEAR_CHARS = 220
+
+
+def is_job_board(url_or_address: str) -> bool:
+    """Whether this is a site that lists other people's jobs."""
+    text = (url_or_address or "").lower()
+    host = text.split("@")[-1]
+    if "//" in text:
+        host = (urlparse(text).hostname or "").lower()
+    return any(host == board or host.endswith("." + board) for board in JOB_BOARDS)
+
+
+def application_address(text: str, url: str = "") -> Optional[str]:
+    """The address a posting is asking you to write to, or None.
+
+    Two things separate that from any other address on a page. It sits next to the
+    wording that offers it, and neither it nor the page belongs to a site that lists
+    other people's jobs. Without both checks a scan returns job board index pages and
+    blog posts, which have addresses but nobody to apply to.
+    """
+    if url and is_job_board(url):
+        return None
+    body = text or ""
+    near: list[str] = []
+    for match in EMAIL_RE.finditer(body):
+        address = match.group(0).strip(".,;:<>()[]'\"").lower()
+        if not plausible(address) or is_job_board(address):
+            continue
+        window = body[max(0, match.start() - NEAR_CHARS): match.end() + NEAR_CHARS]
+        if APPLY_NEAR_RE.search(window):
+            near.append(address)
+    if not near:
+        return None
+    return sorted(dict.fromkeys(near), key=rank)[0]
+
+
 def find_address(job: JobPosting, page_text: str = "") -> Optional[str]:
-    """The one address to apply to, or None when the posting names none."""
-    found = find_addresses(job.description, page_text, job.url)
-    return found[0] if found else None
+    """The one address to apply to, or None when the posting names none.
+
+    Checked against the posting's own words first, then the page it came from. A
+    posting already known to be an application by email is trusted with a looser
+    reading, because getting this far means something already decided it was one.
+    """
+    for body in (job.description, page_text):
+        found = application_address(body or "", job.url)
+        if found:
+            return found
+    loose = [a for a in find_addresses(job.description, page_text) if not is_job_board(a)]
+    return loose[0] if loose else None
 
 
 @dataclass

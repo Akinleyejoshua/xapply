@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS discovered (
     apply_url   TEXT,
     description TEXT,
     relevance   REAL NOT NULL DEFAULT 0,
+    email_to    TEXT NOT NULL DEFAULT '',
     found_at    TEXT NOT NULL,
     PRIMARY KEY (source, job_id)
 );
@@ -114,7 +115,23 @@ class Database:
     def init(self) -> None:
         with self._conn() as c:
             c.executescript(SCHEMA)
+            self._add_missing_columns(c)
             self._repair_page_named_ids(c)
+
+    #: Columns added after the first release. SQLite has no "add column if missing", so
+    #: an existing database is brought up to date here rather than by asking anyone to
+    #: delete it.
+    LATER_COLUMNS: tuple[tuple[str, str, str], ...] = (
+        ("discovered", "email_to", "TEXT NOT NULL DEFAULT ''"),
+    )
+
+    def _add_missing_columns(self, c: sqlite3.Connection) -> None:
+        for table, column, spec in self.LATER_COLUMNS:
+            have = {row["name"] for row in c.execute(f"PRAGMA table_info({table})")}
+            if not have or column in have:
+                continue
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
+            log.info("Added %s.%s to the database", table, column)
 
     def _repair_page_named_ids(self, c: sqlite3.Connection) -> int:
         """Re-key rows that were identified by the page rather than by the posting.
@@ -283,20 +300,21 @@ class Database:
                 d.get("job_id") or "", d.get("source") or "", d.get("ats") or "unknown",
                 d.get("company") or "", d.get("title") or "", d.get("location") or "",
                 d.get("url") or "", d.get("apply_url") or "", d.get("description") or "",
-                float(d.get("relevance") or 0), now,
+                float(d.get("relevance") or 0), d.get("email_to") or "", now,
             ))
         with self._conn() as c:
             c.executemany(
                 """INSERT INTO discovered
                        (job_id, source, ats, company, title, location, url, apply_url,
-                        description, relevance, found_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        description, relevance, email_to, found_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(source, job_id) DO UPDATE SET
                        ats=excluded.ats, company=excluded.company, title=excluded.title,
                        location=excluded.location, url=excluded.url,
                        apply_url=excluded.apply_url,
                        description=COALESCE(NULLIF(excluded.description, ''), discovered.description),
-                       relevance=excluded.relevance, found_at=excluded.found_at""",
+                       relevance=excluded.relevance, email_to=excluded.email_to,
+                       found_at=excluded.found_at""",
                 rows,
             )
         return len(rows)

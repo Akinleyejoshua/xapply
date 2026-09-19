@@ -126,7 +126,7 @@ class Pipeline:
             from email_apply import find_address
 
             page_text = await self._page_text(browser)
-            email_to = find_address(job, page_text)
+            email_to = job.email_to or find_address(job, page_text)
             if email_to:
                 log.info("No application form here, but the posting says to write to %s",
                          email_to)
