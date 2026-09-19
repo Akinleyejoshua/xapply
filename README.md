@@ -527,6 +527,31 @@ A scan over the board APIs opens no browser at all, whatever these are set to, b
 it is plain HTTP. Applying to a web form always needs one, hidden or not. Applying by
 email needs no form, so nothing is opened for it.
 
+### Signing in to a site, once
+
+Sessions live in the browser profile, exactly as they do in your everyday browser. Sign
+in once and it lasts until you sign out or delete the profile:
+
+```bash
+make signin SITE=x          # or linkedin, indeed, glassdoor, wellfound, gmail
+make signin SITE=https://any-site.example/login
+```
+
+Nothing is typed for you and no password is stored in this project. You sign in
+yourself, including any second factor.
+
+### Finding roles that have no form
+
+Source `emails`. A great deal of hiring never reaches an applicant tracking system:
+someone writes "we are hiring a data analyst, send your CV to careers@example.com" on
+their own site, and that is the whole process. No board API can see those, because there
+is no board.
+
+This searches for the wording people use when they do that, opens each result, and keeps
+the pages that name an address. Those are then applied to by email, so it needs **Apply
+by email** on. Tick **Also search X** to include X as well, which needs you signed in
+there.
+
 ### Applying by email
 
 Plenty of roles never reach an applicant tracking system. The posting says "send your CV

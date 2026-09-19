@@ -354,11 +354,40 @@ class Pipeline:
         return {"job": job.to_dict(), "analysis": analysis.model_dump(), "resume_path": str(resume)}
 
 
-async def login_flow(settings: Settings = default_settings) -> None:
-    """Open the persistent browser so the user can sign in once; cookies persist."""
+#: Sites worth signing in to once, and where their sign-in page lives.
+SIGN_IN_PAGES: dict[str, str] = {
+    "linkedin": "https://www.linkedin.com/login",
+    "gmail": "https://mail.google.com/mail/u/0/",
+    "google": "https://accounts.google.com/",
+    "x": "https://x.com/login",
+    "twitter": "https://x.com/login",
+    "indeed": "https://secure.indeed.com/auth",
+    "glassdoor": "https://www.glassdoor.com/profile/login_input.htm",
+    "wellfound": "https://wellfound.com/login",
+    "greenhouse": "https://my.greenhouse.io/applications",
+}
+
+
+async def login_flow(settings: Settings = default_settings, site: str = "linkedin") -> None:
+    """Open the browser so you can sign in once. The profile keeps it after that.
+
+    There is no password anywhere in this project. You sign in yourself, including
+    whatever second factor the site asks for, and the browser profile directory holds
+    the cookies afterwards, exactly as your everyday browser does. A session lasts until
+    you sign out or delete the profile, so this is a thing you do once per site.
+    """
+    target = SIGN_IN_PAGES.get(site.strip().lower(), site)
+    if not target.startswith(("http://", "https://")):
+        raise ValueError(f"Unknown site {site!r}. Known: {', '.join(sorted(SIGN_IN_PAGES))}, "
+                         f"or give a full URL.")
     gate = HumanGate(settings.human_gate_mode, settings.log_dir / "CONTINUE")
+    # A sign-in needs a window whatever the usual setting says: it is the one thing
+    # that cannot happen without you.
+    settings.headless = False
+    settings.hide_browser = False
     async with StealthBrowser(settings, gate) as browser:
-        await browser.page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
-        await gate.wait("Log in to LinkedIn (and any ATS account you use) in the browser window. "
-                        "The session is saved to .browser_profile and reused on every run.")
-        log.info("Session stored in %s", settings.user_data_dir)
+        await browser.page.goto(target, wait_until="domcontentloaded")
+        await gate.wait(f"Sign in at {target} in the browser window, then continue. "
+                        f"The session is kept in {settings.user_data_dir.name} and reused "
+                        f"on every run until you sign out.", allow_skip=False)
+        log.info("Session for %s stored in %s", site, settings.user_data_dir)

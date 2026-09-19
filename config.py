@@ -46,6 +46,7 @@ PERSISTED_KEYS = (
     "verify_after_fill",
     "email_apply",
     "email_transport",
+    "search_x",
     "hide_browser",
     "challenge_action",
     "headless",
@@ -171,7 +172,10 @@ class Settings(BaseSettings):
     email_reply_to: str = ""        # defaults to the profile's email
 
     # ---- Job search ----
-    # linkedin | urls | greenhouse | lever | ashby | remoteok | himalayas | google
+    #: Also search X for roles advertised with an address. Needs you signed in there:
+    #: `make signin SITE=x`. Off by default because X refuses anonymous searches.
+    search_x: bool = False
+    # linkedin | urls | greenhouse | lever | ashby | remoteok | himalayas | google | emails
     sources: Annotated[list[str], NoDecode] = ["greenhouse", "ashby", "lever"]
     search_queries: Annotated[list[str], NoDecode] = ["Python Developer"]
     search_location: str = "Remote"

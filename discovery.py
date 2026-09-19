@@ -1237,6 +1237,163 @@ def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
     return tips
 
 
+class EmailSearchSource(GoogleSearchSource):
+    """Roles that are advertised with an address rather than a form.
+
+    A great deal of hiring never reaches an applicant tracking system. Someone posts
+    "we are hiring a data analyst, send your CV to careers@example.com" on their own
+    site or on X, and that is the whole process. None of the board APIs can see those,
+    because there is no board.
+
+    So this searches for the wording people use when they do that, opens each result,
+    and keeps the ones that name an address. The posting is then applied to by email.
+    It needs `email_apply` on, because without it there is nothing that could be done
+    with what it finds.
+    """
+
+    name = "emails"
+    #: How people write it. Quoted, so the search is for the phrase.
+    PHRASES = ("send your cv to", "send your resume to", "email your cv to",
+               "email your resume to", "apply by email", "applications to",
+               "send applications to", "cv to")
+    #: Where to look. X needs you signed in, which the browser profile remembers.
+    GOOGLE = "https://www.google.com/search?q={q}&udm=14"
+    X_SEARCH = "https://x.com/search?q={q}&f=live"
+    #: Opening a result costs a page load, so the number of them is capped.
+    MAX_PAGES = 12
+    #: Below this a page is a listing index, not a posting worth applying to.
+    MIN_DESCRIPTION = 200
+
+    async def discover(self, page: Any = None) -> list[JobPosting]:
+        if page is None:
+            log.warning("the emails source needs a browser page; skipping it")
+            return []
+        if not self.s.email_apply:
+            log.warning("The emails source finds roles that are applied to by writing to "
+                        "someone. Turn on 'Apply by email' or it can do nothing with them.")
+            return []
+
+        links: list[str] = []
+        for query in self.s.search_queries:
+            for phrase in self.PHRASES[:4]:
+                terms = f'"{query}" "{phrase}"' + self.level_clause()
+                where = (self.s.search_location or "").strip()
+                if where and where.lower() not in ("", "anywhere", "worldwide"):
+                    terms += f' "{where}"'
+                links.extend(await self.search_engine(page, self.GOOGLE, terms, "google"))
+                if len(links) >= self.MAX_PAGES:
+                    break
+            if len(links) >= self.MAX_PAGES:
+                break
+
+        if self.s.search_x:
+            for query in self.s.search_queries:
+                terms = f'"{query}" hiring ("send your cv" OR "send your resume")'
+                links.extend(await self.search_engine(page, self.X_SEARCH, terms, "x"))
+
+        found: list[JobPosting] = []
+        seen: set[str] = set()
+        for link in links[: self.MAX_PAGES]:
+            if link in seen:
+                continue
+            seen.add(link)
+            job = await self.read_posting(page, link)
+            if job is None:
+                continue
+            self.stats.seen += 1
+            if not title_matches(job.title, self.tokens, self.s.title_match_threshold):
+                self.stats.dropped_title += 1
+                continue
+            if not seniority_matches(job.title, self.s.seniority_levels):
+                self.stats.dropped_seniority += 1
+                continue
+            if self.db.has_job(self.name, job.job_id):
+                self.stats.dropped_seen_before += 1
+                continue
+            self.stats.kept += 1
+            found.append(job)
+            self._report([job])
+        log.info("emails: %d posting(s) that name an address", len(found))
+        return found
+
+    async def search_engine(self, page: Any, template: str, terms: str,
+                            engine: str) -> list[str]:
+        """Run one search and return the pages it points at, ATS links aside."""
+        log.info("%s: %s", engine, terms)
+        try:
+            await page.goto(template.format(q=quote_plus(terms)),
+                            wait_until="domcontentloaded",
+                            timeout=self.s.navigation_timeout_ms)
+            await self.b.sleep(2.0, 0.6)
+        except Exception as exc:
+            log.warning("%s search failed: %s", engine, exc)
+            return []
+        if await self.is_blocked(page):
+            self.blocked_searches += 1
+            log.warning("%s served a check instead of results", engine)
+            return []
+        if engine == "x" and "login" in (page.url or ""):
+            log.warning("X wants you signed in. Run: make signin SITE=x")
+            return []
+        return await self.result_links(page)
+
+    async def result_links(self, page: Any) -> list[str]:
+        """Outbound links from a results page, excluding the engine's own."""
+        try:
+            raw = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(a => a.getAttribute('href'))")
+        except Exception:
+            return []
+        out: list[str] = []
+        wrapped: list[str] = []
+        for href in raw or []:
+            if href and (href.startswith("/goto?") or href.startswith("/url?")):
+                wrapped.append(href)
+                continue
+            target = unwrap_result_link(href)
+            if not target or not target.startswith("http"):
+                continue
+            host = (urlparse(target).hostname or "").lower()
+            if any(bad in host for bad in ("google.", "gstatic.", "youtube.", "x.com",
+                                           "twitter.", "facebook.", "instagram.")):
+                continue
+            out.append(target.split("#")[0])
+        if not out and wrapped:
+            # Google hides destinations behind opaque links, so they are followed.
+            out = sorted(await self.resolve_wrapped(page, [
+                f"https://www.google.com{h}" for h in wrapped]))
+        return list(dict.fromkeys(out))
+
+    async def read_posting(self, page: Any, url: str) -> Optional[JobPosting]:
+        """Open a page and keep it only if it is a posting that names an address."""
+        from email_apply import find_addresses
+
+        try:
+            await page.goto(url, wait_until="domcontentloaded",
+                            timeout=self.s.navigation_timeout_ms)
+            await self.b.sleep(1.2, 0.4)
+            text = await page.evaluate(
+                "() => document.body ? document.body.innerText.slice(0, 20000) : ''")
+            title = (await page.title()) or ""
+        except Exception as exc:
+            log.debug("could not read %s: %s", url, exc)
+            return None
+        if len(text or "") < self.MIN_DESCRIPTION:
+            return None
+        addresses = find_addresses(text, url)
+        if not addresses:
+            return None
+        host = (urlparse(url).hostname or "").replace("www.", "")
+        return JobPosting(
+            job_id=job_id_from_url(url), url=url, apply_url="",
+            title=re.sub(r"\s*[|\-\u2013].*$", "", title).strip()[:120] or "Role",
+            company=host.split(".")[0].title(),
+            location=self.s.search_location or "",
+            description=text.strip(), source=self.name, ats=UNKNOWN,
+            relevance=title_relevance(title, self.tokens),
+        )
+
+
 SOURCE_REGISTRY: dict[str, type[ApiJobSource]] = {
     GREENHOUSE: GreenhouseBoardSource,
     LEVER: LeverBoardSource,
@@ -1244,4 +1401,5 @@ SOURCE_REGISTRY: dict[str, type[ApiJobSource]] = {
     "remoteok": RemoteOKSource,
     "himalayas": HimalayasSource,
     "google": GoogleSearchSource,
+    "emails": EmailSearchSource,
 }

@@ -330,7 +330,7 @@ def build_sources(settings: Settings, browser: StealthBrowser, db: Database, url
 
 #: Sources that need a rendered page. Everything else is plain HTTP, so opening a
 #: browser for them just leaves a blank window on screen while nothing happens.
-BROWSER_SOURCES = {LINKEDIN, "urls", "google"}
+BROWSER_SOURCES = {LINKEDIN, "urls", "google", "emails"}
 #: These prefer HTTP but fall back to a page when a feed is behind Cloudflare.
 BROWSER_FALLBACK_SOURCES = {"remoteok", "himalayas"}
 

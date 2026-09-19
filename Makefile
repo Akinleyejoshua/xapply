@@ -87,7 +87,10 @@ serve: dirs  ## Start the web dashboard. Override the port with: make serve PORT
 	$(PY) main.py serve --port $(PORT)
 
 gmail-login: dirs  ## Sign in to Gmail once, so applications can be sent from it
-	$(PY) main.py gmail-login
+	$(PY) main.py login gmail
+
+signin: dirs  ## Sign in to any site once: make signin SITE=x  (linkedin, indeed, ...)
+	$(PY) main.py login $(SITE)
 
 dev: dirs  ## Dashboard with autoreload: restarts itself when you edit code or the UI
 	@echo "  XApply dev server on http://$(HOST):$(PORT)  (autoreload on .py/.html/.css)"
@@ -118,4 +121,4 @@ reset: clean  ## DANGER: remove venv, DB, generated resumes, logs and browser se
 	rm -rf $(VENV) applications.db output_resumes/*.pdf logs/*.log .browser_profile settings.local.json
 
 .PHONY: help venv deps browsers env dirs install login scan scan-save models settings settings-reset companies run run-auto \
-	analyze serve dev ui db-init check test clean reset gmail-login
+	analyze serve dev ui db-init check test clean reset gmail-login signin

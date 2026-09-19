@@ -123,6 +123,7 @@ class ConfigPatch(BaseModel):
     verify_after_fill: Optional[bool] = None
     email_apply: Optional[bool] = None
     email_transport: Optional[Literal["smtp", "gmail"]] = None
+    search_x: Optional[bool] = None
     hide_browser: Optional[bool] = None
     challenge_action: Optional[Literal["wait", "show", "skip"]] = None
     headless: Optional[bool] = None
@@ -497,6 +498,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "verify_after_fill": settings.verify_after_fill,
             "email_apply": settings.email_apply,
             "email_transport": settings.email_transport,
+            "search_x": settings.search_x,
             "hide_browser": settings.hide_browser,
             "challenge_action": settings.challenge_action,
             # Whether a mail server is actually set up. The credentials themselves stay
@@ -510,7 +512,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "follow_companies": settings.follow_companies,
             "resume_max_pages": settings.resume_max_pages,
             "resume_may_drop_experience": settings.resume_may_drop_experience,
-            "known_sources": ["greenhouse", "ashby", "lever", "remoteok", "himalayas",
+            "known_sources": ["greenhouse", "ashby", "lever", "remoteok", "himalayas", "emails",
                               "google", "linkedin", "urls"],
             # Which of the values above came from settings.local.json rather than .env,
             # so the UI can show that a choice is remembered.
