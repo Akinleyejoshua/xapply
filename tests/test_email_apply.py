@@ -399,3 +399,59 @@ def test_an_smtp_setup_is_checked_without_opening_anything(settings) -> None:
 
     assert out["transport"] == "smtp" and out["ready"] is False
     assert "SMTP_HOST" in out["detail"]
+
+
+# ---- which address a page is actually offering -----------------------------
+
+def test_the_address_has_to_sit_next_to_the_wording_that_offers_it() -> None:
+    """Otherwise any address on any page counts, including a blog author's."""
+    from email_apply import application_address
+
+    offered = "We are hiring. To apply, send your CV to careers@northwind.com."
+    incidental = ("An article about hiring. " + "Filler sentence. " * 40 +
+                  "Reach the author at hello@somebody.blog.")
+
+    assert application_address(offered, "https://northwind.com/j") == "careers@northwind.com"
+    assert application_address(incidental, "https://somebody.blog/p") is None
+
+
+def test_a_job_board_is_never_the_employer() -> None:
+    """The reported problem: scans returned board pages with nobody to write to."""
+    from email_apply import application_address, is_job_board
+
+    board = ("Data Analyst jobs. Interested in working at Indeed? Send your CV to "
+             "careers@indeed.com.")
+
+    assert application_address(board, "https://www.indeed.com/q-data-analyst") is None
+    assert application_address("Apply: jobs@greenhouse.io", "https://a.blog/p") is None
+    assert is_job_board("https://www.linkedin.com/jobs/1") is True
+    assert is_job_board("https://northwind.com/jobs/1") is False
+
+
+def test_the_address_named_for_applications_is_preferred() -> None:
+    from email_apply import application_address
+
+    page = "For press: press@nw.com. To apply, send your CV to careers@nw.com."
+
+    assert application_address(page, "https://nw.com/j") == "careers@nw.com"
+
+
+def test_an_address_that_is_never_an_application_is_still_refused() -> None:
+    from email_apply import application_address
+
+    assert application_address("To apply send your CV to noreply@nw.com",
+                               "https://nw.com/j") is None
+
+
+def test_a_page_offering_nothing_yields_nothing() -> None:
+    from email_apply import application_address
+
+    assert application_address("Apply through our portal.", "https://nw.com/j") is None
+    assert application_address("", "https://nw.com/j") is None
+
+
+def test_the_wording_may_come_after_the_address() -> None:
+    from email_apply import application_address
+
+    assert application_address("careers@nw.com is where applications go.",
+                               "https://nw.com/j") == "careers@nw.com"

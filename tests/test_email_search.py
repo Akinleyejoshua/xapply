@@ -159,3 +159,93 @@ async def test_the_seniority_you_picked_reaches_this_search_too(settings, db) ->
     settings.seniority_levels = ["intern"]
 
     assert "intern" in source(settings, db).level_clause()
+
+
+# ---- only pages that actually name somebody to write to --------------------
+
+BOARD_INDEX = ("Indeed - Data Analyst jobs in Lagos. Create an account to apply. "
+               "Questions about your account? Write to contact@indeed.com. Interested in "
+               "working at Indeed itself? Send your CV to careers@indeed.com and we will "
+               "be in touch about our own openings. Browse thousands of listings today.")
+
+BLOG = ("Ten things recruiters wish you knew. Most people send your CV to the wrong "
+        "person entirely. " + "Filler sentence about job hunting. " * 30 +
+        "You can reach the author at hello@somebody.blog for speaking enquiries.")
+
+
+@pytest.mark.asyncio
+async def test_a_job_board_index_page_is_not_a_posting(settings, db) -> None:
+    """The reported problem: results came back that were job boards, with nobody to
+    write to. A board's own hiring address is not the posting's."""
+    page = FakePage(text=BOARD_INDEX, url="https://www.indeed.com/q-data-analyst")
+
+    assert await source(settings, db).read_posting(
+        page, "https://www.indeed.com/q-data-analyst") is None
+
+
+@pytest.mark.asyncio
+async def test_an_article_that_merely_mentions_cvs_is_not_a_posting(settings, db) -> None:
+    page = FakePage(text=BLOG, url="https://somebody.blog/post")
+
+    assert await source(settings, db).read_posting(page, "https://somebody.blog/post") is None
+
+
+@pytest.mark.asyncio
+async def test_a_real_posting_carries_the_address_it_named(settings, db) -> None:
+    """Every result now has somebody to write to, recorded on the posting itself."""
+    job = await source(settings, db).read_posting(
+        FakePage(), "https://example-corp.com/careers/analyst")
+
+    assert job is not None
+    assert job.email_to == "careers@example-corp.com"
+
+
+@pytest.mark.asyncio
+async def test_every_posting_a_scan_returns_has_an_address(settings, db) -> None:
+    """The guarantee the source exists to make."""
+    src = source(settings, db)
+
+    class Results(FakePage):
+        async def eval_on_selector_all(self, sel: str, script: str) -> list:
+            if "google" in (self.url or ""):
+                return ["https://example-corp.com/careers/analyst"]
+            return []
+
+    found = await src.discover(Results(url="https://www.google.com/search"))
+
+    assert found, "the one real posting should have been kept"
+    assert all(job.email_to for job in found)
+
+
+def test_an_address_is_carried_through_to_the_database(tmp_path: Path) -> None:
+    from database import Database
+    from models import JobPosting
+
+    db = Database(tmp_path / "t.db")
+    db.init()
+    db.save_discovered([JobPosting(job_id="a", url="https://nw.com/j", source="emails",
+                                   title="Data Analyst", company="Northwind",
+                                   email_to="careers@nw.com")])
+
+    assert db.list_discovered()[0]["email_to"] == "careers@nw.com"
+
+
+def test_a_database_made_before_the_column_existed_is_brought_up_to_date(tmp_path: Path) -> None:
+    """Nobody should have to delete their database to get a new field."""
+    import sqlite3
+
+    from database import Database
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE discovered (job_id TEXT NOT NULL, source TEXT NOT NULL,"
+                 " ats TEXT, company TEXT, title TEXT, location TEXT, url TEXT,"
+                 " apply_url TEXT, description TEXT, relevance REAL, found_at TEXT,"
+                 " PRIMARY KEY (source, job_id))")
+    conn.commit()
+    conn.close()
+
+    Database(path).init()
+
+    columns = {row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(discovered)")}
+    assert "email_to" in columns

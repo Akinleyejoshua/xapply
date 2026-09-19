@@ -1538,7 +1538,8 @@ function renderFound(){
         ${SELECTED.has(u) ? 'checked' : ''} ${st ? 'disabled title="Already applied"' : ''}
         onchange="toggleSel(this)"></td>
       <td>${esc(j.company)}</td>
-      <td>${esc(j.title)}<br><a class="mono dim" href="${esc(u)}" target="_blank">${esc(u.slice(0,70))}</a></td>
+      <td>${esc(j.title)}<br><a class="mono dim" href="${esc(u)}" target="_blank">${esc(u.slice(0,70))}</a>${
+        j.email_to ? `<br><span class="mono" style="color:var(--accent)">write to ${esc(j.email_to)}</span>` : ''}</td>
       <td class="dim">${esc(j.location)}</td>
       <td>${applied}</td>
       <td class="score" title="How closely the title matched your search terms">${
