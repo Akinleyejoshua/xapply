@@ -180,6 +180,29 @@ For free-text motivation/cover-letter fields write 2-4 concise, factual sentence
 RETRYABLE_CODES = {429, 500, 502, 503, 504}
 
 
+def _hard_quota_failure(exc: errors.APIError) -> Optional[str]:
+    """Return an actionable message when a 429 is a permanent quota problem, not rate limiting.
+
+    A free-tier key that has never been enabled for the Generative Language API comes back as
+    429 RESOURCE_EXHAUSTED with quota_limit_value "0". Retrying that forever is pointless.
+    """
+    if exc.code != 429:
+        return None
+    blob = json.dumps(getattr(exc, "details", None) or {}) + str(exc)
+    if '"quota_limit_value": "0"' not in blob and "'quota_limit_value': '0'" not in blob:
+        return None
+    return (
+        "Gemini rejected the request with quota limit 0, which means this API key has no "
+        "Generative Language API quota (not temporary rate limiting).\n"
+        "  1. Open https://aistudio.google.com/apikey and confirm the key is active.\n"
+        "  2. Make sure the key's Google Cloud project has the Generative Language API enabled:\n"
+        "     https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com\n"
+        "  3. If you are on a paid project, check quotas for your region.\n"
+        f"  Raw error: {str(exc)[:300]}"
+    )
+
+
+
 class AIAgent:
     """Thin async wrapper around google-genai with structured outputs and retries."""
 
@@ -200,6 +223,8 @@ class AIAgent:
             response_mime_type="application/json",
             response_schema=schema,
             temperature=temperature,
+            # we never pass tools; disabling AFC silences the SDK's recommendation warning
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         delay = 2.0
         last_error: Exception | None = None
@@ -215,6 +240,14 @@ class AIAgent:
                 return schema.model_validate_json(response.text or "")
             except errors.APIError as exc:
                 last_error = exc
+                hard = _hard_quota_failure(exc)
+                if hard:
+                    raise RuntimeError(hard) from exc
+                if exc.code in (400, 401, 403) and "API_KEY" in str(exc).upper():
+                    raise RuntimeError(
+                        "Gemini rejected the API key. Check GEMINI_API_KEY in .env "
+                        f"(https://aistudio.google.com/apikey). Raw error: {str(exc)[:200]}"
+                    ) from exc
                 if exc.code in RETRYABLE_CODES and attempt < self.max_retries:
                     wait = delay + random.uniform(0, 1)
                     log.warning("Gemini API error %s (attempt %d/%d), retrying in %.1fs",
