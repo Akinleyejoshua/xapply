@@ -510,43 +510,25 @@ class StealthBrowser:
         return self
 
     async def attention(self, reason: str = "") -> None:
-        """Put the window in front of you, because something needs doing in it.
+        """Deal with a pause according to whether there is a window to deal with it in.
 
-        Never opens a window on its own. Opening one means restarting the browser, and
-        by the time a form is waiting to be submitted it is full of answers that a
-        restart would throw away. The window is opened earlier instead, before any of
-        that work exists, by `ensure_visible`.
+        With a window, it comes to the front so the thing that needs doing is on screen.
+        With none, nothing is opened: hiding the browser means you do not want to see
+        it, and opening one anyway would also restart the browser and discard every
+        answer already entered. Instead the pause is released as a skip, because waiting
+        for someone to act on a window that does not exist is a hang.
         """
-        try:
-            if self.page and not self.hidden:
-                await self.page.bring_to_front()
-        except Exception as exc:
-            log.debug("could not bring the window forward: %s", exc)
-
-    async def ensure_visible(self, reason: str = "") -> bool:
-        """Open a window before doing work that only you can finish.
-
-        Called before a form is filled, not after. Filling and then opening a window
-        would mean restarting the browser and losing every answer already entered.
-        """
-        if not self.hidden or self.s.headless:
-            return False
-        log.info("This posting needs you at the end, so a window is opening first.")
-        self.hidden = False
-        self.revealed = True
-        url = ""
-        try:
-            url = self.page.url if self.page else ""
-        except Exception:
-            url = ""
-        await self.close()
-        await self.start()
-        if url and not url.startswith("about:"):
+        if not self.hidden:
             try:
-                await self.page.goto(url, wait_until="domcontentloaded")
+                if self.page:
+                    await self.page.bring_to_front()
             except Exception as exc:
-                log.debug("could not reopen %s: %s", url, exc)
-        return True
+                log.debug("could not bring the window forward: %s", exc)
+            return
+        log.warning("This needs a person and the browser is hidden, so the posting is "
+                    "being skipped: %s", reason)
+        self.auto_skipped = reason
+        self.gate.skip()
 
     async def reveal(self, reason: str = "") -> bool:
         """Open a window, for a page that needs a person rather than a bot.

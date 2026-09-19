@@ -45,6 +45,7 @@ PERSISTED_KEYS = (
     "fill_all_at_once",
     "verify_after_fill",
     "email_apply",
+    "email_transport",
     "hide_browser",
     "challenge_action",
     "headless",
@@ -149,7 +150,16 @@ class Settings(BaseSettings):
     #: Send without stopping for you to read the draft. A separate decision from turning
     #: the feature on, and deliberately harder to reach.
     email_auto_send: bool = False
-    #: Credentials. These stay in .env and are never written to settings.local.json.
+    #: How the message actually leaves.
+    #:   smtp   a mail server, which needs a host, a user and an app password in .env
+    #:   gmail  your signed-in Gmail, driven in the browser. Sign in once with
+    #:          `make gmail-login` and the profile keeps the session, so there is no
+    #:          password here at all and the message lands in your real Sent folder.
+    email_transport: Literal["smtp", "gmail"] = "smtp"
+    #: Where Gmail is opened. Change the /u/0/ for a second signed-in account.
+    gmail_url: str = "https://mail.google.com/mail/u/0/"
+    #: Credentials. Only for the smtp transport. These stay in .env and are never
+    #: written to settings.local.json.
     #: For Gmail this is an app password, not your account password.
     smtp_host: str = ""
     smtp_port: int = 587

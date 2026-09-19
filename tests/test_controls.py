@@ -323,18 +323,17 @@ async def test_revealing_is_a_no_op_when_a_window_is_already_up() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_window_opens_before_the_form_is_filled_not_after() -> None:
-    """Opening one means restarting the browser. After a form is filled that would
-    throw away every answer, so it has to happen first."""
-    import inspect
+async def test_a_hidden_browser_stays_hidden() -> None:
+    """Hiding the browser means you do not want to see it. Nothing opens one behind
+    your back, and a pause that needs a window becomes a skip instead of a hang."""
+    hidden = _browser(hide_browser=True)
+    hidden.gate.skip = lambda: setattr(hidden.gate, "_skipped", True)
 
-    import pipeline
+    await hidden.attention("Submit it yourself")
 
-    source = inspect.getsource(pipeline.Pipeline._process)
-    before = source.index("ensure_visible")
-    after = source.index("resumes.build")
-
-    assert before < after, "the window must be opened before any answer is entered"
+    assert hidden.hidden is True
+    assert getattr(hidden.gate, "_skipped", False) is True
+    assert hidden.auto_skipped == "Submit it yourself"
 
 
 @pytest.mark.asyncio
@@ -376,11 +375,3 @@ async def test_a_pause_still_works_when_the_window_cannot_be_shown() -> None:
     assert outcome == HumanGate.CONTINUE
 
 
-@pytest.mark.asyncio
-async def test_bringing_a_hidden_window_forward_does_not_open_one() -> None:
-    """Opening one here would restart the browser and lose the filled form."""
-    hidden = _browser(hide_browser=True)
-
-    await hidden.attention("needs you")
-
-    assert hidden.hidden is True

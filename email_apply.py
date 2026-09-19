@@ -236,3 +236,98 @@ class EmailApplier:
         except OSError as exc:
             log.warning("Could not save the email preview: %s", exc)
         return path
+
+
+class GmailTransport:
+    """Send through your signed-in Gmail, in the browser, rather than through SMTP.
+
+    You sign in once with `make gmail-login`. The browser profile keeps that session,
+    so there is no password anywhere in this project, two-factor authentication is
+    something you did in your own browser, and the message lands in your real Sent
+    folder where you can see it and reply from it.
+
+    The cost is that this drives a web page, and web pages change. Every step here
+    tries several ways of finding the same control, and anything it cannot find is
+    reported plainly rather than guessed at, because a half-filled compose window that
+    gets sent anyway is the worst outcome available.
+    """
+
+    #: Gmail's compose controls, most reliable selector first.
+    COMPOSE = ('div[role="button"][gh="cm"]', 'div[gh="cm"]',
+               'div[role="button"]:has-text("Compose")', 'text=Compose')
+    TO = ('input[aria-label="To recipients"]', 'input[peoplekit-id][aria-label*="To"]',
+          'textarea[name="to"]', 'input[name="to"]')
+    SUBJECT = ('input[name="subjectbox"]', 'input[aria-label="Subject"]')
+    BODY = ('div[aria-label="Message Body"]', 'div[role="textbox"][contenteditable="true"]')
+    SEND = ('div[role="button"][aria-label^="Send"]', 'div[data-tooltip^="Send"]',
+            'div[role="button"]:has-text("Send")')
+    FILE_INPUT = 'input[type="file"]'
+    #: Where Google sends you when the session has lapsed.
+    SIGNED_OUT = ("accounts.google.com", "/ServiceLogin", "/signin")
+
+    def __init__(self, settings: Settings, browser: Any):
+        self.s = settings
+        self.b = browser
+
+    async def _first(self, page: Any, selectors: Iterable[str], what: str,
+                     timeout: int = 15_000) -> Any:
+        """The first of these controls that is actually on the page."""
+        last: Optional[Exception] = None
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                await locator.wait_for(state="visible", timeout=timeout // len(tuple(selectors)) or 3000)
+                return locator
+            except Exception as exc:
+                last = exc
+        raise LookupError(f"Could not find the {what} in Gmail. The page may have changed, "
+                          f"or you may be signed out. Last error: {last}")
+
+    async def signed_in(self, page: Any) -> bool:
+        return not any(mark in (page.url or "") for mark in self.SIGNED_OUT)
+
+    async def open_mail(self) -> Any:
+        """Open Gmail and confirm the session is still good."""
+        page = self.b.page
+        await self.b.goto(page, self.s.gmail_url)
+        if not await self.signed_in(page):
+            raise NotConfigured(
+                "Not signed in to Gmail in this browser profile. Run `make gmail-login`, "
+                "sign in once, and it will be remembered.")
+        return page
+
+    async def send(self, draft: Draft) -> None:
+        page = await self.open_mail()
+        log.info("Composing in Gmail")
+        await (await self._first(page, self.COMPOSE, "Compose button")).click()
+        await asyncio.sleep(1.2)
+
+        await (await self._first(page, self.TO, "To field")).fill(draft.to)
+        await (await self._first(page, self.SUBJECT, "Subject field")).fill(draft.subject)
+        body = await self._first(page, self.BODY, "message body")
+        await body.click()
+        await body.type(draft.body, delay=0)
+
+        if draft.attachments:
+            # Gmail keeps a real file input in the compose window, so the attachment
+            # goes straight to it and no operating-system dialog is involved.
+            uploader = page.locator(self.FILE_INPUT).last
+            await uploader.set_input_files([str(p) for p in draft.attachments])
+            await self._await_attachments(page, len(draft.attachments))
+
+        await (await self._first(page, self.SEND, "Send button")).click()
+        await asyncio.sleep(2.0)
+        log.info("Gmail says the message to %s is sent", draft.to)
+
+    async def _await_attachments(self, page: Any, expected: int, timeout: float = 90.0) -> None:
+        """Wait for the uploads to finish, because Send discards one still in progress."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                done = await page.locator('div[aria-label*="Attachment"], .dL, .aZo').count()
+            except Exception:
+                done = 0
+            if done >= expected:
+                return
+            await asyncio.sleep(1.0)
+        log.warning("Gmail has not confirmed all %d attachment(s); sending anyway", expected)
