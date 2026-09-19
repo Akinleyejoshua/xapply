@@ -44,6 +44,7 @@ PERSISTED_KEYS = (
     "fill_mode",
     "fill_all_at_once",
     "verify_after_fill",
+    "email_apply",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -128,6 +129,25 @@ class Settings(BaseSettings):
     verify_after_fill: bool = True
     headless: bool = False  # keep False so a human can take over on CAPTCHAs
     human_gate_mode: Literal["terminal", "api"] = "terminal"
+
+    # ---- Applying by email ----
+    #: Some roles never reach an applicant tracking system: the posting says "send your
+    #: CV to careers@example.com" and that is the whole process. Off by default, because
+    #: sending email is the one thing here that cannot be undone.
+    email_apply: bool = False
+    #: Send without stopping for you to read the draft. A separate decision from turning
+    #: the feature on, and deliberately harder to reach.
+    email_auto_send: bool = False
+    #: Credentials. These stay in .env and are never written to settings.local.json.
+    #: For Gmail this is an app password, not your account password.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    smtp_timeout_s: float = 30.0
+    email_from: str = ""            # defaults to smtp_user
+    email_reply_to: str = ""        # defaults to the profile's email
 
     # ---- Job search ----
     # linkedin | urls | greenhouse | lever | ashby | remoteok | himalayas | google

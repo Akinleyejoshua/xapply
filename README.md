@@ -508,6 +508,26 @@ python main.py retry --status failed --yes    # every failed attempt
 python main.py retry --status pending_human_review
 ```
 
+### Applying by email
+
+Plenty of roles never reach an applicant tracking system. The posting says "send your CV
+to careers@example.com" and that is the whole process. Turn on **Apply by email** in
+Settings and add your mail server to `.env`, and a posting with no form is applied to by
+writing to the address it gives.
+
+It is off by default, and stays careful when it is on:
+
+- The recipient is only ever an address found in the posting. It is never guessed, and
+  addresses like `noreply@`, `privacy@` and `support@` are refused.
+- The run stops and shows you the draft before anything is sent. The whole message is
+  written to `logs/emails/` so you can read it in full.
+- `EMAIL_AUTO_SEND=true` skips that pause. It is a separate setting from turning the
+  feature on, because they are different decisions.
+- Your mail credentials live in `.env` only. They are never written to
+  `settings.local.json` and never sent to the browser.
+
+For Gmail, `SMTP_PASSWORD` is an app password, not your account password.
+
 ### Open questions on a form
 
 Forms ask the same handful of things in a thousand wordings: how you work remotely,

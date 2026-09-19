@@ -799,6 +799,14 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
               <span><b>Remote roles only</b><span class="dim">Genuinely remote. Hybrid and on-site are dropped.</span></span></label>
             <label class="check"><input type="checkbox" id="cfgFollow">
               <span><b>Follow companies</b><span class="dim">Leave LinkedIn's follow box ticked.</span></span></label>
+            <label class="check"><input type="checkbox" id="cfgVerify">
+              <span><b>Check the form afterwards</b><span class="dim">Reads every field back
+              and fills again anything that did not take, such as a box you clicked out of
+              while it was being typed into.</span></span></label>
+            <label class="check"><input type="checkbox" id="cfgEmail">
+              <span><b>Apply by email</b><span class="dim" id="emailNote">For postings that
+              say to send your CV to an address instead of offering a form. Needs SMTP settings
+              in .env, and stops for you to read the draft before sending.</span></span></label>
             <label class="check"><input type="checkbox" id="cfgAtOnce">
               <span><b>Fill the whole form at once</b><span class="dim">Reads every question, works out
               all the answers together, then fills in one pass. Much faster on long forms. Off, answers
@@ -962,6 +970,13 @@ function renderConfig(){
   setChecked('cfgDropExp', CONFIG.resume_may_drop_experience);
   setChecked('cfgHeadless', CONFIG.headless);
   setChecked('cfgAtOnce', CONFIG.fill_all_at_once);
+  setChecked('cfgVerify', CONFIG.verify_after_fill);
+  setChecked('cfgEmail', CONFIG.email_apply);
+  const note = $('emailNote');
+  if(note && CONFIG.email_apply && (CONFIG.email_missing || []).length){
+    note.innerHTML = `<b style="color:var(--err)">Not ready:</b> set ` +
+      CONFIG.email_missing.map(esc).join(', ') + ' in .env, then restart.';
+  }
   $('keyState').innerHTML =
     `GEMINI ${CONFIG.has_gemini_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
     `NVIDIA ${CONFIG.has_nvidia_key ? 'set' : '<b>missing</b>'} &nbsp;·&nbsp; ` +
@@ -1757,7 +1772,8 @@ for(const [id, key] of [['cfgThreshold','match_threshold'], ['cfgMaxApps','max_a
 }
 for(const [id, key] of [['cfgAuto','auto_submit'], ['cfgRemote','remote_only'],
                         ['cfgFollow','follow_companies'], ['cfgHeadless','headless'],
-                        ['cfgAtOnce','fill_all_at_once']]){
+                        ['cfgAtOnce','fill_all_at_once'], ['cfgVerify','verify_after_fill'],
+                        ['cfgEmail','email_apply']]){
   $(id).onchange = () => {
     if(key === 'auto_submit' && $(id).checked &&
        !confirm('Auto-submit sends real applications without you clicking Submit, and is remembered until you turn it off. Continue?')){

@@ -531,6 +531,23 @@ class AshbyBoardSource(ApiJobSource):
 
 
 class AggregatorSource(ApiJobSource):
+    """Public feeds of remote roles, resolved to the real application link.
+
+    A listing with no applicant tracking system behind it used to be discarded. Many of
+    those are not dead ends: the posting says to email a CV to an address, which is a
+    whole hiring process for a great many smaller employers. When applying by email is
+    on, those are kept and routed that way instead.
+    """
+
+    def email_route(self, description: str, link: str) -> Optional[str]:
+        """The address to apply to when there is no form, or None."""
+        if not self.s.email_apply:
+            return None
+        from email_apply import find_addresses
+
+        found = find_addresses(description, link)
+        return found[0] if found else None
+
     """Shared logic: aggregator links have to be resolved to the real ATS application URL.
 
     Aggregator job pages are often behind Cloudflare and answer plain HTTP with 403
@@ -631,17 +648,24 @@ class RemoteOKSource(AggregatorSource):
                 link = d.get("apply_url") or d.get("url") or ""
                 description = strip_html(d.get("description", ""))
                 ats_url = await self.resolve_ats_url(client, link, description, page)
+                write_to = None
                 if not ats_url:
-                    self.stats.dropped_unresolved += 1
-                    log.debug("remoteok: no ATS link behind %s", link)
-                    continue
+                    write_to = self.email_route(description, link)
+                    if not write_to:
+                        self.stats.dropped_unresolved += 1
+                        log.debug("remoteok: no ATS link behind %s", link)
+                        continue
+                    log.info("remoteok: no form behind %s, but it asks for an email to %s",
+                             link, write_to)
+                    ats_url = link
                 loc = (d.get("location") or "Remote").strip()
                 if not location_matches(loc, self.s.search_location, self.s.remote_only,
                                         countries=self.s.countries):
                     self.stats.dropped_location += 1
                     continue
                 job = JobPosting(
-                    job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
+                    job_id=job_id_from_url(ats_url), url=ats_url,
+                    apply_url="" if write_to else ats_url,
                     title=(d.get("position") or "").strip(), company=(d.get("company") or "").strip(),
                     location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),
@@ -679,17 +703,24 @@ class HimalayasSource(AggregatorSource):
                 link = d.get("applicationLink") or d.get("guid") or ""
                 description = strip_html(d.get("description", ""))
                 ats_url = await self.resolve_ats_url(client, link, description, page)
+                write_to = None
                 if not ats_url:
-                    self.stats.dropped_unresolved += 1
-                    log.debug("himalayas: no ATS link behind %s", link)
-                    continue
+                    write_to = self.email_route(description, link)
+                    if not write_to:
+                        self.stats.dropped_unresolved += 1
+                        log.debug("himalayas: no ATS link behind %s", link)
+                        continue
+                    log.info("himalayas: no form behind %s, but it asks for an email to %s",
+                             link, write_to)
+                    ats_url = link
                 loc = ", ".join(d.get("locationRestrictions") or []) or "Remote"
                 if not location_matches(loc, self.s.search_location, self.s.remote_only,
                                         countries=self.s.countries):
                     self.stats.dropped_location += 1
                     continue
                 job = JobPosting(
-                    job_id=job_id_from_url(ats_url), url=ats_url, apply_url=ats_url,
+                    job_id=job_id_from_url(ats_url), url=ats_url,
+                    apply_url="" if write_to else ats_url,
                     title=(d.get("title") or "").strip(), company=(d.get("companyName") or "").strip(),
                     location=loc,
                     description=description, source=self.name, ats=detect_ats(ats_url),

@@ -101,10 +101,23 @@ class Pipeline:
             log.info("SKIP: %s", note)
             return STATUS_SKIPPED
 
+        cover_letter = self._cover_letter_factory(job)
         applier = get_applier(job.ats, browser, self.filler, self.gate, self.s,
-                              cover_letter=self._cover_letter_factory(job))
-        if applier is None:
+                              cover_letter=cover_letter)
+        email_to = None
+        if applier is None and self.s.email_apply:
+            # No form to fill, but the posting may simply be asking to be emailed.
+            from email_apply import find_address
+
+            page_text = await self._page_text(browser)
+            email_to = find_address(job, page_text)
+            if email_to:
+                log.info("No application form here, but the posting says to write to %s",
+                         email_to)
+        if applier is None and not email_to:
             note = f"No applier for ATS {job.ats!r} ({job.apply_url or job.url})"
+            if not self.s.email_apply:
+                note += ". Turn on 'Apply by email' to write to an address the posting gives."
             self.db.record(job, STATUS_SKIPPED, notes=note)
             self.write_audit(job, None, STATUS_SKIPPED, note, [], "", "")
             self._bump(STATUS_SKIPPED)
@@ -126,6 +139,10 @@ class Pipeline:
 
         resume_path = await self.resumes.build(self.profile, analysis, job)
         trimmed = self.resumes.last_trim
+        cover_letter.cache["analysis"] = analysis
+        if applier is None:
+            return await self._apply_by_email(job, analysis, resume_path, trimmed,
+                                              email_to, cover_letter)
         if applier.cover_letter is not None:
             applier.cover_letter.cache["analysis"] = analysis
         mode = {"documents": "attaching documents only", "assisted": "filling the form",
@@ -147,6 +164,76 @@ class Pipeline:
         self._bump(result.status)
         log.info("%s: %s", result.status.upper(), result.note)
         return result.status
+
+    @staticmethod
+    async def _page_text(browser: StealthBrowser) -> str:
+        """The visible text of whatever is open, for finding an address in it."""
+        try:
+            return await browser.page.evaluate(
+                "() => document.body ? document.body.innerText.slice(0, 20000) : ''")
+        except Exception:
+            return ""
+
+    async def _apply_by_email(self, job: JobPosting, analysis: JobAnalysis,
+                              resume_path: Path, trimmed: str, email_to: str,
+                              cover_letter: Any) -> str:
+        """Send the documents to the address the posting gives, once you have read it."""
+        from email_apply import EmailApplier
+
+        mailer = EmailApplier(self.s, self.gate)
+        missing = mailer.missing_settings()
+        if missing:
+            note = ("Apply by email is on, but " + ", ".join(missing) +
+                    " is not set in .env, so nothing was sent.")
+            self.db.record(job, STATUS_FAILED, match_score=analysis.match_score, notes=note,
+                           analysis=analysis.model_dump(), resume_path=str(resume_path))
+            self._bump(STATUS_FAILED)
+            log.error(note)
+            return STATUS_FAILED
+
+        letter_pdf, letter_text = await cover_letter()
+        draft = mailer.compose(job, email_to, self.profile, letter_text,
+                               [resume_path, letter_pdf])
+        preview = mailer.save_preview(draft, job)
+        log.info("Draft saved to %s", preview)
+
+        status, note = STATUS_PENDING, ""
+        if not self.s.email_auto_send:
+            outcome = await self.gate.wait(
+                f"About to email your application to {email_to}.\n"
+                f"{draft.describe()[:600]}\n"
+                f"The full message is at {preview}. Continue to send it, or skip.")
+            if outcome == HumanGate.SKIP:
+                note = f"You chose not to email {email_to}"
+                self.db.record(job, STATUS_SKIPPED, match_score=analysis.match_score,
+                               notes=note, analysis=analysis.model_dump(),
+                               resume_path=str(resume_path))
+                self._bump(STATUS_SKIPPED)
+                log.info("SKIP: %s", note)
+                return STATUS_SKIPPED
+        try:
+            await mailer.send(draft)
+            status = STATUS_SUBMITTED
+            note = f"Emailed to {email_to} with {len(draft.attachments)} attachment(s)"
+        except Exception as exc:          # SMTP failures come in many shapes
+            status, note = STATUS_FAILED, f"Could not send to {email_to}: {exc}"
+            log.error(note)
+
+        answers = [{"label": "Sent to", "kind": "email", "value": email_to,
+                    "source": "posting", "confidence": 1.0, "ok": status == STATUS_SUBMITTED},
+                   {"label": "Subject", "kind": "email", "value": draft.subject,
+                    "source": "composed", "confidence": 1.0, "ok": True}]
+        if trimmed not in ("nothing trimmed", "overflow"):
+            answers.insert(0, {"label": "Resume shortened", "kind": "note", "value": trimmed,
+                               "source": f"fits {self.s.resume_max_pages} page(s)",
+                               "confidence": 1.0, "ok": True})
+        audit = self.write_audit(job, analysis, status, note, answers, str(resume_path), "")
+        self.db.record(job, status, match_score=analysis.match_score,
+                       notes=f"{note} | audit: {audit.name}", resume_path=str(resume_path),
+                       analysis=analysis.model_dump(), answers=answers)
+        self._bump(status)
+        log.info("%s: %s", status.upper(), note)
+        return status
 
     def _cover_letter_factory(self, job: JobPosting):
         """Write this posting's cover letter at most once, and only if a form asks.
