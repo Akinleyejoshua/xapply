@@ -163,7 +163,10 @@ class FieldAnswer(BaseModel):
         "An open question asking the candidate to write about their own experience is not such "
         "a case: compose the answer from the profile instead of setting this."
     )
-    reasoning: str = Field(description="One sentence.")
+    #: Informational only, so a model that omits it is not worth a whole retry. The
+    #: decisions above are not defaulted: a missing `needs_human` is a real omission,
+    #: and guessing it either escalates everything or silently answers for the candidate.
+    reasoning: str = Field(default="", description="One sentence.")
 
 
 # --------------------------------------------------------------------------

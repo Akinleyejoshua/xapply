@@ -279,6 +279,19 @@ def test_repair_never_degrades_to_an_empty_object() -> None:
         extract_json("{ {")
 
 
+def test_a_missing_reasoning_does_not_cost_a_retry() -> None:
+    """Seen live: the model answered well but left out the field used only for logging."""
+    from ai_agent import FieldAnswer
+
+    fa = FieldAnswer.model_validate(
+        {"answer": "I defined a data-quality score.", "confidence": 0.95, "needs_human": False})
+    assert fa.answer.startswith("I defined") and fa.reasoning == ""
+
+    # The two decisions are still required: guessing either one answers for the candidate.
+    with pytest.raises(Exception):
+        FieldAnswer.model_validate({"answer": "x", "confidence": 0.9})
+
+
 def test_schema_of_inlines_refs() -> None:
     from ai_agent import JobAnalysis
 
