@@ -181,10 +181,11 @@ def test_it_is_off_until_you_turn_it_on(settings) -> None:
 
 
 def test_credentials_are_never_written_to_the_ui_settings_file() -> None:
+    """Preferences are saved. Credentials are not, and stay in .env."""
     from config import PERSISTED_KEYS
 
     for secret in ("smtp_password", "smtp_user", "smtp_host", "email_from",
-                   "email_reply_to", "email_auto_send"):
+                   "email_reply_to", "gmail_url"):
         assert secret not in PERSISTED_KEYS, secret
 
 
@@ -482,9 +483,16 @@ class GmailPage:
         self.visited: list[str] = []
         self.keyboard = self._Keyboard(self)
 
+    #: What the Sent row will say, set by the test that needs it to differ.
+    subject = "Application for Analyst at X - Joshua Akinleye"
+
     async def goto(self, url: str, **_k) -> None:
         """Gmail is asked what it actually sent, so the Sent view is navigated to."""
         self.visited.append(url)
+
+    async def reload(self, **_k) -> None:
+        """Hash navigation does not always re-run the search, so it is forced."""
+        return None
 
     class _Keyboard:
         def __init__(self, page: "GmailPage") -> None:
@@ -520,6 +528,12 @@ class GmailPage:
             if sel == "tr.zA":            # a row in the Sent list
                 return 1 if (page.sent and page.ending == "sent") else 0
             return 1
+
+        async def all_inner_texts(self) -> list:
+            page = self.page
+            if self.sel != "tr.zA" or not (page.sent and page.ending == "sent"):
+                return []
+            return [f"To: careers, {page.subject}, has attachment, 11:25 PM"]
 
         async def is_visible(self) -> bool:
             return bool(await self.count())
@@ -561,6 +575,8 @@ async def _send(settings, ending: str):
     draft = EmailApplier(settings).compose(
         JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
         "careers@example.com", PROFILE, "Hello.", [])
+    page.subject = draft.subject
+    GmailTransport.SENT_TIMEOUT = 3.0
     await GmailTransport(settings, GmailBrowser(page)).send(draft)
     return page
 
@@ -700,8 +716,11 @@ async def test_nothing_in_sent_means_it_was_not_sent(settings) -> None:
         async def count(self):
             return 0
 
+        async def all_inner_texts(self):
+            return []
+
     page.locator = lambda sel: Empty(sel, page)
-    GmailTransport.SENT_TIMEOUT = 1.0
+    GmailTransport.SENT_TIMEOUT = 2.0
     draft = EmailApplier(settings).compose(
         JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
         "careers@example.com", PROFILE, "Hello.", [])
@@ -721,3 +740,31 @@ def test_whether_to_ask_before_sending_is_yours_and_is_remembered() -> None:
 def test_asking_first_is_still_the_shipped_default() -> None:
     """Your own choice is saved separately. Out of the box it stops and shows you."""
     assert Settings(_env_file=None).email_auto_send is False
+
+
+@pytest.mark.asyncio
+async def test_a_different_message_in_sent_is_not_this_one(settings) -> None:
+    """Counting rows was the weak check that misled twice. A Sent folder full of older
+    applications has rows whatever happened just now."""
+    from email_apply import GmailTransport, SendRefused
+
+    page = GmailPage("sent")
+    page.sent = True
+    page.subject = "Application for Something Else Entirely at Another Company"
+    GmailTransport.SENT_TIMEOUT = 2.0
+    draft = EmailApplier(settings).compose(
+        JobPosting(job_id="j", url="https://x.com/j", title="Analyst", company="X"),
+        "careers@example.com", PROFILE, "Hello.", [])
+
+    with pytest.raises(SendRefused):
+        await GmailTransport(settings, GmailBrowser(page)).verify_in_sent(page, draft)
+
+
+def test_wrapping_and_ellipses_do_not_break_the_match() -> None:
+    from email_apply import _comparable
+
+    subject = "Application for Researcher and Data Analyst Role at London Plus"
+    row = ("To: lucy,  Application for Researcher\nand Data Analyst Role at London "
+           "Plus… , has attachment")
+
+    assert _comparable(subject)[:50] in _comparable(row)

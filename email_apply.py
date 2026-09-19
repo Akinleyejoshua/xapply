@@ -206,6 +206,11 @@ class Draft:
         return message
 
 
+def _comparable(text: str) -> str:
+    """Collapsed to letters and single spaces, so wrapping and ellipses do not matter."""
+    return re.sub(r"\s+", " ", (text or "").replace("\u2026", " ")).strip().lower()
+
+
 class NotConfigured(RuntimeError):
     """No mail server is set up, so nothing can be sent."""
 
@@ -494,18 +499,25 @@ class GmailTransport:
         if not needle:
             return
         url = self.SENT_SEARCH.format(q=quote(needle))
+        # Matched on what the rows say, not on how many there are. Gmail navigates by
+        # the part of the address after the hash, which does not always re-run the
+        # search, so a count can be of the previous list entirely.
+        wanted = _comparable(needle)[:60]
         deadline = asyncio.get_running_loop().time() + self.SENT_TIMEOUT
         while asyncio.get_running_loop().time() < deadline:
             try:
                 await page.goto(url, wait_until="domcontentloaded")
+                await asyncio.sleep(2.0)
+                await page.reload(wait_until="domcontentloaded")
                 await asyncio.sleep(3.0)
-                rows = await page.locator(self.SENT_ROWS).count()
+                rows = await page.locator(self.SENT_ROWS).all_inner_texts()
             except Exception as exc:
                 log.debug("could not read Sent: %s", exc)
-                rows = 0
-            if rows:
-                log.info("Gmail has it in Sent: %r to %s", needle[:60], draft.to)
-                return
+                rows = []
+            for row in rows:
+                if wanted and wanted in _comparable(row):
+                    log.info("Gmail has it in Sent: %r to %s", needle[:60], draft.to)
+                    return
             await asyncio.sleep(2.0)
         raise SendRefused(
             f"Gmail has nothing in Sent matching {needle!r}, so the message to "
