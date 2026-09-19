@@ -98,16 +98,16 @@ def test_query_tokens_drops_seniority_noise() -> None:
     assert query_tokens(["Senior Backend Engineer"]) == [{"backend", "engineer"}]
 
 
-@pytest.mark.parametrize("text,remote_only,is_remote,expected", [
+@pytest.mark.parametrize("text,remote_only,workplace_type,expected", [
     ("Remote - United States", True, None, True),
     ("San Francisco, CA", True, None, False),
-    ("San Francisco, CA", True, True, True),        # explicit flag wins
-    ("Remote", True, False, False),
+    ("San Francisco, CA", True, "Remote", True),     # workplaceType is authoritative
+    ("Remote", True, "Hybrid", False),               # ...even against the location text
     ("Anywhere", True, None, True),
-    ("Berlin", False, None, True),                  # not filtering on remote
+    ("Berlin", False, None, True),                   # not filtering on remote at all
 ])
-def test_location_matches(text, remote_only, is_remote, expected) -> None:
-    assert location_matches(text, "Remote", remote_only, is_remote) is expected
+def test_location_matches(text, remote_only, workplace_type, expected) -> None:
+    assert location_matches(text, "Remote", remote_only, workplace_type) is expected
 
 
 # ---- html cleanup + url recognition ---------------------------------------
@@ -284,3 +284,119 @@ def test_active_model_follows_provider(tmp_path: Path) -> None:
     assert s.active_model == "nv/x"
     s.llm_provider = "gemini"
     assert s.active_model == "gem/y"
+
+
+# ---- remote detection -----------------------------------------------------
+
+
+@pytest.mark.parametrize("location,workplace_type,expected", [
+    ("US - Remote", "Remote", True),
+    ("San Francisco", "Remote", True),          # workplaceType is authoritative
+    ("San Francisco", "Hybrid", False),         # Ashby flags hybrid roles isRemote=true
+    ("Sao Paulo", "Hybrid", False),
+    ("London", "OnSite", False),
+    ("Remote, United States", None, True),
+    ("Remote, Bangalore", None, True),
+    ("Anywhere", None, True),
+    ("Hybrid - NYC", None, False),              # the word hybrid overrides
+    ("San Francisco", None, False),
+    ("", None, False),
+])
+def test_looks_remote(location, workplace_type, expected) -> None:
+    from discovery import looks_remote
+
+    assert looks_remote(location, workplace_type) is expected
+
+
+def test_location_matches_without_remote_only() -> None:
+    assert location_matches("Berlin", "Berlin", False) is True
+    assert location_matches("Berlin", "Lisbon", False) is False
+    assert location_matches("Berlin", "", False) is True            # no preference set
+    assert location_matches("Remote, EU", "Lisbon", False) is True  # remote satisfies any location
+
+
+# ---- seniority ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("title,level", [
+    ("Software Engineering Intern", "intern"),
+    ("Summer 2026 Intern, Backend", "intern"),
+    ("Junior Developer", "junior"),
+    ("Jr. Data Analyst", "junior"),
+    ("Associate Product Manager", "junior"),        # junior prefix beats "manager"
+    ("New Grad Software Engineer", "junior"),
+    ("Entry-Level Developer", "junior"),
+    ("Backend Engineer", "mid"),
+    ("Full Stack Developer", "mid"),
+    ("Software Engineer II", "mid"),
+    ("Senior Backend Engineer", "senior"),
+    ("Sr. Data Scientist", "senior"),
+    ("Staff Software Engineer", "lead"),
+    ("Senior Staff Engineer", "lead"),
+    ("Principal Engineer", "lead"),
+    ("Engineering Manager", "lead"),
+    ("Senior Engineering Manager", "lead"),
+    ("Head of Platform", "lead"),
+    ("Solutions Architect", "lead"),
+    ("Software Engineer, Ads Manager", "mid"),      # "Manager" is a product name here
+    ("Software Engineer, Fleet Manager", "mid"),
+    ("Senior Software Engineer, Package Manager", "senior"),
+])
+def test_seniority_of(title, level) -> None:
+    from discovery import seniority_of
+
+    assert seniority_of(title) == level
+
+
+def test_seniority_matches_empty_means_any() -> None:
+    from discovery import seniority_matches
+
+    assert seniority_matches("Junior Developer", None) is True
+    assert seniority_matches("Junior Developer", []) is True
+    assert seniority_matches("Junior Developer", ["senior", "lead"]) is False
+    assert seniority_matches("Senior Developer", ["senior", "lead"]) is True
+    assert seniority_matches("Senior Developer", ["SENIOR"]) is True    # case-insensitive
+
+
+@pytest.mark.asyncio
+async def test_ashby_source_respects_remote_and_seniority(monkeypatch, tmp_path: Path) -> None:
+    """A hybrid role flagged isRemote must not survive a remote-only scan."""
+    base = dict(output_dir=tmp_path, log_dir=tmp_path, audit_dir=tmp_path, user_data_dir=tmp_path,
+                template_dir=ROOT / "templates", company_file=ROOT / "companies.json",
+                search_queries=["Software Engineer"], max_jobs_per_company=50, discovery_delay_s=0)
+    payload = {"jobs": [
+        {"id": "a", "title": "Senior Software Engineer", "isListed": True, "isRemote": True,
+         "location": "San Francisco", "workplaceType": "Hybrid",
+         "descriptionPlain": "x " * 200, "jobUrl": "https://jobs.ashbyhq.com/acme/a"},
+        {"id": "b", "title": "Software Engineer", "isListed": True, "isRemote": True,
+         "location": "US - Remote", "workplaceType": "Remote",
+         "descriptionPlain": "y " * 200, "jobUrl": "https://jobs.ashbyhq.com/acme/b"},
+        {"id": "c", "title": "Staff Software Engineer", "isListed": True, "isRemote": True,
+         "location": "US - Remote", "workplaceType": "Remote",
+         "descriptionPlain": "z " * 200, "jobUrl": "https://jobs.ashbyhq.com/acme/c"},
+    ]}
+
+    async def discover(settings: Settings):
+        d = Database(settings.db_path)
+        d.init()
+        src = AshbyBoardSource(settings, d, None, tokens=["acme"])
+        patch_client(monkeypatch, src, {"posting-api/job-board/acme": payload})
+        return await src.discover()
+
+    everything = await discover(Settings(db_path=tmp_path / "1.db", **base))
+    assert {j.job_id[-1] for j in everything} == {"a", "b", "c"}
+
+    remote = await discover(Settings(db_path=tmp_path / "2.db", remote_only=True, **base))
+    assert {j.job_id[-1] for j in remote} == {"b", "c"}          # the hybrid one is gone
+
+    leads = await discover(Settings(db_path=tmp_path / "3.db", seniority_levels=["lead"], **base))
+    assert {j.job_id[-1] for j in leads} == {"c"}
+
+    both = await discover(Settings(db_path=tmp_path / "4.db", remote_only=True,
+                                   seniority_levels=["mid"], **base))
+    assert {j.job_id[-1] for j in both} == {"b"}
+
+
+def test_settings_seniority_accepts_csv(monkeypatch) -> None:
+    monkeypatch.setenv("SENIORITY_LEVELS", "mid, senior ,lead")
+    assert Settings(_env_file=None).seniority_levels == ["mid", "senior", "lead"]

@@ -23,7 +23,13 @@ from browser_bot import (  # noqa: E402
     is_placeholder_option,
 )
 from config import Settings  # noqa: E402
-from database import STATUS_PENDING, STATUS_SKIPPED, STATUS_SUBMITTED, Database  # noqa: E402
+from database import (  # noqa: E402
+    STATUS_FAILED,
+    STATUS_PENDING,
+    STATUS_SKIPPED,
+    STATUS_SUBMITTED,
+    Database,
+)
 from models import ASHBY, GREENHOUSE, LEVER, LINKEDIN, JobPosting, detect_ats, job_id_from_url  # noqa: E402
 from resume_builder import ResumeBuilder, slugify  # noqa: E402
 
@@ -454,3 +460,62 @@ def test_apply_selected_normalises_and_rejects_empty(settings: Settings) -> None
     client = TestClient(create_app(settings, db))
     assert client.post("/admin/apply-selected", json={"urls": []}).status_code == 400
     assert client.post("/admin/apply-selected", json={"urls": ["  ", ""]}).status_code == 400
+
+
+# ---- deletion -------------------------------------------------------------
+
+
+def test_database_delete_paths(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.init()
+    ids = [db.record(JobPosting(job_id=str(i), url=f"https://jobs.lever.co/a/{i}", company=f"C{i}",
+                                title="Dev", source="urls", ats=LEVER),
+                     STATUS_FAILED if i < 2 else STATUS_SUBMITTED) for i in range(5)]
+    assert db.delete(ids[0]) is True
+    assert db.delete(ids[0]) is False                  # already gone
+    assert db.delete_many(ids[1:3]) == 2
+    assert db.delete_many([]) == 0
+    assert db.stats()["total"] == 2
+    assert db.delete_by_status(STATUS_SUBMITTED) == 2
+    assert db.stats()["total"] == 0
+    with pytest.raises(ValueError):
+        db.delete_by_status("nonsense")
+
+
+def test_deleted_job_can_be_discovered_again(tmp_path: Path) -> None:
+    """Deleting is how you retry a posting: dedupe must stop blocking it."""
+    db = Database(tmp_path / "t.db")
+    db.init()
+    job = JobPosting(job_id="7", url="https://jobs.lever.co/a/7", source="urls", ats=LEVER)
+    app_id = db.record(job, STATUS_FAILED)
+    assert db.has_job("urls", "7") is True
+    db.delete(app_id)
+    assert db.has_job("urls", "7") is False
+
+
+def test_api_delete_endpoints(settings: Settings, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+
+    db = Database(settings.db_path)
+    db.init()
+    resume = tmp_path / "r.pdf"
+    resume.write_text("pdf")
+    ids = [db.record(JobPosting(job_id=str(i), url=f"https://jobs.lever.co/a/{i}", company=f"C{i}",
+                                title="Dev", source="urls", ats=LEVER),
+                     STATUS_FAILED if i < 2 else STATUS_SUBMITTED,
+                     resume_path=str(resume) if i == 4 else None) for i in range(5)]
+    client = TestClient(create_app(settings, db))
+
+    assert client.delete(f"/api/applications/{ids[0]}").json() == {"deleted": 1, "id": ids[0]}
+    assert client.delete("/api/applications/99999").status_code == 404
+    assert client.post("/api/applications/delete", json={"ids": ids[1:3]}).json()["deleted"] == 2
+    assert client.post("/api/applications/delete", json={}).status_code == 400
+
+    assert resume.exists()
+    client.delete(f"/api/applications/{ids[4]}?files=true")
+    assert not resume.exists()                          # the generated PDF went with it
+
+    assert client.post("/api/applications/delete", json={"all": True}).json()["deleted"] == 1
+    assert client.get("/api/stats").json()["total"] == 0
