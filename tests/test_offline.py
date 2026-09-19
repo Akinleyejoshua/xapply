@@ -69,7 +69,9 @@ def analysis() -> JobAnalysis:
 def settings(tmp_path: Path) -> Settings:
     return Settings(gemini_api_key="test-key", db_path=tmp_path / "t.db", output_dir=tmp_path / "out",
                     log_dir=tmp_path / "logs", audit_dir=tmp_path / "logs" / "apps",
-                    user_data_dir=tmp_path / "prof", template_dir=ROOT / "templates")
+                    user_data_dir=tmp_path / "prof", template_dir=ROOT / "templates",
+                    # keep the repo's own settings.local.json out of the tests
+                    overrides_path=tmp_path / "settings.local.json")
 
 
 # ---- models ---------------------------------------------------------------

@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(db_path=tmp_path / "t.db", output_dir=tmp_path, log_dir=tmp_path,
-                    audit_dir=tmp_path, user_data_dir=tmp_path, template_dir=ROOT / "templates")
+                    audit_dir=tmp_path, user_data_dir=tmp_path, template_dir=ROOT / "templates",
+                    overrides_path=tmp_path / "settings.local.json")
 
 
 # ---- human gate -----------------------------------------------------------

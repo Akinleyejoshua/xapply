@@ -38,6 +38,7 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(db_path=tmp_path / "t.db", output_dir=tmp_path / "out", log_dir=tmp_path / "logs",
                     audit_dir=tmp_path / "logs" / "a", user_data_dir=tmp_path / "p",
                     template_dir=ROOT / "templates", company_file=ROOT / "companies.json",
+                    overrides_path=tmp_path / "settings.local.json",
                     search_queries=["Machine Learning Engineer", "Backend Engineer"],
                     search_location="Remote", max_jobs_per_company=5, discovery_delay_s=0)
 
@@ -363,6 +364,7 @@ async def test_ashby_source_respects_remote_and_seniority(monkeypatch, tmp_path:
     """A hybrid role flagged isRemote must not survive a remote-only scan."""
     base = dict(output_dir=tmp_path, log_dir=tmp_path, audit_dir=tmp_path, user_data_dir=tmp_path,
                 template_dir=ROOT / "templates", company_file=ROOT / "companies.json",
+                overrides_path=tmp_path / "settings.local.json",
                 search_queries=["Software Engineer"], max_jobs_per_company=50, discovery_delay_s=0)
     payload = {"jobs": [
         {"id": "a", "title": "Senior Software Engineer", "isListed": True, "isRemote": True,

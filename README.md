@@ -167,6 +167,36 @@ against the Pydantic schema before anything touches it.
 
 ---
 
+## The dashboard remembers what you choose
+
+Every settings control writes through one API call that saves to `settings.local.json`, then
+re-renders every page. So a model you pick on the Dashboard appears in Settings, a source you tick
+on Scan & Apply is still ticked after a reload, and all of it survives a restart.
+
+Resolution order, each layer overriding the one before:
+
+1. the defaults in `config.py`
+2. environment variables and `.env`
+3. `settings.local.json`, the choices you made in the UI
+
+Only fourteen keys can be saved that way: the LLM provider and model, sources, search terms,
+location, remote-only, seniority, threshold, auto-submit, headless, the two limits and
+follow-companies. Never a path, a token or an API key, so a hand-edited file cannot widen its own
+scope. Check what is in force and where it came from:
+
+```bash
+python main.py settings            # every value, and whether it came from .env or the UI
+python main.py settings --reset    # forget the UI choices
+```
+
+In the UI, the **Reset to .env** button under Settings does the same thing.
+
+Auto-submit is remembered too, so the sidebar always shows the current mode in red when it is on.
+The Dashboard's **Scan and apply** button always runs assisted regardless, and **Run with
+auto-submit** always submits, so those two buttons mean what they say whatever the saved default is.
+
+---
+
 ## Filtering what you apply to
 
 **Seniority.** Every posting is bucketed into `intern`, `junior`, `mid`, `senior` or `lead` from its
@@ -246,7 +276,8 @@ python main.py export --out apps.csv
 | Make target | Command | What it does |
 | --- | --- | --- |
 | `make install` | | venv, dependencies, Chromium, `.env`, import check |
-| `make serve` | `serve` | Web dashboard and API on `127.0.0.1:8000` |
+| `make serve` | `serve` | Web dashboard and API on `127.0.0.1:8000`. `make serve PORT=8001` to move it |
+| `make settings` | `settings` | Show every setting and whether it came from `.env` or the UI |
 | `make scan` | `discover` | Preview what the sources would find. Applies to nothing |
 | `make scan-save` | `discover --save jobs.txt` | Scan and write the URLs to a file |
 | `make run` | `run` | Assisted mode. Bot fills, you submit |
@@ -284,7 +315,7 @@ any other host with the default token is refused.
 | Discover | `POST /admin/discover`, `GET /api/discovered`, `POST /api/detect` |
 | Apply | `POST /admin/run`, `/admin/apply-selected`, `/admin/stop` |
 | Control | `GET /api/run`, `/api/gate`, `POST /admin/continue` |
-| Settings | `GET|PATCH /api/config`, `GET /api/models` |
+| Settings | `GET|PATCH /api/config`, `POST /api/config/reset`, `GET /api/models` |
 | Data | `GET|PUT /api/profile`, `GET|POST /api/companies`, `DELETE /api/companies/{ats}/{token}` |
 
 ---
@@ -353,7 +384,8 @@ map onto range options properly: 6 years picks "5-10 years", not the nearest sta
 | `pipeline.py` | Orchestration and audit logging |
 | `reports.py` | Terminal dashboard rendering |
 | `api.py` | FastAPI app: every flow the CLI has |
-| `static/index.html` | The web dashboard |
+| `static/index.html` | The web dashboard. One store drives every page |
+| `settings.local.json` | Choices made in the UI. Delete it to fall back to `.env` |
 | `main.py` | CLI |
 
 **Selector strategy.** Fields are discovered by one injected script that resolves each input's
@@ -392,10 +424,26 @@ is reduced. Nothing is invented or reworded to make it fit; entries are only dro
 | A scan finds far too much | Use more specific terms, or narrow the seniority levels |
 | Hybrid roles show up as remote | Fixed: an ATS's own remote flag is no longer trusted on its own |
 | A posting will not be retried | It is already in the database. `python main.py delete <id>` frees it |
+| `make: *** [serve] Terminated: 15` | Something sent the server SIGTERM. Usually a `pkill` matching `main.py serve`, or a second copy starting on the same port. `make serve PORT=8001` runs another one safely |
+| Port already in use | The dashboard now says so and suggests the next port instead of raising |
+| A setting will not stick | Check `python main.py settings`. Only the keys it lists are saved; the rest come from `.env` |
 | `Could not launch browser channel 'chrome'` | Harmless. It falls back to bundled Chromium, or set `BROWSER_CHANNEL=` |
 | The bot pauses constantly on one site | Those fields are not resolvable from your profile. Extend `screening_defaults` |
 
 Logs: `logs/xapply.log`. Audits: `logs/applications/*.json`. Screenshots: `logs/*.png`.
+
+---
+
+## The interface
+
+Sidebar navigation, five pages, light and dark following your system setting. The palette is black,
+white and a royal blue accent, with pure neutral greys so the accent is the only colour doing
+decorative work. Status still carries its own colour, because green, amber and red tell you at a
+glance whether an application went through, is waiting for you, or failed, and that is information
+rather than decoration.
+
+The web UI and the CLI are equals. Anything you can do in one, you can do in the other, and they
+read the same state.
 
 ---
 
