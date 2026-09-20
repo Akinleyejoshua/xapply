@@ -896,3 +896,40 @@ def test_a_blank_title_is_not_offered_as_an_example(settings: Settings) -> None:
     stats.turned_away("   ")
 
     assert stats.dropped_title == 2 and stats.examples == []
+
+
+def test_no_filter_is_blamed_when_none_of_them_fired(settings: Settings) -> None:
+    """Seen live: "Only 4 of 4 postings survived every filter. Here is where the rest
+    went." There was no rest. Nothing was filtered out; the search just found little."""
+    from discovery import ScanStats, explain_empty_scan
+
+    tips = explain_empty_scan(ScanStats(seen=4, kept=4), settings)
+
+    joined = " ".join(tips)
+    assert "where the rest went" not in joined
+    assert "nothing was filtered out" in joined
+
+
+def test_it_then_says_what_would_actually_help(settings: Settings) -> None:
+    """Loosening a filter does nothing when no filter fired. Asking the search for more
+    is the thing that does."""
+    from discovery import ScanStats, explain_empty_scan
+
+    settings.search_result_pages = 1
+    settings.max_pages_opened = 12
+
+    joined = " ".join(explain_empty_scan(ScanStats(seen=4, kept=4), settings))
+
+    assert "Search result pages" in joined and "(now 1)" in joined
+    assert "Max pages the bot opens" in joined
+
+
+def test_a_filter_is_still_named_when_one_did_fire(settings: Settings) -> None:
+    from discovery import ScanStats, explain_empty_scan
+
+    stats = ScanStats(seen=6, kept=2)
+    stats.turned_away("Product Designer")
+
+    joined = " ".join(explain_empty_scan(stats, settings))
+
+    assert "where the rest went" in joined and "Product Designer" in joined

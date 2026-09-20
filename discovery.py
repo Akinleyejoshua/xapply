@@ -1243,6 +1243,18 @@ def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
         return []
 
     tips: list[str] = []
+    if stats.kept and stats.kept == stats.seen:
+        # Nothing was filtered out, so there is no "rest" and no filter to blame. The
+        # scan simply did not find much to look at, which is a different problem with a
+        # different answer: ask the search for more, rather than loosening the filters.
+        return [
+            f"Every one of the {stats.seen} posting(s) found was kept, so nothing was "
+            f"filtered out. There were just not many to begin with.",
+            f"Raise 'Search result pages' (now {settings.search_result_pages}) to look "
+            f"past the first page of results, or 'Max pages the bot opens' (now "
+            f"{settings.max_pages_opened}) to open more of what it finds.",
+            "Adding another search term widens it further.",
+        ]
     if stats.kept:
         tips.append(f"Only {stats.kept} of {stats.seen} postings survived every filter. "
                     f"Here is where the rest went.")
