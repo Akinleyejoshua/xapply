@@ -269,7 +269,7 @@ class Settings(BaseSettings):
     #: put your applications on the open internet.
     api_host: str = Field(
         default_factory=lambda: "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1",
-        validation_alias=AliasChoices("API_HOST", "HOST"))
+        validation_alias=AliasChoices("API_HOST"))
     #: Platforms that run this for you say which port to listen on through PORT, so
     #: that is accepted as well as the project's own name for it.
     api_port: int = Field(8000, validation_alias=AliasChoices("API_PORT", "PORT"))

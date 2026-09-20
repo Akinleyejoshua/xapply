@@ -319,10 +319,40 @@ def cmd_companies(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Given(argparse.Action):
+    """Remembers that a value came from you rather than from a default."""
+
+    def __init__(self, option_strings, dest, flag="", **kwargs):
+        self.flag = flag
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        setattr(namespace, self.flag, True)
+
+
+def _mark_given(parser: argparse.ArgumentParser, option: str, flag: str) -> None:
+    for action in parser._actions:
+        if option in action.option_strings:
+            action.__class__ = _Given
+            action.flag = flag
+            return
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from api import create_app
+
+    # A hosting platform announces itself by setting PORT, and it reaches the service
+    # over the network rather than through this machine's own loopback. Decided here,
+    # where it is visible, rather than left to a default that an .env on a developer's
+    # machine quietly overrides. An address you asked for always wins.
+    if not args.host_given and os.environ.get("PORT") and settings.api_host == "127.0.0.1":
+        if not os.environ.get("API_HOST"):
+            args.host = "0.0.0.0"
+            print(f"  PORT is set, so listening on every address rather than only this "
+                  f"machine.")
 
     if settings.admin_token == "change-me" and args.host not in ("127.0.0.1", "localhost"):
         where = "your host's environment settings" if os.environ.get("PORT") else ".env"
@@ -691,6 +721,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("serve", help="FastAPI admin dashboard")
     s.add_argument("--host", default=settings.api_host)
+    # Whether you named an address, as opposed to taking whatever the default was.
+    s.set_defaults(host_given=False)
+    _mark_given(s, "--host", "host_given")
     s.add_argument("--port", type=int, default=settings.api_port)
     s.set_defaults(func=cmd_serve)
 
