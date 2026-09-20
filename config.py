@@ -40,6 +40,8 @@ PERSISTED_KEYS = (
     "seniority_levels",
     "countries",
     "title_match_threshold",
+    "search_result_pages",
+    "max_pages_opened",
     "match_threshold",
     "fill_mode",
     "fill_all_at_once",
@@ -197,6 +199,14 @@ class Settings(BaseSettings):
     seniority_levels: Annotated[list[str], NoDecode] = []
     #: Country names from `countries.COUNTRIES`. Empty means anywhere.
     countries: Annotated[list[str], NoDecode] = []
+    #: How many pages of search results to walk per query. Google shows ten or so
+    #: results a page and the rest are behind "Next", so one page is a thin slice of
+    #: what it found. Each extra page is another request, and Google's patience with
+    #: an automated browser is finite.
+    search_result_pages: int = Field(1, ge=1, le=10)
+    #: How many of those results the emails source will actually open. Opening a page
+    #: costs a page load, so this is what stops a scan running all afternoon.
+    max_pages_opened: int = Field(12, ge=1, le=100)
     #: 0-1. How closely a title must resemble a search term to be worth scoring.
     #: Lower casts a wider net; the LLM still rejects poor fits afterwards.
     title_match_threshold: float = Field(0.45, ge=0.0, le=1.0)

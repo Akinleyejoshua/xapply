@@ -120,6 +120,8 @@ class ConfigPatch(BaseModel):
     seniority_levels: Optional[list[Literal["intern", "junior", "mid", "senior", "lead"]]] = None
     countries: Optional[list[str]] = None
     title_match_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    search_result_pages: Optional[int] = Field(None, ge=1, le=10)
+    max_pages_opened: Optional[int] = Field(None, ge=1, le=100)
     match_threshold: Optional[int] = Field(None, ge=0, le=100)
     fill_mode: Optional[Literal["documents", "assisted", "auto"]] = None
     auto_submit: Optional[bool] = None      # legacy alias for fill_mode="auto"
@@ -516,6 +518,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "countries": settings.countries,
             "known_countries": COUNTRIES,
             "title_match_threshold": settings.title_match_threshold,
+            "search_result_pages": settings.search_result_pages,
+            "max_pages_opened": settings.max_pages_opened,
             "match_threshold": settings.match_threshold,
             "fill_mode": settings.fill_mode,
             "fill_all_at_once": settings.fill_all_at_once,

@@ -418,3 +418,80 @@ async def test_the_level_appears_in_the_query_google_is_given(
 
     asked = page.visited[0]
     assert "intern" in asked and "Data+Analyst" in asked
+
+
+# ---- walking past the first page of results -------------------------------
+
+class PagedResults(FakePage):
+    """Google, with different results on each page and nothing past the third."""
+
+    PAGES = {
+        0: ["https://job-boards.greenhouse.io/one/jobs/1"],
+        10: ["https://job-boards.greenhouse.io/two/jobs/2"],
+        20: [],
+    }
+
+    def __init__(self) -> None:
+        super().__init__({"direct": [], "wrapped": [], "cites": []})
+        self.starts: list[int] = []
+
+    async def goto(self, url: str, **_k) -> None:
+        self.visited.append(url)
+        import re as _re
+
+        found = _re.search(r"start=(\d+)", url)
+        start = int(found.group(1)) if found else 0
+        self.starts.append(start)
+        self.results = {"direct": self.PAGES.get(start, []), "wrapped": [], "cites": []}
+
+
+@pytest.mark.asyncio
+async def test_more_than_one_page_of_results_is_read(settings: Settings,
+                                                     db: Database) -> None:
+    """Google keeps all but the first ten results behind Next, so one page is a thin
+    slice of what it found."""
+    settings.search_result_pages = 3
+    src = source(settings, db)
+    page = PagedResults()
+
+    urls, boards = await src.search(page, "site:x")
+
+    assert page.starts == [0, 10, 20], "each page asked for in turn"
+    assert boards["greenhouse"] == {"one", "two"}
+
+
+@pytest.mark.asyncio
+async def test_one_page_is_still_the_default(settings: Settings, db: Database) -> None:
+    src = source(settings, db)
+    page = PagedResults()
+
+    await src.search(page, "site:x")
+
+    assert page.starts == [0], "nothing extra is asked of Google unless you ask for it"
+
+
+@pytest.mark.asyncio
+async def test_it_stops_when_a_page_adds_nothing(settings: Settings, db: Database) -> None:
+    """The pages after an empty one are the tail of the same list."""
+    settings.search_result_pages = 8
+    src = source(settings, db)
+    page = PagedResults()
+
+    await src.search(page, "site:x")
+
+    assert page.starts == [0, 10, 20], "it gave up after the empty page"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_page_ends_the_search_rather_than_paging_on(
+        settings: Settings, db: Database) -> None:
+    """Later pages will be blocked too, and each attempt digs the hole deeper."""
+    settings.search_result_pages = 5
+    src = source(settings, db, FakeGate(outcome="skip"))
+    page = PagedResults()
+    page.body = BLOCK_PAGE
+
+    urls, boards = await src.search(page, "site:x")
+
+    assert (urls, boards) == (set(), {})
+    assert page.starts == [0] and src.blocked_searches == 1

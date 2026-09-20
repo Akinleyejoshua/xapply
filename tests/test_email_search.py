@@ -323,3 +323,58 @@ def test_which_engines_are_searched(settings, db) -> None:
     assert src.GOOGLE.startswith("https://www.google.com/search")
     assert src.X_SEARCH.startswith("https://x.com/search")
     assert settings.search_x is False, "off unless you turn it on"
+
+
+# ---- the emails source walks pages too ------------------------------------
+
+@pytest.mark.asyncio
+async def test_more_than_one_page_of_results_is_read(settings, db) -> None:
+    src = source(settings, db)
+    settings.search_result_pages = 3
+    asked: list[int] = []
+
+    async def watched(page, template, terms, engine, number=0):
+        asked.append(number)
+        return [] if number >= 2 else [f"https://example{number}.com/job"]
+
+    src.search_engine = watched
+    src.read_posting = lambda page, url: _none()
+
+    async def _none():
+        return None
+
+    await src.discover(FakePage())
+
+    assert asked[:3] == [0, 1, 2], "each page in turn until one comes back empty"
+
+
+@pytest.mark.asyncio
+async def test_it_stops_opening_pages_at_your_limit(settings, db) -> None:
+    """Opening a result costs a page load, which is what makes a scan long."""
+    settings.max_pages_opened = 2
+    settings.search_result_pages = 5
+    src = source(settings, db)
+    opened: list[str] = []
+
+    async def watched(page, template, terms, engine, number=0):
+        return [f"https://example.com/job/{number}/{i}" for i in range(5)]
+
+    async def read(page, url):
+        opened.append(url)
+        return None
+
+    src.search_engine = watched
+    src.read_posting = read
+
+    await src.discover(FakePage())
+
+    assert len(opened) <= 2
+
+
+def test_the_limits_are_yours_to_set(settings) -> None:
+    from config import PERSISTED_KEYS
+
+    assert settings.search_result_pages == 1, "one page unless you ask for more"
+    assert settings.max_pages_opened == 12
+    assert "search_result_pages" in PERSISTED_KEYS
+    assert "max_pages_opened" in PERSISTED_KEYS

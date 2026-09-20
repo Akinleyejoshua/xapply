@@ -875,7 +875,9 @@ class GoogleSearchSource(ApiJobSource):
     name = "google"
     SITES = ("job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com")
     #: `udm=14` asks for plain web results, without the AI panels that bury the list.
-    SEARCH_URL = "https://www.google.com/search?q={q}&udm=14&num=30"
+    SEARCH_URL = "https://www.google.com/search?q={q}&udm=14&num=30&start={start}"
+    #: Google counts results, not pages, so page two starts at ten.
+    PER_PAGE = 10
     #: Following an opaque link costs a page load, so only a few are ever resolved.
     MAX_LINK_RESOLVES = 6
     #: Google tolerates a handful of searches per minute from one browser.
@@ -1005,20 +1007,44 @@ class GoogleSearchSource(ApiJobSource):
             return "skip"
 
     async def search(self, page: Any, terms: str) -> tuple[set[str], dict[str, set[str]]]:
-        log.info("google: %s", terms)
+        """Every page of results for one search, up to the number you allow."""
+        urls: set[str] = set()
+        boards: dict[str, set[str]] = {}
+        for number in range(max(1, self.s.search_result_pages)):
+            page_urls, page_boards = await self.one_page(page, terms, number)
+            if page_urls is None:
+                break                      # blocked or broken; later pages will be too
+            before = len(urls) + sum(len(v) for v in boards.values())
+            urls |= page_urls
+            for ats, tokens in page_boards.items():
+                boards.setdefault(ats, set()).update(tokens)
+            after = len(urls) + sum(len(v) for v in boards.values())
+            if after == before:
+                # Nothing new on this page, so the ones after it are the tail of the
+                # same list and not worth another request.
+                break
+            if number + 1 < self.s.search_result_pages:
+                await self.b.sleep(self.PAUSE_S, 1.5)
+        return urls, boards
+
+    async def one_page(self, page: Any, terms: str,
+                       number: int = 0) -> tuple[Optional[set[str]], dict[str, set[str]]]:
+        """One page of results. `None` for the urls means do not ask for any more."""
+        log.info("google: %s%s", terms, f" (page {number + 1})" if number else "")
         try:
             # Navigated directly rather than through the browser's guard. A results page
             # has nothing to fill in, and its one failure mode is the bot check, which is
             # detected below with a message that says what it actually is. Going through
             # the guard stops twice for the same problem: once for the reCAPTCHA widget
             # on the block page, and once here.
-            await page.goto(self.SEARCH_URL.format(q=quote_plus(terms)),
+            await page.goto(self.SEARCH_URL.format(q=quote_plus(terms),
+                                                   start=number * self.PER_PAGE),
                             wait_until="domcontentloaded",
                             timeout=self.s.navigation_timeout_ms)
             await self.b.sleep(1.6, 0.5)
         except Exception as exc:
             log.warning("google search failed: %s", exc)
-            return set(), {}
+            return None, {}
 
         if await self.is_blocked(page):
             log.warning("Google served its bot check instead of results")
@@ -1029,7 +1055,7 @@ class GoogleSearchSource(ApiJobSource):
                 "search engine.")
             if outcome == "skip" or await self.is_blocked(page):
                 self.blocked_searches += 1
-                return set(), {}
+                return None, {}
 
         urls, boards = await self.harvest(page)
         log.info("google: %d board(s), %d exact link(s)",
@@ -1297,10 +1323,12 @@ class EmailSearchSource(GoogleSearchSource):
                "email your resume to", "apply by email", "applications to",
                "send applications to", "cv to")
     #: Where to look. X needs you signed in, which the browser profile remembers.
-    GOOGLE = "https://www.google.com/search?q={q}&udm=14"
+    GOOGLE = "https://www.google.com/search?q={q}&udm=14&start={start}"
     X_SEARCH = "https://x.com/search?q={q}&f=live"
-    #: Opening a result costs a page load, so the number of them is capped.
-    MAX_PAGES = 12
+    #: Opening a result costs a page load, and the cap on how many is yours to set.
+    @property
+    def max_pages(self) -> int:
+        return max(1, self.s.max_pages_opened)
     #: Below this a page is a listing index, not a posting worth applying to.
     MIN_DESCRIPTION = 200
 
@@ -1320,10 +1348,17 @@ class EmailSearchSource(GoogleSearchSource):
                 where = (self.s.search_location or "").strip()
                 if where and where.lower() not in ("", "anywhere", "worldwide"):
                     terms += f' "{where}"'
-                links.extend(await self.search_engine(page, self.GOOGLE, terms, "google"))
-                if len(links) >= self.MAX_PAGES:
+                for number in range(max(1, self.s.search_result_pages)):
+                    found = await self.search_engine(page, self.GOOGLE, terms, "google",
+                                                     number)
+                    if not found:
+                        break            # blocked, or the results have run out
+                    links.extend(found)
+                    if len(links) >= self.max_pages:
+                        break
+                if len(links) >= self.max_pages:
                     break
-            if len(links) >= self.MAX_PAGES:
+            if len(links) >= self.max_pages:
                 break
 
         if self.s.search_x:
@@ -1331,9 +1366,10 @@ class EmailSearchSource(GoogleSearchSource):
                 terms = f'"{query}" hiring ("send your cv" OR "send your resume")'
                 links.extend(await self.search_engine(page, self.X_SEARCH, terms, "x"))
 
+
         found: list[JobPosting] = []
         seen: set[str] = set()
-        for link in links[: self.MAX_PAGES]:
+        for link in links[: self.max_pages]:
             if link in seen:
                 continue
             seen.add(link)
@@ -1360,11 +1396,12 @@ class EmailSearchSource(GoogleSearchSource):
         return found
 
     async def search_engine(self, page: Any, template: str, terms: str,
-                            engine: str) -> list[str]:
-        """Run one search and return the pages it points at, ATS links aside."""
-        log.info("%s: %s", engine, terms)
+                            engine: str, number: int = 0) -> list[str]:
+        """One page of one search, returning the pages it points at."""
+        log.info("%s: %s%s", engine, terms, f" (page {number + 1})" if number else "")
         try:
-            await page.goto(template.format(q=quote_plus(terms)),
+            await page.goto(template.format(q=quote_plus(terms),
+                                            start=number * self.PER_PAGE),
                             wait_until="domcontentloaded",
                             timeout=self.s.navigation_timeout_ms)
             await self.b.sleep(2.0, 0.6)
