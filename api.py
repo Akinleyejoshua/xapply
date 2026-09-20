@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import (Depends, FastAPI, HTTPException, Query, Request, Response,
+                     status)
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -1345,6 +1346,11 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
                             headers={"Cache-Control": "public, max-age=604800"})
 
     # ---- dashboard --------------------------------------------------------
+    @app.head("/", include_in_schema=False)
+    def dashboard_head() -> Response:
+        """Platforms check a service is alive with HEAD, which GET alone answers 405."""
+        return Response(status_code=200)
+
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> str:
         index = STATIC_DIR / "index.html"

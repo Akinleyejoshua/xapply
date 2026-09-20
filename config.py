@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Iterable, Literal
 
@@ -261,7 +262,14 @@ class Settings(BaseSettings):
     overrides_path: Path = BASE_DIR / "settings.local.json"
 
     # ---- Admin API ----
-    api_host: str = "127.0.0.1"
+    #: Left as localhost on your own machine, which is where this normally runs. A
+    #: hosting platform announces itself by setting PORT, and there the default has to
+    #: be every address or the platform cannot reach the service at all. Binding wide
+    #: is still refused while ADMIN_TOKEN is the default one, so this cannot quietly
+    #: put your applications on the open internet.
+    api_host: str = Field(
+        default_factory=lambda: "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1",
+        validation_alias=AliasChoices("API_HOST", "HOST"))
     #: Platforms that run this for you say which port to listen on through PORT, so
     #: that is accepted as well as the project's own name for it.
     api_port: int = Field(8000, validation_alias=AliasChoices("API_PORT", "PORT"))

@@ -81,10 +81,13 @@ run-auto: dirs  ## Run the pipeline with AUTO_SUBMIT (bot clicks Submit)
 analyze: dirs  ## Dry-run one posting: make analyze URL=https://www.linkedin.com/jobs/view/123/
 	$(PY) main.py analyze --url "$(URL)"
 
+# A hosting platform exports PORT, and make picks that up, so this only supplies a
+# default for your own machine. HOST is deliberately left unset: with none given the
+# app decides, which is localhost here and every address where a platform is running
+# it. Passing one always would override that and make the service unreachable.
 PORT ?= 8000
-HOST ?= 127.0.0.1
-serve: dirs  ## Start the web dashboard. Override the port with: make serve PORT=8001
-	$(PY) main.py serve --port $(PORT)
+serve: dirs  ## Start the web dashboard. Override with: make serve PORT=8001 HOST=0.0.0.0
+	$(PY) main.py serve $(if $(HOST),--host $(HOST)) --port $(PORT)
 
 gmail-login: dirs  ## Sign in to Gmail once, so applications can be sent from it
 	$(PY) main.py login gmail
@@ -96,8 +99,8 @@ signin: dirs  ## Sign in to any site once: make signin SITE=x  (linkedin, indeed
 	$(PY) main.py login $(SITE)
 
 dev: dirs  ## Dashboard with autoreload: restarts itself when you edit code or the UI
-	@echo "  XApply dev server on http://$(HOST):$(PORT)  (autoreload on .py/.html/.css)"
-	$(BIN)/uvicorn asgi:app --host $(HOST) --port $(PORT) --reload \
+	@echo "  XApply dev server on http://$(if $(HOST),$(HOST),127.0.0.1):$(PORT)"
+	$(BIN)/uvicorn asgi:app --host $(if $(HOST),$(HOST),127.0.0.1) --port $(PORT) --reload \
 		--reload-include "*.py" --reload-include "*.html" --reload-include "*.css" \
 		--reload-exclude ".browser_profile/*" --reload-exclude "logs/*" \
 		--reload-exclude "output_resumes/*" --reload-exclude "$(VENV)/*" \

@@ -325,7 +325,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from api import create_app
 
     if settings.admin_token == "change-me" and args.host not in ("127.0.0.1", "localhost"):
-        print("Refusing to bind a non-local host with the default ADMIN_TOKEN. Set ADMIN_TOKEN in .env.")
+        where = "your host's environment settings" if os.environ.get("PORT") else ".env"
+        print(f"\n  Refusing to listen on {args.host} while ADMIN_TOKEN is still the "
+              f"default.\n  Anyone who found the address could read and send your "
+              f"applications.\n\n  Set ADMIN_TOKEN to something private in {where}, "
+              f"then start again.\n")
         return 2
     app = create_app(settings)
     url = f"http://{args.host}:{args.port}"
