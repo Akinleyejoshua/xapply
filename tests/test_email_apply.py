@@ -913,3 +913,42 @@ def test_a_file_falls_back_to_something_rather_than_nothing(tmp_path) -> None:
     job = JobPosting(job_id="j", url="https://x.com/j", title="", company="")
 
     assert ResumeBuilder(settings).output_path(job, None).name == "application.pdf"
+
+
+# ---- an address that ran into the words after it --------------------------
+
+def test_an_address_glued_to_the_next_word_is_cut_back() -> None:
+    """Seen live. Page text comes out of the browser as "jobs@care247.inincluding",
+    and writing to that fails."""
+    from email_apply import trim_tld
+
+    assert trim_tld("jobs@care247.inincluding") == "jobs@care247.in"
+    assert trim_tld("hr@example.comand") == "hr@example.com"
+    assert trim_tld("hr@firm.consultingplease") == "hr@firm.consulting"
+
+
+@pytest.mark.parametrize("address", [
+    "careers@acme.com", "careers@acme.co.uk", "hr@company.ng", "a@b.technology",
+    "x@y.solutions", "a@b.healthcare", "x@thing.museum",
+])
+def test_a_real_address_is_left_exactly_as_it_is(address: str) -> None:
+    """Truncating a working address is worse than keeping an odd-looking one."""
+    from email_apply import trim_tld
+
+    assert trim_tld(address) == address
+
+
+def test_the_trimming_reaches_the_addresses_a_scan_finds() -> None:
+    from email_apply import application_address, find_addresses
+
+    page = "To apply, send your CV to jobs@care247.inincluding your notice period."
+
+    assert find_addresses(page) == ["jobs@care247.in"]
+    assert application_address(page, "https://care247.in/jobs") == "jobs@care247.in"
+
+
+def test_something_that_is_not_an_address_is_untouched() -> None:
+    from email_apply import trim_tld
+
+    assert trim_tld("not-an-address") == "not-an-address"
+    assert trim_tld("") == ""

@@ -47,6 +47,58 @@ NEVER_DOMAINS = ("example.com", "sentry.io", "wixpress.com", "squarespace.com", 
                  "gstatic.com", "schema.org", "w3.org")
 
 
+#: Enough of the common endings to spot where an address stops and prose begins.
+#: Page text often runs them together: "jobs@care247.in including remote roles" comes
+#: out of the browser as "jobs@care247.inincluding", and writing to that fails.
+KNOWN_TLDS = (
+    "com", "org", "net", "edu", "gov", "int", "mil", "info", "biz", "io", "co", "ai",
+    "app", "dev", "me", "tv", "cc", "ly", "sh", "xyz", "tech", "online", "site", "store",
+    "uk", "us", "ca", "au", "nz", "ie", "de", "fr", "es", "it", "nl", "be", "ch", "at",
+    "se", "no", "dk", "fi", "pl", "pt", "gr", "cz", "ro", "ru", "ua", "tr", "il", "ae",
+    "sa", "eg", "za", "ng", "ke", "gh", "tz", "ug", "ma", "in", "pk", "bd", "lk", "np",
+    "cn", "jp", "kr", "hk", "tw", "sg", "my", "th", "vn", "ph", "id", "br", "mx", "ar",
+    "cl", "co.uk", "org.uk", "ac.uk", "com.au", "com.ng", "com.br", "co.za", "co.in",
+    "co.ke", "com.pk", "co.nz", "com.sg", "eu",
+    # Longer endings that are real, so they are not mistaken for a short one with a
+    # word stuck to it. Without these, ".technology" was trimmed to ".tech".
+    "technology", "solutions", "services", "consulting", "engineering", "agency",
+    "digital", "careers", "jobs", "email", "group", "global", "media", "network",
+    "systems", "software", "academy", "education", "foundation", "institute",
+    "international", "management", "marketing", "recruitment", "ventures", "works",
+    "world", "company", "center", "centre", "community", "design", "finance", "health",
+    "legal", "partners", "press", "school", "science", "social", "space", "studio",
+    "support", "team", "today", "tools", "training", "university", "capital", "cloud",
+    "college", "energy", "expert", "financial", "healthcare", "industries", "insure",
+    "labs", "limited", "museum", "partners", "productions", "properties", "recipes",
+    "rentals", "reviews", "solar", "systems", "technology", "travel", "ngo", "charity",
+)
+#: Longest first, so "co.uk" is found before "uk".
+_TLD_ORDER = tuple(sorted(KNOWN_TLDS, key=len, reverse=True))
+
+
+def trim_tld(address: str) -> str:
+    """Cut an address where its domain ends, when page text ran it into a word.
+
+    Only when the last label is not itself a known ending. An unknown but plausible
+    domain is left alone rather than guessed at, because truncating a real address is
+    worse than keeping an odd-looking one.
+    """
+    local, _, domain = (address or "").partition("@")
+    if not domain or "." not in domain:
+        return address
+    labels = domain.split(".")
+    last = labels[-1].lower()
+    if last in KNOWN_TLDS or len(last) <= 3:
+        return address
+    for tld in _TLD_ORDER:
+        if "." in tld:
+            continue
+        if last.startswith(tld) and len(last) > len(tld):
+            labels[-1] = tld
+            return f"{local}@{'.'.join(labels)}"
+    return address
+
+
 def _local(address: str) -> str:
     return address.split("@", 1)[0].lower()
 
@@ -89,7 +141,7 @@ def find_addresses(*texts: Optional[str]) -> list[str]:
         found.extend(m.lower() for m in EMAIL_RE.findall(text))
     seen: dict[str, None] = {}
     for address in found:
-        address = address.strip(".,;:<>()[]'\"")
+        address = trim_tld(address.strip(".,;:<>()[]'\""))
         if plausible(address) and address not in seen:
             seen[address] = None
     return sorted(seen, key=rank)
@@ -143,7 +195,7 @@ def application_address(text: str, url: str = "") -> Optional[str]:
     body = text or ""
     near: list[str] = []
     for match in EMAIL_RE.finditer(body):
-        address = match.group(0).strip(".,;:<>()[]'\"").lower()
+        address = trim_tld(match.group(0).strip(".,;:<>()[]'\"").lower())
         if not plausible(address) or is_job_board(address):
             continue
         window = body[max(0, match.start() - NEAR_CHARS): match.end() + NEAR_CHARS]
