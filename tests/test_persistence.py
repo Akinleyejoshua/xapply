@@ -199,12 +199,12 @@ def test_the_port_a_host_asks_for_is_honoured(monkeypatch) -> None:
     assert Settings(_env_file=None).api_port == 8123, "the project's own name wins"
 
 
-def test_a_public_address_is_refused_with_the_default_token() -> None:
-    """Otherwise a deploy puts your applications on the open internet."""
+def test_the_guard_against_a_public_bind_is_still_in_the_code() -> None:
+    """Behaviour is checked below; this pins that the guard has not been deleted."""
     import main
 
     source = inspect.getsource(main.cmd_serve)
-    assert "Refusing to bind a non-local host" in source
+    assert "Refusing to listen on" in source
     assert 'args.host not in ("127.0.0.1", "localhost")' in source
 
 
