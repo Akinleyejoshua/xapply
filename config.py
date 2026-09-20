@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Iterable, Literal
 
-from pydantic import Field, PrivateAttr, field_validator, model_validator
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 log = logging.getLogger(__name__)
@@ -262,7 +262,9 @@ class Settings(BaseSettings):
 
     # ---- Admin API ----
     api_host: str = "127.0.0.1"
-    api_port: int = 8000
+    #: Platforms that run this for you say which port to listen on through PORT, so
+    #: that is accepted as well as the project's own name for it.
+    api_port: int = Field(8000, validation_alias=AliasChoices("API_PORT", "PORT"))
     admin_token: str = "change-me"
 
     @field_validator("sources", "search_queries", "seniority_levels", "countries", mode="before")

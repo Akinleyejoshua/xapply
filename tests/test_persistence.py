@@ -1,6 +1,7 @@
 """Settings chosen in the web UI must survive a tab switch, a reload and a restart."""
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -183,3 +184,67 @@ def test_dashboard_renders_from_one_store() -> None:
     # the old per-page renderers must be gone
     for stale in ("function renderSources(", "function renderLevels(", "async function loadSettings("):
         assert stale not in html, stale
+
+
+# ---- running somewhere that is not your laptop ----------------------------
+
+def test_the_port_a_host_asks_for_is_honoured(monkeypatch) -> None:
+    """Render and most platforms say which port to listen on through PORT."""
+    from config import Settings
+
+    monkeypatch.setenv("PORT", "10000")
+    assert Settings(_env_file=None).api_port == 10000
+
+    monkeypatch.setenv("API_PORT", "8123")
+    assert Settings(_env_file=None).api_port == 8123, "the project's own name wins"
+
+
+def test_a_public_address_is_refused_with_the_default_token() -> None:
+    """Otherwise a deploy puts your applications on the open internet."""
+    import main
+
+    source = inspect.getsource(main.cmd_serve)
+    assert "Refusing to bind a non-local host" in source
+    assert 'args.host not in ("127.0.0.1", "localhost")' in source
+
+
+def test_the_deployment_files_exist_and_agree() -> None:
+    """A blueprint that forgets the disk wipes every application on each deploy."""
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+    assert "playwright" in docker.lower(), "a browser needs its system libraries"
+    assert "playwright install chromium" in docker, "browsers must match the pip version"
+    assert "mountPath: /data" in blueprint
+    # Everything that must survive a restart has to live on that disk.
+    for var in ("DB_PATH=/data", "USER_DATA_DIR=/data", "OUTPUT_DIR=/data",
+                "OVERRIDES_PATH=/data"):
+        assert var in docker, var
+
+
+def test_the_blueprint_does_not_ask_for_a_person() -> None:
+    """Assisted mode stops for somebody who is not there."""
+    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+    assert "value: auto" in blueprint
+    assert "CHALLENGE_ACTION" in blueprint and "value: skip" in blueprint
+    assert "EMAIL_TRANSPORT" in blueprint and "value: smtp" in blueprint, \
+        "the Gmail route needs a sign-in that a server cannot do"
+
+
+def test_no_secret_is_written_into_the_blueprint() -> None:
+    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+    for line in blueprint.splitlines():
+        if any(k in line for k in ("API_KEY", "PASSWORD", "SMTP_USER", "EMAIL_FROM")):
+            continue
+        assert "sk-" not in line and "nvapi-" not in line and "AIza" not in line
+    assert "sync: false" in blueprint, "secrets are set in the dashboard, not committed"
+
+
+def test_the_guide_says_what_cannot_work() -> None:
+    """Somebody deploying this should learn the limits before the afternoon is gone."""
+    guide = (ROOT / "DEPLOY.md").read_text(encoding="utf-8")
+
+    for subject in ("CAPTCHA", "signin", "Gmail", "disk", "auto mode"):
+        assert subject.lower() in guide.lower(), subject

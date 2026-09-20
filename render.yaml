@@ -1,0 +1,39 @@
+# Render blueprint. Read DEPLOY.md first: several things this tool does cannot work on
+# a server, and knowing which before you deploy saves an afternoon.
+services:
+  - type: web
+    name: xapply
+    runtime: docker
+    plan: standard          # Chromium will not fit reliably in 512 MB
+    healthCheckPath: /health
+    disk:
+      name: xapply-data
+      mountPath: /data      # without this, every deploy wipes your applications
+      sizeGB: 5
+    envVars:
+      # Set this. The app refuses to listen on a public address with the default.
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false         # set it in the dashboard, not in this file
+      # Applying by email needs a mail server here: the Gmail route signs in through a
+      # browser window, and there is no window on a server.
+      - key: EMAIL_TRANSPORT
+        value: smtp
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Nobody is watching, so nothing may wait for a person.
+      - key: FILL_MODE
+        value: auto
+      - key: HEADLESS
+        value: "true"
+      - key: CHALLENGE_ACTION
+        value: skip
