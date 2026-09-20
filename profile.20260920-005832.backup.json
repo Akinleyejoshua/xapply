@@ -765,45 +765,5 @@
     "current_company": "Corvendra",
     "current_title": "Full Stack Developer",
     "portfolio": "https://joshuapro.netlify.app"
-  },
-  "twitter": "https://x.com/yeshuaakinleye",
-  "writing": [
-    {
-      "title": "Democratizing Deep Learning: Inside xMachine, the WebGPU-Powered Browser Inference & Training Platform",
-      "url": "https://joshuapro.netlify.app/blog/democratizing-deep-learning-inside-xmachine-the-webgpu-powered-browser-inference-training-platform",
-      "summary": "Discover how xMachine leverages WebGPU, TensorFlow.js, and Next.js to run complex deep learning workflows, model training, and real-time inference directly inside the browser.",
-      "tags": [
-        "WebGPU",
-        "TensorFlowJS",
-        "NextJS",
-        "DeepLearning",
-        "WebDev",
-        "ArtificialIntelligence"
-      ]
-    },
-    {
-      "title": "Mastering DSA in Python: A Pragmatic Guide to Problem Solving",
-      "url": "https://joshuapro.netlify.app/blog/mastering-dsa-in-python-a-pragmatic-guide-to-problem-solving",
-      "summary": "Unlock the full potential of Python for Data Structures and Algorithms. Learn the optimal step-by-step approach, leverage powerful built-in libraries, and avoid common performance pitfalls.",
-      "tags": [
-        "python",
-        "dsa",
-        "algorithms",
-        "software-engineering",
-        "programming"
-      ]
-    },
-    {
-      "title": "Architecting Scalable Systems with Node.js: A Comprehensive Guide",
-      "url": "https://joshuapro.netlify.app/blog/architecting-scalable-systems-with-node-js-a-comprehensive-guide",
-      "summary": "Explore the core principles of designing highly scalable, resilient, and performant backend systems using Node.js. Discover clustering, caching, graceful shutdowns, and architectural patterns.",
-      "tags": [
-        "NodeJS",
-        "System Design",
-        "Software Architecture",
-        "Microservices",
-        "Scalability"
-      ]
-    }
-  ]
+  }
 }

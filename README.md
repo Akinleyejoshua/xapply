@@ -616,6 +616,27 @@ It is off by default, and stays careful when it is on:
   `settings.local.json` and never sent to the browser. With the Gmail route there are
   none to leak.
 
+### Keeping your profile in step with your portfolio
+
+Your portfolio already holds the work you keep up to date, so it is read rather than
+retyped:
+
+```bash
+make import-portfolio                        # projects, roles, skills, about, blog
+python main.py import-portfolio --dry-run    # show what would change, write nothing
+python main.py import-portfolio --only projects,blog
+python main.py import-portfolio --site https://your-site.example
+```
+
+It merges, never replaces. Bullets you tuned by hand stay exactly as they are and an
+import only fills what was empty. A project the site calls "xMachine: Browser-Based Deep
+Learning" is recognised as the "xMachine" already in your profile rather than added
+twice. Your profile is copied to a timestamped backup before anything is written, and
+running it again when nothing has changed writes nothing at all.
+
+Blog posts land under `writing`, which the question bank uses when a form asks whether
+you write about your work.
+
 ### Open questions on a form
 
 Forms ask the same handful of things in a thousand wordings: how you work remotely,

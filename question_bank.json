@@ -52,9 +52,11 @@
         "projects[].github",
         "projects[].url",
         "projects[].bullets",
-        "experience[] where company mentions open source"
+        "experience[] where company mentions open source",
+        "writing[].url",
+        "writing[].title"
       ],
-      "guidance": "Look for open-source roles, public repositories and project links before answering. Name the specific work and include the link the profile holds. Describe what you actually did on it. Only say no when the profile genuinely holds nothing public, and never invent a contribution to avoid saying no.",
+      "guidance": "Look for open-source roles, public repositories, project links and published writing before answering. Name the specific work and include the link the profile holds. Describe what you actually did on it. Only say no when the profile genuinely holds nothing public, and never invent a contribution to avoid saying no.",
       "style": "prose"
     },
     {
@@ -325,6 +327,45 @@
       "evidence": [],
       "guidance": "This is personal and the profile cannot answer it. Leave it for the candidate unless the profile states something explicitly.",
       "style": "short"
+    },
+    {
+      "id": "writing_and_speaking",
+      "asks": "Whether you explain your work to other people, and where.",
+      "phrases": [
+        "a talk",
+        "article",
+        "articles",
+        "articles you",
+        "blog",
+        "blog post",
+        "conference",
+        "do you write",
+        "documentation you",
+        "mentoring others",
+        "portfolio of writing",
+        "presented at",
+        "publications",
+        "published",
+        "spoken at",
+        "talks",
+        "teaching",
+        "technical writing",
+        "write-up",
+        "writing sample",
+        "writing you",
+        "written about",
+        "your writing"
+      ],
+      "evidence": [
+        "writing[].title",
+        "writing[].url",
+        "writing[].summary",
+        "writing[].tags",
+        "website",
+        "github"
+      ],
+      "guidance": "Name a piece you actually published and say what it was about and who it was for. The profile keeps the title, a summary and the link, so give the link. Do not claim talks, teaching or publications the profile does not record, and say plainly that you write rather than speak if that is the case.",
+      "style": "prose"
     }
   ]
 }

@@ -260,3 +260,106 @@ async def test_both_project_endpoints_are_read(profile: Path, site) -> None:
     await import_portfolio(profile)
 
     assert "projects" in site.asked and "product-projects" in site.asked
+
+
+# ---- the about page and the blog ------------------------------------------
+
+def test_markup_never_reaches_a_cover_letter() -> None:
+    """The site stores the bio as styled HTML. Read out literally it is unusable."""
+    from portfolio import plain
+
+    html = ('<div style="text-align:center"><span style="font-family: &quot;Bricolage'
+            '&quot;">Full stack developer</span><br>and data analyst.</div>')
+
+    assert plain(html) == "Full stack developer\nand data analyst."
+    assert plain("<script>alert(1)</script>Hello") == "Hello"
+    assert plain("") == "" and plain(None) == ""
+
+
+def test_a_blog_post_becomes_something_to_point_at() -> None:
+    from portfolio import as_post
+
+    post = as_post({"title": "Scaling Node.js", "slug": "scaling-node-js",
+                    "excerpt": "<p>How to keep it fast.</p>", "tags": ["NodeJS"],
+                    "isVisible": True}, "https://joshuapro.netlify.app")
+
+    assert post["title"] == "Scaling Node.js"
+    assert post["url"] == "https://joshuapro.netlify.app/blog/scaling-node-js"
+    assert post["summary"] == "How to keep it fast."
+    assert post["tags"] == ["NodeJS"]
+
+
+def test_a_hidden_post_is_not_imported() -> None:
+    from portfolio import as_post
+
+    assert as_post({"title": "Draft", "isVisible": False}, "https://x.example") is None
+    assert as_post({"title": "  "}, "https://x.example") is None
+
+
+@pytest.mark.asyncio
+async def test_your_summary_is_not_replaced_by_the_site_bio(profile: Path,
+                                                            monkeypatch) -> None:
+    """A summary written for applications is aimed at someone deciding about you. A
+    site bio is not, so it only fills the gap when there is one."""
+    import portfolio
+
+    async def fetch(site_url: str, name: str):
+        if name == "about":
+            return {"bio": "<p>Site bio.</p>", "socialLinks": []}
+        return None
+
+    monkeypatch.setattr(portfolio, "fetch", fetch)
+    data = json.loads(profile.read_text(encoding="utf-8"))
+    data["summary"] = "My own summary."
+    profile.write_text(json.dumps(data), encoding="utf-8")
+
+    await import_portfolio(profile, what=["about"])
+
+    assert json.loads(profile.read_text(encoding="utf-8"))["summary"] == "My own summary."
+
+
+@pytest.mark.asyncio
+async def test_an_empty_summary_is_filled_from_the_bio(profile: Path, monkeypatch) -> None:
+    import portfolio
+
+    async def fetch(site_url: str, name: str):
+        if name == "about":
+            return {"bio": "<p>Site bio.</p>",
+                    "socialLinks": [{"platform": "github", "url": "https://github.com/jo"}]}
+        return None
+
+    monkeypatch.setattr(portfolio, "fetch", fetch)
+
+    await import_portfolio(profile, what=["about"])
+
+    after = json.loads(profile.read_text(encoding="utf-8"))
+    assert after["summary"] == "Site bio."
+    assert after["github"] == "https://github.com/jo"
+
+
+@pytest.mark.asyncio
+async def test_posts_are_kept_as_writing(profile: Path, monkeypatch) -> None:
+    import portfolio
+
+    async def fetch(site_url: str, name: str):
+        if name == "blog":
+            return [{"title": "Scaling Node.js", "slug": "scaling", "excerpt": "How to.",
+                     "tags": ["NodeJS"], "isVisible": True}]
+        return None
+
+    monkeypatch.setattr(portfolio, "fetch", fetch)
+
+    await import_portfolio(profile, what=["blog"])
+
+    writing = json.loads(profile.read_text(encoding="utf-8"))["writing"]
+    assert [w["title"] for w in writing] == ["Scaling Node.js"]
+
+
+def test_the_question_bank_knows_about_your_writing() -> None:
+    from question_bank import QuestionBank
+
+    bank = QuestionBank.load()
+    found = bank.match("Do you write about your work anywhere? Share a link if so.")
+
+    assert found is not None and found.id == "writing_and_speaking"
+    assert "writing[].url" in found.evidence

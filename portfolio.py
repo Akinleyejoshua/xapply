@@ -29,6 +29,48 @@ DEFAULT_SITE = "https://joshuapro.netlify.app"
 #: What each endpoint is called, and which part of the profile it feeds.
 #: Projects live under two names on the site, so both are read and merged.
 PROJECT_ENDPOINTS = ("projects", "product-projects")
+#: Where each blog post lives, built from its slug.
+BLOG_URL = "{site}/blog/{slug}"
+#: The social links worth keeping, and what the profile calls each one.
+SOCIAL_FIELDS = {"github": "github", "linkedin": "linkedin", "twitter": "twitter",
+                 "x": "twitter", "website": "website", "portfolio": "website"}
+_TAGS = re.compile(r"<[^>]+>")
+_ENTITIES = {"&nbsp;": " ", "&amp;": "&", "&quot;": '"', "&#39;": "'",
+             "&lt;": "<", "&gt;": ">", "&apos;": "'"}
+
+
+def plain(html: Any) -> str:
+    """The words out of a rich-text field, without the markup it was written in.
+
+    The site stores the bio as styled HTML. Dropped into a resume or a cover letter
+    that markup would be read out literally, fonts and all.
+    """
+    text = str(html or "")
+    text = re.sub(r"<(script|style)\b.*?</\1>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<(br|/p|/div|/li)\s*/?>", "\n", text, flags=re.I)
+    text = _TAGS.sub(" ", text)
+    for entity, char in _ENTITIES.items():
+        text = text.replace(entity, char)
+    text = re.sub(r"&#\d+;", " ", text)
+    lines = [_TIDY.sub(" ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def as_post(raw: dict[str, Any], site: str) -> Optional[dict[str, Any]]:
+    """One blog post, as something worth pointing a recruiter at."""
+    title = _TIDY.sub(" ", str(raw.get("title") or "")).strip()
+    if not title or raw.get("isVisible") is False:
+        return None
+    slug = str(raw.get("slug") or "").strip()
+    summary = plain(raw.get("excerpt") or "")
+    if not summary:
+        summary = " ".join(sentences(plain(raw.get("content") or ""))[:1])
+    return {
+        "title": title,
+        "url": BLOG_URL.format(site=site.rstrip("/"), slug=slug) if slug else "",
+        "summary": summary,
+        "tags": [str(t).strip() for t in (raw.get("tags") or []) if str(t).strip()],
+    }
 #: Kept short: a portfolio is a static site and should answer at once.
 TIMEOUT = 25.0
 #: A sentence longer than this is a paragraph, and a bullet is not a paragraph.
@@ -221,7 +263,8 @@ def merge_entries(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
 
 
 async def import_portfolio(profile_path: Path, site: str = DEFAULT_SITE,
-                           what: Iterable[str] = ("projects", "experience", "skills"),
+                           what: Iterable[str] = ("projects", "experience", "skills",
+                                                 "about", "blog"),
                            dry_run: bool = False) -> Changes:
     """Pull the portfolio into the profile, and say exactly what changed."""
     changes = Changes()
@@ -284,6 +327,41 @@ async def import_portfolio(profile_path: Path, site: str = DEFAULT_SITE,
             profile["skills"] = groups
             if new_skills:
                 changes.added["skill(s)"] = new_skills
+
+    if "about" in wanted:
+        raw = await fetch(site, "about")
+        if raw is None:
+            changes.unreachable.append("about")
+        elif isinstance(raw, dict):
+            filled: list[str] = []
+            bio = plain(raw.get("bio"))
+            # Only where the profile has nothing. A summary you wrote for applications
+            # is aimed at a reader who is deciding about you, which a site bio is not.
+            if bio and not str(profile.get("summary") or "").strip():
+                profile["summary"] = bio
+                filled.append("summary")
+            for link in raw.get("socialLinks") or []:
+                field_name = SOCIAL_FIELDS.get(str(link.get("platform") or "").lower())
+                url = str(link.get("url") or "").strip()
+                if field_name and url and not str(profile.get(field_name) or "").strip():
+                    profile[field_name] = url
+                    filled.append(field_name)
+            if filled:
+                changes.updated["about"] = filled
+
+    if "blog" in wanted:
+        raw = await fetch(site, "blog")
+        if raw is None:
+            changes.unreachable.append("blog")
+        else:
+            incoming = [p for p in (as_post(r, site) for r in raw) if p]
+            merged, added, updated = merge_entries(profile.get("writing") or [], incoming,
+                                                   "title", protect=("summary",))
+            profile["writing"] = merged
+            if added:
+                changes.added["post(s)"] = added
+            if updated:
+                changes.updated["post(s)"] = updated
 
     if dry_run or not changes.touched:
         return changes

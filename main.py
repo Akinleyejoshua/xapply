@@ -464,7 +464,8 @@ def cmd_import_portfolio(args: argparse.Namespace) -> int:
     """Pull projects, roles and skills from your portfolio site into profile.json."""
     from portfolio import import_portfolio
 
-    what = [w.strip() for w in (args.only or "projects,experience,skills").split(",") if w.strip()]
+    what = [w.strip() for w in
+            (args.only or "projects,experience,skills,about,blog").split(",") if w.strip()]
     changes = asyncio.run(import_portfolio(settings.profile_path, args.site, what,
                                            dry_run=args.dry_run))
     print(f"\n  {settings.profile_path.name}: {changes.summary()}\n")
@@ -742,7 +743,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pull projects, roles and skills from your portfolio site")
     ip.add_argument("--site", default="https://joshuapro.netlify.app",
                     help="the portfolio to read from")
-    ip.add_argument("--only", help="projects, experience, skills (comma separated)")
+    ip.add_argument("--only",
+                    help="projects, experience, skills, about, blog (comma separated)")
     ip.add_argument("--dry-run", action="store_true",
                     help="show what would change and write nothing")
     ip.set_defaults(func=cmd_import_portfolio)
