@@ -808,3 +808,91 @@ async def test_a_model_the_provider_rejects_still_stops_the_run(
 
     with pytest.raises(llm.ModelUnavailable):
         await p.preflight()
+
+
+# ---- advice about the search you actually ran ------------------------------
+
+def test_the_advice_names_the_titles_that_were_turned_away(settings: Settings) -> None:
+    """A count alone leaves you guessing what was rejected and whether it should have
+    been. The titles let you judge the filter yourself."""
+    from discovery import ScanStats, explain_empty_scan
+
+    settings.search_queries = ["Data Analyst"]
+    stats = ScanStats(seen=2)
+    stats.turned_away("Senior Software Engineer, Payments")
+    stats.turned_away("Product Designer")
+
+    tip = " ".join(explain_empty_scan(stats, settings))
+
+    assert "Data Analyst" in tip
+    assert "Senior Software Engineer, Payments" in tip and "Product Designer" in tip
+
+
+def test_the_advice_is_not_about_somebody_elses_search(settings: Settings) -> None:
+    """It used to explain that backend roles are titled "Software Engineer, <team>",
+    whatever you had actually searched for."""
+    from discovery import ScanStats, explain_empty_scan
+
+    settings.search_queries = ["Data Analyst"]
+    stats = ScanStats(seen=2)
+    stats.turned_away("Product Designer")
+
+    tip = " ".join(explain_empty_scan(stats, settings)).lower()
+
+    assert "backend" not in tip and "software engineer, <team>" not in tip
+
+
+def test_the_advice_says_where_the_dial_is_set(settings: Settings) -> None:
+    from discovery import ScanStats, explain_empty_scan
+
+    settings.title_match_threshold = 0.6
+    stats = ScanStats(seen=1)
+    stats.turned_away("Product Designer")
+
+    assert "0.60" in " ".join(explain_empty_scan(stats, settings))
+
+
+def test_only_a_handful_of_titles_are_kept(settings: Settings) -> None:
+    """This is an illustration, not a listing of everything a scan rejected."""
+    from discovery import ScanStats
+
+    stats = ScanStats()
+    for i in range(50):
+        stats.turned_away(f"Role {i}")
+
+    assert stats.dropped_title == 50
+    assert len(stats.examples) == ScanStats.MAX_EXAMPLES
+
+
+def test_the_same_title_is_not_listed_twice(settings: Settings) -> None:
+    from discovery import ScanStats
+
+    stats = ScanStats()
+    for _ in range(5):
+        stats.turned_away("Product Designer")
+
+    assert stats.examples == ["Product Designer"] and stats.dropped_title == 5
+
+
+def test_examples_survive_being_added_up_across_sources(settings: Settings) -> None:
+    """Each source keeps its own count, and they are summed for the whole scan."""
+    from discovery import ScanStats
+
+    one, other = ScanStats(seen=1), ScanStats(seen=1)
+    one.turned_away("Product Designer")
+    other.turned_away("Sales Engineer")
+
+    one += other
+
+    assert one.seen == 2 and one.dropped_title == 2
+    assert one.examples == ["Product Designer", "Sales Engineer"]
+
+
+def test_a_blank_title_is_not_offered_as_an_example(settings: Settings) -> None:
+    from discovery import ScanStats
+
+    stats = ScanStats()
+    stats.turned_away("")
+    stats.turned_away("   ")
+
+    assert stats.dropped_title == 2 and stats.examples == []

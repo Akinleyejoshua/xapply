@@ -33,7 +33,7 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Iterable, Optional
 from urllib.parse import parse_qs, quote_plus, urlparse
@@ -225,9 +225,27 @@ class ScanStats:
     dropped_no_description: int = 0
     dropped_unresolved: int = 0     # aggregators: no ATS link behind the listing
     kept: int = 0
+    #: A few of the titles the search terms turned away. Saying "2 did not match" leaves
+    #: you guessing what they were; showing them lets you judge the filter yourself.
+    examples: list[str] = field(default_factory=list)
+
+    #: How many to keep. This is an illustration, not a listing.
+    MAX_EXAMPLES: ClassVar[int] = 6
+
+    def turned_away(self, title: str) -> None:
+        """Record one title the search terms rejected."""
+        self.dropped_title += 1
+        title = (title or "").strip()
+        if title and len(self.examples) < self.MAX_EXAMPLES and title not in self.examples:
+            self.examples.append(title[:70])
 
     def __iadd__(self, other: "ScanStats") -> "ScanStats":
         for f in self.__dataclass_fields__:
+            if f == "examples":
+                room = self.MAX_EXAMPLES - len(self.examples)
+                self.examples.extend(t for t in other.examples[:room]
+                                     if t not in self.examples)
+                continue
             setattr(self, f, getattr(self, f) + getattr(other, f))
         return self
 
@@ -360,7 +378,7 @@ class GreenhouseBoardSource(ApiJobSource):
                     self.stats.seen += 1
                     title = j.get("title", "")
                     if not title_matches(title, self.tokens, self.s.title_match_threshold):
-                        self.stats.dropped_title += 1
+                        self.stats.turned_away(title)
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
                         self.stats.dropped_seniority += 1
@@ -434,7 +452,7 @@ class LeverBoardSource(ApiJobSource):
                     title = (p.get("text") or "").strip()
                     loc = cats.get("location") or ""
                     if not title_matches(title, self.tokens, self.s.title_match_threshold):
-                        self.stats.dropped_title += 1
+                        self.stats.turned_away(title)
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
                         self.stats.dropped_seniority += 1
@@ -491,7 +509,7 @@ class AshbyBoardSource(ApiJobSource):
                     self.stats.seen += 1
                     title = (p.get("title") or "").strip()
                     if not title_matches(title, self.tokens, self.s.title_match_threshold):
-                        self.stats.dropped_title += 1
+                        self.stats.turned_away(title)
                         continue
                     if not seniority_matches(title, self.s.seniority_levels):
                         self.stats.dropped_seniority += 1
@@ -637,7 +655,7 @@ class RemoteOKSource(AggregatorSource):
             matched = []
             for d in rows:
                 if not title_matches(d.get("position", ""), self.tokens, self.s.title_match_threshold):
-                    self.stats.dropped_title += 1
+                    self.stats.turned_away(d.get("position", ""))
                 elif not seniority_matches(d.get("position", ""), self.s.seniority_levels):
                     self.stats.dropped_seniority += 1
                 else:
@@ -692,7 +710,7 @@ class HimalayasSource(AggregatorSource):
             matched = []
             for d in jobs:
                 if not title_matches(d.get("title", ""), self.tokens, self.s.title_match_threshold):
-                    self.stats.dropped_title += 1
+                    self.stats.turned_away(d.get("title", ""))
                 elif not seniority_matches(d.get("title", ""), self.s.seniority_levels):
                     self.stats.dropped_seniority += 1
                 else:
@@ -1205,10 +1223,16 @@ def explain_empty_scan(stats: "ScanStats", settings: Settings) -> list[str]:
     for label, n in sorted(stats.reasons(), key=lambda kv: -kv[1])[:3]:
         share = round(100 * n / stats.seen)
         if label == "search terms":
-            tips.append(f"{n} ({share}%) did not resemble your search terms "
-                        f"({', '.join(settings.search_queries)}). Most backend roles are titled "
-                        f"'Software Engineer, <team>' rather than 'Backend Engineer', so lower "
-                        f"Match sensitivity or add a broader term.")
+            wanted = ", ".join(settings.search_queries)
+            tip = (f"{n} ({share}%) did not resemble your search terms"
+                   + (f" ({wanted})." if wanted else "."))
+            if stats.examples:
+                # The titles themselves, so you can see whether the filter was wrong or
+                # the postings were. A count alone leaves you guessing.
+                tip += " They were titled: " + "; ".join(f"'{t}'" for t in stats.examples) + "."
+            tip += (f" A posting rarely uses the words you would. Lower Match sensitivity "
+                    f"(now {settings.title_match_threshold:.2f}) or add a broader term.")
+            tips.append(tip)
         elif label == "seniority":
             tips.append(f"{n} ({share}%) were the wrong seniority. You have "
                         f"{', '.join(settings.seniority_levels)} selected; untick to allow any level.")
@@ -1318,7 +1342,7 @@ class EmailSearchSource(GoogleSearchSource):
                 continue
             self.stats.seen += 1
             if not title_matches(job.title, self.tokens, self.s.title_match_threshold):
-                self.stats.dropped_title += 1
+                self.stats.turned_away(job.title)
                 continue
             if not seniority_matches(job.title, self.s.seniority_levels):
                 self.stats.dropped_seniority += 1
