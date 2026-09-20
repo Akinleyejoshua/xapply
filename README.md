@@ -523,6 +523,16 @@ does appear, and applies while applying, not while scanning:
 | Open a window and start that posting again | The browser restarts with a window. Your logins survive, because the profile does. |
 | Skip that posting and carry on | The application is recorded as skipped, with the challenge as the reason. |
 
+**Open a window when something needs me** covers the rest. With the browser hidden, the
+moment a posting needs you, a window opens and that posting is done again in it, so the
+form is filled and waiting rather than empty.
+
+Playwright cannot give a window to a browser that started without one, so this restarts
+the browser. Two things make that cheap. The profile directory is the same, so every
+account you are signed in to survives. And the answers already worked out are reused, so
+the form refills without asking the model anything a second time. A CAPTCHA counts as
+something needing you, so this covers that too.
+
 A scan over the board APIs opens no browser at all, whatever these are set to, because
 it is plain HTTP. Applying to a web form always needs one, hidden or not. Applying by
 email needs no form, so nothing is opened for it.
