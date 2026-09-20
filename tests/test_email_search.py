@@ -282,3 +282,44 @@ def test_a_database_made_before_the_column_existed_is_brought_up_to_date(tmp_pat
 
     columns = {row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(discovered)")}
     assert "email_to" in columns
+
+
+# ---- judging the advert, not the page title -------------------------------
+
+def _job(title: str, body: str):
+    from models import JobPosting
+
+    return JobPosting(job_id="j", url="https://x.com/j", title=title, description=body)
+
+
+def test_a_role_named_only_in_the_body_still_counts(settings, db) -> None:
+    """A recruiter's post is titled "Recruit NG on X" or "Abuja Jobs". The role is in
+    the words underneath, and matching the title alone threw those away."""
+    src = source(settings, db)
+
+    assert src.mentions_the_role(
+        _job("Abuja Jobs", "WE ARE HIRING a Data Analyst. Send your CV to hr@x.com")) is True
+    assert src.mentions_the_role(
+        _job("Recruit NG on X", "Data Analyst needed, send CV")) is True
+
+
+def test_a_title_that_is_the_role_still_counts(settings, db) -> None:
+    assert source(settings, db).mentions_the_role(_job("Data Analyst", "anything")) is True
+
+
+def test_something_genuinely_unrelated_is_still_turned_away(settings, db) -> None:
+    """The filter has to keep doing its job, or a scan returns every advert alive."""
+    src = source(settings, db)
+
+    assert src.mentions_the_role(
+        _job("My Engineers", "We build bridges. Send your CV to hr@x.com")) is False
+
+
+def test_which_engines_are_searched(settings, db) -> None:
+    """X is only searched when you have asked for it, because it refuses anonymous
+    searches and would otherwise produce nothing but a warning every run."""
+    src = source(settings, db)
+
+    assert src.GOOGLE.startswith("https://www.google.com/search")
+    assert src.X_SEARCH.startswith("https://x.com/search")
+    assert settings.search_x is False, "off unless you turn it on"

@@ -1341,7 +1341,7 @@ class EmailSearchSource(GoogleSearchSource):
             if job is None:
                 continue
             self.stats.seen += 1
-            if not title_matches(job.title, self.tokens, self.s.title_match_threshold):
+            if not self.mentions_the_role(job):
                 self.stats.turned_away(job.title)
                 continue
             if not seniority_matches(job.title, self.s.seniority_levels):
@@ -1411,6 +1411,20 @@ class EmailSearchSource(GoogleSearchSource):
             out = sorted(await self.resolve_wrapped(page, [
                 f"https://www.google.com{h}" for h in wrapped]))
         return list(dict.fromkeys(out))
+
+    def mentions_the_role(self, job: JobPosting) -> bool:
+        """Whether this advert is for the kind of role you asked about.
+
+        Judged on the advert, not only on the page title. A recruiter's post is titled
+        "Recruit NG on X" or "Abuja Jobs"; the role is in the words underneath. Matching
+        the title alone threw away postings that say "Data Analyst" three times in the
+        body, which is the whole reason this source exists.
+        """
+        if title_matches(job.title, self.tokens, self.s.title_match_threshold):
+            return True
+        body = (job.description or "").lower()
+        return any(query.strip().lower() in body
+                   for query in self.s.search_queries if query.strip())
 
     async def read_posting(self, page: Any, url: str) -> Optional[JobPosting]:
         """Open a page and keep it only if it is a posting that names an address.
