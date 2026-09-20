@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from config import PERSISTED_KEYS, Settings
 from config import settings as default_settings
-from database import STATUSES, Database
+from database import STATUS_SUBMITTED, STATUSES, Database
 from email_apply import EmailApplier
 from integrations import BY_NAME as INTEGRATIONS_BY_NAME
 from integrations import forget as integration_forget
@@ -198,7 +198,7 @@ class RetryRequest(BaseModel):
     """Which applications to try again: specific ids, or everything with one status."""
 
     ids: Optional[list[int]] = None
-    status: Optional[Literal["failed", "pending_human_review"]] = None
+    status: Optional[Literal["failed", "pending_human_review", "skipped"]] = None
     limit: Optional[int] = None
 
 
@@ -349,8 +349,17 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
     def patch_application(app_id: int, body: StatusUpdate) -> dict[str, Any]:
         if body.status not in STATUSES:
             raise HTTPException(400, f"status must be one of {STATUSES}")
-        if not database.update_status(app_id, body.status, body.notes):
+        row = database.get(app_id)
+        if not row:
             raise HTTPException(404, "Application not found")
+        note_text = body.notes
+        if body.status != row.get("status") and not note_text:
+            # Worth recording that a person decided this, not the agent. Months later
+            # "submitted" with no explanation is impossible to reason about.
+            note_text = f"marked {body.status} by you (was {row.get('status')})"
+        if not database.update_status(app_id, body.status, note_text):
+            raise HTTPException(404, "Application not found")
+        note(f"#{app_id} marked {body.status} by you", "info")
         return database.get(app_id) or {}
 
     @app.delete("/api/applications/{app_id}", dependencies=[Depends(auth)], tags=["overview"])
@@ -403,7 +412,8 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         elif body.status:
             rows = database.list(status=body.status, limit=body.limit or 100)
         else:
-            raise HTTPException(400, "Pass ids, or a status of failed or pending_human_review")
+            raise HTTPException(
+                400, "Pass ids, or a status of failed, pending_human_review or skipped")
         if not rows:
             raise HTTPException(404, "Nothing matched, so there is nothing to retry")
 
@@ -931,6 +941,30 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         lost to a restart and the terminal sees the same list as the dashboard.
         """
         return database.list_discovered(limit=limit, search=search)
+
+    @app.post("/api/discovered/{job_id}/applied", dependencies=[Depends(auth)],
+              tags=["discover"])
+    def mark_applied(job_id: str) -> dict[str, Any]:
+        """Record that you applied to this one yourself.
+
+        Sometimes you send the email by hand, or finish a form the agent could not. The
+        posting is then no longer something to apply to, and without this it stays in
+        the scan results looking undone and gets offered again on the next run.
+        """
+        found = [r for r in database.list_discovered(limit=5000, include_text=True)
+                 if r["job_id"] == job_id]
+        if not found:
+            raise HTTPException(404, f"No scan result with job_id {job_id!r}")
+        row = found[0]
+        job = JobPosting(
+            job_id=row["job_id"], url=row.get("url") or "",
+            apply_url=row.get("apply_url") or "", title=row.get("title") or "",
+            company=row.get("company") or "", location=row.get("location") or "",
+            description=row.get("description") or "", source=row.get("source") or "urls",
+            ats=row.get("ats") or "unknown", email_to=row.get("email_to") or "")
+        database.record(job, STATUS_SUBMITTED, notes="applied by you, recorded by hand")
+        note(f"{row.get('company') or job_id}: recorded as applied by you", "info")
+        return {"recorded": True, "job_id": job_id}
 
     @app.delete("/api/discovered/{job_id}", dependencies=[Depends(auth)], tags=["discover"])
     def delete_discovered_one(job_id: str) -> dict[str, Any]:

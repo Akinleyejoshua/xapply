@@ -732,7 +732,7 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
           <div id="scanDiag"></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>Applied</th><th>Match</th><th>ATS</th><th>JD</th></tr></thead>
+              <thead><tr><th style="width:38px"></th><th>Company</th><th>Role</th><th>Location</th><th>Applied</th><th>Match</th><th>ATS</th><th>JD</th><th style="width:74px"></th></tr></thead>
               <tbody id="foundRows"></tbody>
             </table>
           </div>
@@ -764,7 +764,9 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <button class="sm" id="btnRetrySel" disabled
                     title="Run these applications again from the start">Retry selected</button>
             <button class="sm ghost" id="btnRetryStatus" disabled
-                    title="Filter by Failed or Awaiting you, then retry all of them">Retry all shown</button>
+                    title="Filter by Failed, Awaiting you or Skipped, then retry all of them">Retry all shown</button>
+            <button class="sm ghost" id="btnRetryStuck"
+                    title="Try every failed and skipped application again">Retry failed and skipped</button>
             <button class="sm danger" id="btnDelSel" disabled>Delete selected</button>
             <button class="sm danger ghost" id="btnDelStatus">Delete all shown</button>
           </div>
@@ -1573,9 +1575,29 @@ function renderFound(){
       <td class="score" title="How closely the title matched your search terms">${
         j.relevance ? j.relevance.toFixed(2) : '-'}</td>
       <td class="dim">${esc(j.ats)}</td>
-      <td class="dim mono">${j.description ? (j.description.length + 'c') : '-'}</td></tr>`;
-  }).join('') || '<tr><td colspan="8" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
+      <td class="dim mono">${j.description ? (j.description.length + 'c') : '-'}</td>
+      <td class="row-actions">${st ? '' :
+        `<button class="sm ghost" title="I applied to this one myself"
+           onclick="markFoundApplied('${esc(j.job_id)}')">&#10003;</button>`}
+        <button class="sm ghost" title="Remove from results"
+          onclick="delFound('${esc(j.job_id)}')">×</button></td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="empty">No results yet. Pick your sources and press Scan now.</td></tr>';
   updateSelUi();
+}
+/** You applied to this one yourself, so it should stop being offered. */
+async function markFoundApplied(jobId){
+  if(!confirm('Record that you applied to this one yourself?')) return;
+  try{
+    await call('/api/discovered/' + encodeURIComponent(jobId) + '/applied', {method:'POST'});
+    toast('Recorded as applied');
+    loadFound(); loadStats();
+  } catch(e){ toast(e.message, true); }
+}
+async function delFound(jobId){
+  try{
+    await call('/api/discovered/' + encodeURIComponent(jobId), {method:'DELETE'});
+    loadFound();
+  } catch(e){ toast(e.message, true); }
 }
 function toggleSel(cb){ cb.checked ? SELECTED.add(cb.dataset.url) : SELECTED.delete(cb.dataset.url); updateSelUi(); }
 function updateSelUi(){
@@ -1677,7 +1699,9 @@ async function loadApps(){
     <td class="click" onclick="detail(${r.id})">${esc(r.title)}</td>
     <td class="dim click" onclick="detail(${r.id})">${esc(r.ats)}</td>
     <td class="dim click" onclick="detail(${r.id})">${ago(r.updated_at)}</td>
-    <td class="row-actions">${RETRYABLE.has(r.status)
+    <td class="row-actions">${r.status !== 'submitted'
+        ? `<button class="sm ghost" title="I sent this one myself, mark it submitted"
+             onclick="markSubmitted(${r.id})">&#10003;</button>` : ''}${RETRYABLE.has(r.status)
         ? `<button class="sm ghost" title="Try this application again" onclick="retryApp(${r.id})">&#8635;</button>`
         : ''}<button class="sm ghost" title="Delete" onclick="delApp(${r.id})">×</button></td></tr>`).join('')
     || '<tr><td colspan="9" class="empty">No applications match this filter.</td></tr>';
@@ -1697,7 +1721,7 @@ function updateAppSel(){
 }
 
 /** Only these are worth another go. Retrying a submitted one would apply twice. */
-const RETRYABLE = new Set(['failed', 'pending_human_review']);
+const RETRYABLE = new Set(['failed', 'pending_human_review', 'skipped']);
 
 async function retry(body, what){
   try{
@@ -1706,6 +1730,17 @@ async function retry(body, what){
     APP_SEL.clear(); loadApps(); loadStats(); show('dash');
   } catch(e){ toast(e.message, true); }
 }
+/** You sent it by hand, so the record should say so. */
+async function markSubmitted(id){
+  if(!confirm(`Mark application #${id} as submitted? Use this when you sent it yourself.`)) return;
+  try{
+    await call('/api/applications/' + id, {method:'PATCH',
+      body: JSON.stringify({status: 'submitted'})});
+    toast('Marked as submitted');
+    loadApps(); loadStats();
+  } catch(e){ toast(e.message, true); }
+}
+
 async function retryApp(id){
   if(!confirm(`Try application #${id} again? The old record is replaced by the new attempt.`)) return;
   retry({ids: [id]});
@@ -1730,6 +1765,20 @@ $('btnDelSel').onclick = async () => {
     APP_SEL.clear(); toast(`Deleted ${r.deleted}`); loadApps(); loadStats();
   } catch(e){ toast(e.message, true); }
 };
+$('btnRetryStuck').onclick = async () => {
+  if(!confirm('Try every failed and skipped application again?')) return;
+  let total = 0;
+  for(const st of ['failed', 'skipped']){
+    try{
+      const r = await call('/api/applications/retry', {method:'POST',
+        body: JSON.stringify({status: st})});
+      total += r.retrying || 0;
+    } catch(e){ /* nothing with that status, or a run is already going */ }
+  }
+  if(!total) return toast('Nothing failed or skipped to try again', true);
+  toast(`Retrying ${total} application(s)`);
+  APP_SEL.clear(); loadApps(); loadStats(); show('dash');
+};
 $('btnRetrySel').onclick = () => {
   const ids = [...APP_SEL];
   if(!ids.length) return;
@@ -1738,7 +1787,7 @@ $('btnRetrySel').onclick = () => {
 };
 $('btnRetryStatus').onclick = () => {
   const st = $('appStatus').value;
-  if(!RETRYABLE.has(st)) return toast('Filter by Failed or Awaiting you first', true);
+  if(!RETRYABLE.has(st)) return toast('Filter by Failed, Awaiting you or Skipped first', true);
   if(!confirm(`Try every "${LBL[st] || st}" application again?`)) return;
   retry({status: st});
 };

@@ -499,12 +499,24 @@ replaced by the new attempt, because discovery skips anything already in the dat
 it would mean the retry quietly did nothing. The audit file in `logs/applications/` keeps what
 happened the first time.
 
-In the **Applications** tab: the circular arrow on any failed or awaiting row, **Retry selected**,
-or filter by Failed or Awaiting you and press **Retry all shown**.
+In the **Applications** tab: the circular arrow on any failed, awaiting or skipped row,
+**Retry selected**, **Retry failed and skipped** for everything stuck at once, or filter
+by one of those statuses and press **Retry all shown**.
+
+### When you applied yourself
+
+Sometimes you send the email by hand after a draft failed, or finish a form the agent
+could not. Two ticks record that:
+
+- **Applications tab**, the tick on any row that is not already submitted. The record
+  notes that you marked it, not the agent, so months later it still makes sense.
+- **Scan results**, the tick on any posting you handled yourself. It is written down as
+  an application, so it stops being offered on the next run.
 
 ```bash
 python main.py retry 42                       # one application
 python main.py retry --status failed --yes    # every failed attempt
+python main.py retry --status skipped
 python main.py retry --status pending_human_review
 ```
 

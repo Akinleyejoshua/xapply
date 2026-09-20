@@ -277,3 +277,74 @@ def test_the_terminal_can_remove_saved_results(settings: Settings, db: Database,
     main.cmd_saved(argparse.Namespace(limit=50, search=None, delete=None, clear=True))
     assert db.count_discovered() == 0
     assert "Cleared" in capsys.readouterr().out
+
+
+# ---- recording what you did yourself --------------------------------------
+
+def test_an_application_can_be_marked_submitted_by_hand(client: TestClient,
+                                                        db: Database) -> None:
+    """You send the email yourself after a draft failed, so the record should say so."""
+    app_id = _record(db, "f1", STATUS_FAILED, "https://jobs.lever.co/acme/f1")
+
+    out = client.patch(f"/api/applications/{app_id}", json={"status": "submitted"}).json()
+
+    assert out["status"] == STATUS_SUBMITTED
+    assert "by you" in out["notes"], "who decided this has to be on the record"
+
+
+def test_your_own_note_is_kept_if_you_give_one(client: TestClient, db: Database) -> None:
+    app_id = _record(db, "f1", STATUS_FAILED, "https://jobs.lever.co/acme/f1")
+
+    out = client.patch(f"/api/applications/{app_id}",
+                       json={"status": "submitted", "notes": "sent from my phone"}).json()
+
+    assert out["notes"] == "sent from my phone"
+
+
+def test_a_skipped_application_can_be_tried_again(client: TestClient, db: Database,
+                                                  no_real_run: list[dict]) -> None:
+    """Skipped covers a CAPTCHA nobody cleared and a form that was not found, both of
+    which are worth another go later."""
+    from database import STATUS_SKIPPED
+
+    _record(db, "s1", STATUS_SKIPPED, "https://jobs.lever.co/acme/s1")
+
+    out = client.post("/api/applications/retry", json={"status": "skipped"})
+
+    assert out.status_code == 200 and out.json()["retrying"] == 1
+
+
+def test_a_submitted_application_still_cannot_be_retried(client: TestClient,
+                                                         db: Database) -> None:
+    """Retrying one of those would apply to the same job twice."""
+    _record(db, "ok", STATUS_SUBMITTED, "https://jobs.lever.co/acme/ok")
+
+    assert client.post("/api/applications/retry",
+                       json={"status": "submitted"}).status_code == 422
+
+
+def test_a_scan_result_can_be_recorded_as_applied_by_you(client: TestClient,
+                                                         db: Database) -> None:
+    """Without this it stays in the results looking undone and is offered again."""
+    db.save_discovered(_jobs())
+
+    out = client.post("/api/discovered/gh-1/applied")
+
+    assert out.status_code == 200 and out.json()["recorded"] is True
+    rows = db.list()
+    assert len(rows) == 1
+    assert rows[0]["status"] == STATUS_SUBMITTED and rows[0]["company"] == "Acme"
+    assert "by you" in rows[0]["notes"]
+
+
+def test_it_then_shows_as_applied_in_the_results(client: TestClient, db: Database) -> None:
+    db.save_discovered(_jobs())
+    client.post("/api/discovered/gh-1/applied")
+
+    row = [r for r in client.get("/api/discovered").json() if r["job_id"] == "gh-1"][0]
+
+    assert row["applied_status"] == STATUS_SUBMITTED
+
+
+def test_recording_something_that_was_never_found_is_a_404(client: TestClient) -> None:
+    assert client.post("/api/discovered/nothing/applied").status_code == 404

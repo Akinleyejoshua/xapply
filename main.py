@@ -762,7 +762,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rt = sub.add_parser("retry", help="run failed or awaiting applications again")
     rt.add_argument("id", type=int, nargs="*", help="application id(s) to retry")
-    rt.add_argument("--status", choices=["failed", "pending_human_review"],
+    rt.add_argument("--status", choices=["failed", "pending_human_review", "skipped"],
                     help="retry everything with this status")
     rt.add_argument("--limit", type=int, default=25)
     rt.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
