@@ -1395,9 +1395,17 @@ async function poll(){
   const g = st.gate || {};
   if(g.paused){
     bar.style.display = 'block';
+    // With no window there is nothing to handle it in, so offer to open one. The
+    // posting is done again in it, which puts the filled form in front of you.
+    const noWindow = CONFIG.hide_browser && !CONFIG.headless;
     bar.innerHTML = '<b>The agent is waiting for you.</b><br>' + esc(g.reason) +
+      (noWindow ? '<br><span class="dim">The browser is hidden, so there is nothing on ' +
+                  'screen to handle it in yet.</span>' : '') +
       '<div class="row" style="margin-top:11px">' +
-      '<button class="sm primary" onclick="release()">I have handled it, continue</button>' +
+      (noWindow
+        ? '<button class="sm primary" onclick="openWindow()">Open the browser here</button>' +
+          '<button class="sm ghost" onclick="release()">Continue without it</button>'
+        : '<button class="sm primary" onclick="release()">I have handled it, continue</button>') +
       (g.allow_skip === false ? '' :
         '<button class="sm danger ghost" onclick="skipJob()">Skip this job</button>') +
       '</div>';
@@ -1414,6 +1422,13 @@ async function poll(){
      st.auto_submit !== CONFIG.auto_submit) reloadConfig();
 }
 async function release(){ try { await call('/admin/continue', {method:'POST'}); } catch(e){ toast(e.message, true); } }
+/** Open a window and redo this posting in it, so the form is filled and waiting. */
+async function openWindow(){
+  try{
+    await call('/admin/open-window', {method:'POST'});
+    toast('Opening a window and filling this one again');
+  } catch(e){ toast(e.message, true); }
+}
 /** Probe every listed model, switch to the first that answers, and say so. */
 async function fixModel(){
   const bar = $('gatebar');

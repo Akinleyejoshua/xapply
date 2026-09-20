@@ -494,3 +494,129 @@ async def test_a_window_that_could_not_open_is_not_reported_as_open() -> None:
     hidden.reveal = refuse
 
     await hidden.attention("Submit it yourself")      # must not raise
+
+
+# ---- asking for a window while it is already waiting -----------------------
+
+@pytest.mark.asyncio
+async def test_you_can_ask_for_a_window_while_it_waits() -> None:
+    """Pressing Continue with nothing on screen is no use: there is no page to look
+    at. Asking for a window hands the posting over with the form already filled."""
+    from browser_bot import BrowserRevealed, HumanGate
+
+    gate = HumanGate("api")
+    opened: list[str] = []
+
+    async def on_open(reason: str) -> bool:
+        opened.append(reason)
+        return True
+
+    gate.on_open_window = on_open
+
+    async def press() -> None:
+        await asyncio.sleep(0.2)
+        gate.request_window()
+
+    with pytest.raises(BrowserRevealed):
+        await asyncio.wait_for(
+            asyncio.gather(gate.wait("Fill these in yourself"), press()), timeout=5)
+
+    assert opened == ["Fill these in yourself"]
+
+
+@pytest.mark.asyncio
+async def test_a_window_that_will_not_open_leaves_the_pause_handled() -> None:
+    """A failure to open must not strand the run on a page it cannot show you."""
+    from browser_bot import HumanGate
+
+    gate = HumanGate("api")
+
+    async def cannot(reason: str) -> bool:
+        return False
+
+    gate.on_open_window = cannot
+
+    async def press() -> None:
+        await asyncio.sleep(0.2)
+        gate.request_window()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("Fill these in"), press()), timeout=5)
+
+    assert outcome == HumanGate.CONTINUE
+
+
+@pytest.mark.asyncio
+async def test_pressing_continue_normally_opens_nothing() -> None:
+    from browser_bot import HumanGate
+
+    gate = HumanGate("api")
+    opened: list[str] = []
+
+    async def on_open(reason: str) -> bool:
+        opened.append(reason)
+        return True
+
+    gate.on_open_window = on_open
+
+    async def press() -> None:
+        await asyncio.sleep(0.2)
+        gate.release()
+
+    outcome, _ = await asyncio.wait_for(
+        asyncio.gather(gate.wait("Fill these in"), press()), timeout=5)
+
+    assert outcome == HumanGate.CONTINUE and opened == []
+
+
+def test_the_request_does_not_survive_into_the_next_pause() -> None:
+    from browser_bot import HumanGate
+
+    gate = HumanGate("api")
+    gate.request_window()
+
+    assert gate.wants_window is True
+    assert gate.status()["wants_window"] is True
+
+
+def test_the_dashboard_can_ask_for_a_window(tmp_path: Path) -> None:
+    """The reported gap: a pause offered Continue and Skip, and neither is any use when
+    there is nothing on screen to handle it in."""
+    from fastapi.testclient import TestClient
+
+    from api import create_app
+    from browser_bot import HumanGate
+    from config import Settings
+    from database import Database
+
+    settings = Settings(_env_file=None, db_path=tmp_path / "t.db",
+                        overrides_path=tmp_path / "s.json", log_dir=tmp_path / "l",
+                        audit_dir=tmp_path / "l" / "a", output_dir=tmp_path / "o",
+                        user_data_dir=tmp_path / "p", company_file=tmp_path / "c.json",
+                        template_dir=ROOT / "templates", hide_browser=True)
+    db = Database(settings.db_path)
+    db.init()
+    app = create_app(settings, db)
+    client = TestClient(app)
+
+    assert client.post("/admin/open-window").status_code == 409, "no run attached"
+
+    gate = HumanGate("api")
+    app.state.gate = gate
+    assert client.post("/admin/open-window").json()["opening"] is False
+
+    gate.paused, gate.reason = True, "Fill these in yourself"
+    assert client.post("/admin/open-window").json()["opening"] is True
+    assert gate.wants_window is True
+
+    settings.headless = True
+    assert client.post("/admin/open-window").status_code == 409, "headless means never"
+
+
+def test_the_pause_banner_offers_it() -> None:
+    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "Open the browser here" in html
+    assert "/admin/open-window" in html
+    # Only when there is no window, or the button would make no sense.
+    assert "CONFIG.hide_browser && !CONFIG.headless" in html

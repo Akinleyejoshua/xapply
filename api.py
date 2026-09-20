@@ -1241,6 +1241,27 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         note("human released the pause")
         return {"released": True}
 
+    @app.post("/admin/open-window", dependencies=[Depends(auth)], tags=["control"])
+    def open_window() -> dict[str, Any]:
+        """Hand the paused posting to a window, with the form already filled.
+
+        Pressing Continue with nothing on screen is no use: there is no page to look at.
+        This opens one, which restarts the browser, and the posting is done again in it
+        using the answers already worked out.
+        """
+        g = app.state.gate
+        if not g:
+            raise HTTPException(409, "No run is attached to this API process")
+        if not g.paused:
+            return {"opening": False, "detail": "Nothing is waiting for you"}
+        if settings.headless:
+            raise HTTPException(
+                409, "Headless browser is on, which means no window ever. Turn it off in "
+                     "Settings first.")
+        g.request_window()
+        note("opening a window so you can finish this one", "info")
+        return {"opening": True}
+
     @app.post("/admin/clear-blocker", dependencies=[Depends(auth)], tags=["control"])
     def clear_blocker() -> dict[str, Any]:
         """Dismiss the configuration problem reported by the last run."""

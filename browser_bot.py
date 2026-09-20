@@ -267,6 +267,10 @@ class HumanGate:
         #: Called when a pause begins, so the browser can show itself. Set by
         #: `StealthBrowser`, which is the only thing that has a window to show.
         self.on_pause: Optional[Any] = None
+        #: Set when you press Open the browser while a pause is waiting.
+        self.wants_window = False
+        #: Called to open one. Set by `StealthBrowser`, which owns the window.
+        self.on_open_window: Optional[Any] = None
 
     # ---- waiting ------------------------------------------------------
     async def wait(self, reason: str, allow_skip: bool = True) -> str:
@@ -278,6 +282,7 @@ class HumanGate:
         self.paused, self.reason, self.paused_since = True, reason, time.time()
         self.allow_skip = allow_skip
         self._outcome = self.CONTINUE
+        self.wants_window = False
         self.history.append({"reason": reason, "at": time.time()})
         self._event.clear()
         self._print_banner(reason, allow_skip)
@@ -319,6 +324,13 @@ class HumanGate:
             self._event.clear()
             self.marker_file.unlink(missing_ok=True)
             self.skip_file.unlink(missing_ok=True)
+        if self.wants_window and self.on_open_window is not None:
+            # You asked for a window. Opening one restarts the browser, so this page is
+            # gone and the caller has to do the posting again in the new one.
+            self.wants_window = False
+            if await self.on_open_window(reason):
+                raise BrowserRevealed(reason)
+            log.warning("Could not open a window for: %s", reason)
         log.info("Human %s the job (%s)", "skipped" if outcome == self.SKIP else "released",
                  released_by)
         print("Skipping this job.\n" if outcome == self.SKIP else "Continuing.\n", flush=True)
@@ -414,8 +426,20 @@ class HumanGate:
         self._outcome = self.SKIP
         self._event.set()
 
+    def request_window(self) -> None:
+        """Ask for a window, so you can finish this posting yourself.
+
+        Pressing Continue with nothing on screen is no use: there is no page to look
+        at. This releases the wait with a request for a window instead, and the posting
+        is done again in it so the form is filled and waiting.
+        """
+        self.wants_window = True
+        self._outcome = self.CONTINUE
+        self._event.set()
+
     def status(self) -> dict[str, Any]:
         return {"paused": self.paused, "reason": self.reason, "paused_since": self.paused_since,
+                "wants_window": self.wants_window,
                 "allow_skip": self.allow_skip, "waited": len(self.history)}
 
 
@@ -523,6 +547,7 @@ class StealthBrowser:
             except Exception as exc:
                 log.debug("start page %s did not load: %s", self.s.start_url, exc)
         self.gate.on_pause = self.attention
+        self.gate.on_open_window = self.reveal
         log.info("Browser started %s (profile: %s)",
                  "with no window" if self.hidden else "on screen", self.s.user_data_dir)
         return self
