@@ -130,6 +130,7 @@ class ConfigPatch(BaseModel):
     email_auto_send: Optional[bool] = None
     search_x: Optional[bool] = None
     hide_browser: Optional[bool] = None
+    open_window_when_needed: Optional[bool] = None
     challenge_action: Optional[Literal["wait", "show", "skip"]] = None
     headless: Optional[bool] = None
     max_applications_per_run: Optional[int] = Field(None, ge=1, le=200)
@@ -514,6 +515,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
             "email_auto_send": settings.email_auto_send,
             "search_x": settings.search_x,
             "hide_browser": settings.hide_browser,
+            "open_window_when_needed": settings.open_window_when_needed,
             "challenge_action": settings.challenge_action,
             # Whether a mail server is actually set up. The credentials themselves stay
             # in .env and are never sent to the browser.

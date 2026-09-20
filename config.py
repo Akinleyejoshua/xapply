@@ -50,6 +50,7 @@ PERSISTED_KEYS = (
     "search_x",
     "hide_browser",
     "challenge_action",
+    "open_window_when_needed",
     "headless",
     "max_applications_per_run",
     "max_jobs_per_company",
@@ -137,6 +138,12 @@ class Settings(BaseSettings):
     #: the browser again, which the profile survives, so you keep whatever you were
     #: signed into.
     hide_browser: bool = False
+    #: With the browser hidden, open a window the moment anything needs you, and do the
+    #: posting again in it so the form is filled and waiting. Playwright cannot give a
+    #: headless browser a window, so this restarts the browser: the profile survives, so
+    #: you stay signed in, and the answers are re-entered from what was already worked
+    #: out rather than asked for again.
+    open_window_when_needed: bool = False
     #: What to do when a page puts a CAPTCHA or a login wall in the way.
     #:   wait  stop and let you deal with it, which needs a window on screen
     #:   show  open a window and start the posting again in it

@@ -287,6 +287,11 @@ class HumanGate:
             # rather than behind whatever you were working in.
             try:
                 await self.on_pause(reason)
+            except BrowserRevealed:
+                # A window was opened for this. The page being waited on is gone with
+                # the old browser, so the caller has to start the posting again rather
+                # than wait on something that no longer exists.
+                raise
             except Exception as exc:
                 log.debug("could not draw attention to the window: %s", exc)
         waiters = [asyncio.create_task(self._event.wait(), name="gate-release"),
@@ -437,8 +442,19 @@ class StealthBrowser:
 
     @property
     def can_reveal(self) -> bool:
-        """Whether a window can still be opened. `headless` means never."""
-        return bool(self.s.challenge_action == "show" and not self.s.headless)
+        """Whether a window can be opened at all. `headless` means never."""
+        return not self.s.headless
+
+    @property
+    def reveals_on_challenge(self) -> bool:
+        """Whether a CAPTCHA should open a window.
+
+        Either setting asks for it. A CAPTCHA is the plainest case of a page needing a
+        person, so somebody who has asked to be shown pages that need them means this
+        one too, whatever the challenge setting happens to say.
+        """
+        return self.can_reveal and (self.s.challenge_action == "show"
+                                    or self.s.open_window_when_needed)
 
     def on_challenge(self) -> str:
         """What to do about a challenge right now.
@@ -449,7 +465,9 @@ class StealthBrowser:
         says so.
         """
         action = self.s.challenge_action
-        if action == "show" and not self.can_reveal:
+        if self.hidden and action != "skip" and self.reveals_on_challenge:
+            action = "show"                 # a window can be opened, so open one
+        elif action == "show" and not self.reveals_on_challenge:
             action = "skip"
         if action == "wait" and self.hidden:
             log.warning("A challenge needs a person, but there is no window to solve it "
@@ -517,10 +535,18 @@ class StealthBrowser:
         of answers.
         """
         if self.hidden:
-            # Nothing to bring forward, and nothing is opened: hiding the browser means
-            # you do not want to see it. The pause still stands, because the dashboard's
-            # Continue and Skip buttons work whether or not a window exists. Only a
-            # CAPTCHA genuinely needs a browser, and that is handled by `on_challenge`.
+            if self.s.open_window_when_needed and self.can_reveal:
+                # You asked to be shown the page when it needs you. A window cannot be
+                # given to a headless browser, so one is started with a window and the
+                # posting is done again in it, which puts the filled form in front of
+                # you rather than an empty one.
+                if await self.reveal(reason):
+                    raise BrowserRevealed(reason)
+                log.warning("Could not open a window for: %s", reason)
+                return
+            # Otherwise nothing is opened: hiding the browser means you do not want to
+            # see it. The pause still stands, because the dashboard's Continue and Skip
+            # work whether or not a window exists.
             log.debug("Paused with the browser hidden; use the dashboard to continue")
             return
         try:
@@ -539,6 +565,7 @@ class StealthBrowser:
 
         Returns True when a window is now on screen that was not before.
         """
+        # Policy belongs to the caller; this only refuses what is impossible.
         if not self.hidden or not self.can_reveal:
             return False
         url = ""
@@ -732,7 +759,7 @@ class StealthBrowser:
                 log.info("Skipping this posting: %s", reason)
                 self.auto_skipped = reason
                 return HumanGate.SKIP
-            if action == "show" and self.hidden:
+            if action == "show" and self.hidden and self.reveals_on_challenge:
                 # There is nothing on screen for a person to solve. A window is opened,
                 # which means starting the browser again, so this page is gone and the
                 # caller has to begin the posting afresh in the new one.

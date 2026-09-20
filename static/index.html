@@ -916,6 +916,12 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
             <label class="check"><input type="checkbox" id="cfgHide">
               <span><b>Hide the browser window</b><span class="dim">Work with nothing on
                 screen.</span></span></label>
+            <label class="check"><input type="checkbox" id="cfgOpenWhenNeeded">
+              <span><b>Open a window when something needs me</b><span class="dim">With the
+                browser hidden, a window opens the moment a posting needs you and that
+                posting is done again in it, so the form is filled and waiting rather than
+                empty. You stay signed in, and the answers are reused rather than worked
+                out again.</span></span></label>
             <label class="field"><span>When a CAPTCHA or login wall blocks a posting</span>
               <select id="cfgChallenge">
                 <option value="wait">Stop and let me deal with it</option>
@@ -1126,6 +1132,7 @@ function renderConfig(){
   setChecked('cfgSearchX', CONFIG.search_x);
   setChecked('cfgAutoSend', CONFIG.email_auto_send);
   setChecked('cfgHide', CONFIG.hide_browser);
+  setChecked('cfgOpenWhenNeeded', CONFIG.open_window_when_needed);
   setVal('cfgChallenge', CONFIG.challenge_action || 'wait');
   const note = $('emailNote');
   if(note && CONFIG.email_apply){
@@ -1932,6 +1939,7 @@ for(const [id, key] of [['cfgAuto','auto_submit'], ['cfgRemote','remote_only'],
                         ['cfgFollow','follow_companies'], ['cfgHeadless','headless'],
                         ['cfgAtOnce','fill_all_at_once'], ['cfgVerify','verify_after_fill'],
                         ['cfgEmail','email_apply'], ['cfgHide','hide_browser'],
+                        ['cfgOpenWhenNeeded','open_window_when_needed'],
                         ['cfgSearchX','search_x'], ['cfgAutoSend','email_auto_send']]){
   $(id).onchange = () => {
     if(key === 'auto_submit' && $(id).checked &&

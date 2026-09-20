@@ -385,3 +385,112 @@ async def test_a_pause_still_works_when_the_window_cannot_be_shown() -> None:
     assert outcome == HumanGate.CONTINUE
 
 
+
+
+# ---- handing over to you, with the work already done -----------------------
+
+@pytest.mark.asyncio
+async def test_a_pause_can_open_a_window_and_hand_the_posting_back() -> None:
+    """With the browser hidden there is nothing for you to act on. Opening one means
+    restarting the browser, so the posting has to be done again in it, which is what
+    puts the filled form in front of you instead of an empty one."""
+    from browser_bot import BrowserRevealed
+
+    hidden = _browser(hide_browser=True, open_window_when_needed=True)
+    opened: list[str] = []
+
+    async def fake_reveal(reason=""):
+        opened.append(reason)
+        hidden.hidden = False
+        return True
+
+    hidden.reveal = fake_reveal
+
+    with pytest.raises(BrowserRevealed):
+        await hidden.attention("Submit it yourself")
+
+    assert opened == ["Submit it yourself"]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_lets_that_reach_the_caller() -> None:
+    """Swallowing it would leave the run waiting on a page that no longer exists."""
+    from browser_bot import BrowserRevealed, HumanGate
+
+    gate = HumanGate("api")
+
+    async def on_pause(reason: str) -> None:
+        raise BrowserRevealed(reason)
+
+    gate.on_pause = on_pause
+
+    with pytest.raises(BrowserRevealed):
+        await asyncio.wait_for(gate.wait("Submit it yourself"), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_without_the_setting_a_hidden_browser_stays_hidden() -> None:
+    hidden = _browser(hide_browser=True, open_window_when_needed=False)
+
+    await hidden.attention("Submit it yourself")
+
+    assert hidden.hidden is True
+
+
+@pytest.mark.asyncio
+async def test_headless_still_means_no_window_ever() -> None:
+    """`headless` is the stronger statement and overrides the convenience."""
+    hidden = _browser(headless=True, open_window_when_needed=True)
+
+    await hidden.attention("Submit it yourself")
+
+    assert hidden.hidden is True
+
+
+def test_the_posting_is_started_again_so_the_form_is_refilled() -> None:
+    """The restart is what restores the work, and the answers come from what was
+    already worked out rather than being asked for a second time."""
+    import inspect
+
+    import pipeline
+
+    source = inspect.getsource(pipeline.Pipeline.process)
+    assert "BrowserRevealed" in source
+    assert "_retry=True" in source
+
+    run = inspect.getsource(pipeline.Pipeline.run)
+    assert "self.filler = FormFiller" in run, "one filler per run, so its answers survive"
+
+
+@pytest.mark.parametrize("name,settings_kwargs,expected", [
+    ("open a window when I am needed", dict(hide_browser=True, open_window_when_needed=True), "show"),
+    ("...unless I said skip", dict(hide_browser=True, open_window_when_needed=True,
+                                   challenge_action="skip"), "skip"),
+    ("the challenge setting alone", dict(hide_browser=True, challenge_action="show"), "show"),
+    ("neither asked for", dict(hide_browser=True), "skip"),
+    ("fully headless", dict(headless=True, open_window_when_needed=True), "skip"),
+    ("a window already on screen", dict(), "wait"),
+])
+def test_what_a_captcha_does_in_each_case(name, settings_kwargs, expected) -> None:
+    """A CAPTCHA is the plainest case of a page needing a person, so asking to be shown
+    those covers it whatever the challenge setting says on its own."""
+    assert _browser(**settings_kwargs).on_challenge() == expected, name
+
+
+def test_opening_a_window_is_not_gated_on_the_challenge_setting() -> None:
+    """These are different decisions. Tying them together meant a pause claimed to
+    have opened a window and had not."""
+    assert _browser(hide_browser=True, challenge_action="wait").can_reveal is True
+    assert _browser(headless=True, challenge_action="show").can_reveal is False
+
+
+@pytest.mark.asyncio
+async def test_a_window_that_could_not_open_is_not_reported_as_open() -> None:
+    hidden = _browser(hide_browser=True, open_window_when_needed=True)
+
+    async def refuse(reason=""):
+        return False
+
+    hidden.reveal = refuse
+
+    await hidden.attention("Submit it yourself")      # must not raise
