@@ -248,3 +248,83 @@ def test_the_guide_says_what_cannot_work() -> None:
 
     for subject in ("CAPTCHA", "signin", "Gmail", "disk", "auto mode"):
         assert subject.lower() in guide.lower(), subject
+
+
+def test_a_platform_gets_an_address_it_can_reach(monkeypatch, capsys) -> None:
+    """Seen live on Render: "No open ports detected on 0.0.0.0". The service was
+    listening on this machine's own loopback, which the platform cannot reach."""
+    import argparse
+
+    import main
+
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.delenv("API_HOST", raising=False)
+    monkeypatch.setattr(main.settings, "api_host", "127.0.0.1")
+    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
+
+    started = {}
+    monkeypatch.setattr(main, "_serve_forever", lambda *a, **k: started.update(a=a),
+                        raising=False)
+
+    args = argparse.Namespace(host="127.0.0.1", port=10000, host_given=False)
+    try:
+        main.cmd_serve(args)
+    except Exception:
+        pass                    # uvicorn is not the thing under test
+
+    assert args.host == "0.0.0.0"
+    assert "every address" in capsys.readouterr().out
+
+
+def test_an_address_you_asked_for_is_left_alone(monkeypatch) -> None:
+    import argparse
+
+    import main
+
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
+
+    args = argparse.Namespace(host="127.0.0.1", port=10000, host_given=True)
+    try:
+        main.cmd_serve(args)
+    except Exception:
+        pass
+
+    assert args.host == "127.0.0.1", "you named it, so it stands"
+
+
+def test_your_own_machine_is_left_on_loopback(monkeypatch) -> None:
+    import argparse
+
+    import main
+
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
+
+    args = argparse.Namespace(host="127.0.0.1", port=8000, host_given=False)
+    try:
+        main.cmd_serve(args)
+    except Exception:
+        pass
+
+    assert args.host == "127.0.0.1"
+
+
+def test_a_stray_host_variable_is_not_mistaken_for_a_setting(monkeypatch) -> None:
+    """Plenty of environments export HOST for something unrelated."""
+    from config import Settings
+
+    monkeypatch.setenv("HOST", "somebody-elses-value")
+    monkeypatch.delenv("API_HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+
+    assert Settings(_env_file=None).api_host == "127.0.0.1"
+
+
+def test_a_platform_check_gets_an_answer() -> None:
+    """Render checks with HEAD, and a GET-only route answers 405 and fails the deploy."""
+    import inspect
+
+    import api
+
+    assert '@app.head("/"' in inspect.getsource(api.create_app)
