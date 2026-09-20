@@ -523,7 +523,12 @@ does appear, and applies while applying, not while scanning:
 | Open a window and start that posting again | The browser restarts with a window. Your logins survive, because the profile does. |
 | Skip that posting and carry on | The application is recorded as skipped, with the challenge as the reason. |
 
-**Open a window when something needs me** covers the rest. With the browser hidden, the
+Whenever the agent pauses with the browser hidden, the banner offers **Open the browser
+here**. That opens a window and does the posting again in it, so the form is filled and
+waiting for you to finish. It appears only when there is no window, because otherwise
+there is nothing to open.
+
+**Open a window when something needs me** does the same thing without being asked. With the browser hidden, the
 moment a posting needs you, a window opens and that posting is done again in it, so the
 form is filled and waiting rather than empty.
 
