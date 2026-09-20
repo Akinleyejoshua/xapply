@@ -250,9 +250,63 @@ def test_the_guide_says_what_cannot_work() -> None:
         assert subject.lower() in guide.lower(), subject
 
 
+def _serve(monkeypatch, host_given: bool, host: str = "127.0.0.1"):
+    """Run cmd_serve without ever starting a server, and report the address it chose."""
+    import argparse
+
+    import main
+
+    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
+    chosen = {}
+
+    def fake_run(app, host, port, log_level="info", **_k):
+        chosen["host"], chosen["port"] = host, port
+
+    import uvicorn
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+
+    args = argparse.Namespace(host=host, port=10000, host_given=host_given)
+    main.cmd_serve(args)
+    return chosen
+
+
 def test_a_platform_gets_an_address_it_can_reach(monkeypatch, capsys) -> None:
     """Seen live on Render: "No open ports detected on 0.0.0.0". The service was
     listening on this machine's own loopback, which the platform cannot reach."""
+    import main
+
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.delenv("API_HOST", raising=False)
+    monkeypatch.setattr(main.settings, "api_host", "127.0.0.1")
+
+    chosen = _serve(monkeypatch, host_given=False)
+
+    assert chosen["host"] == "0.0.0.0"
+    assert "every address" in capsys.readouterr().out
+
+
+def test_an_address_you_asked_for_is_left_alone(monkeypatch) -> None:
+    monkeypatch.setenv("PORT", "10000")
+
+    assert _serve(monkeypatch, host_given=True)["host"] == "127.0.0.1"
+
+
+def test_an_address_set_in_the_environment_is_left_alone(monkeypatch) -> None:
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setenv("API_HOST", "127.0.0.1")
+
+    assert _serve(monkeypatch, host_given=False)["host"] == "127.0.0.1"
+
+
+def test_your_own_machine_is_left_on_loopback(monkeypatch) -> None:
+    monkeypatch.delenv("PORT", raising=False)
+
+    assert _serve(monkeypatch, host_given=False)["host"] == "127.0.0.1"
+
+
+def test_a_public_address_is_still_refused_with_the_default_token(monkeypatch,
+                                                                 capsys) -> None:
+    """Binding wide must never happen quietly while the token is the shipped one."""
     import argparse
 
     import main
@@ -260,54 +314,14 @@ def test_a_platform_gets_an_address_it_can_reach(monkeypatch, capsys) -> None:
     monkeypatch.setenv("PORT", "10000")
     monkeypatch.delenv("API_HOST", raising=False)
     monkeypatch.setattr(main.settings, "api_host", "127.0.0.1")
-    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
+    monkeypatch.setattr(main.settings, "admin_token", "change-me")
 
-    started = {}
-    monkeypatch.setattr(main, "_serve_forever", lambda *a, **k: started.update(a=a),
-                        raising=False)
+    code = main.cmd_serve(argparse.Namespace(host="127.0.0.1", port=10000,
+                                             host_given=False))
 
-    args = argparse.Namespace(host="127.0.0.1", port=10000, host_given=False)
-    try:
-        main.cmd_serve(args)
-    except Exception:
-        pass                    # uvicorn is not the thing under test
-
-    assert args.host == "0.0.0.0"
-    assert "every address" in capsys.readouterr().out
-
-
-def test_an_address_you_asked_for_is_left_alone(monkeypatch) -> None:
-    import argparse
-
-    import main
-
-    monkeypatch.setenv("PORT", "10000")
-    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
-
-    args = argparse.Namespace(host="127.0.0.1", port=10000, host_given=True)
-    try:
-        main.cmd_serve(args)
-    except Exception:
-        pass
-
-    assert args.host == "127.0.0.1", "you named it, so it stands"
-
-
-def test_your_own_machine_is_left_on_loopback(monkeypatch) -> None:
-    import argparse
-
-    import main
-
-    monkeypatch.delenv("PORT", raising=False)
-    monkeypatch.setattr(main.settings, "admin_token", "a-real-secret")
-
-    args = argparse.Namespace(host="127.0.0.1", port=8000, host_given=False)
-    try:
-        main.cmd_serve(args)
-    except Exception:
-        pass
-
-    assert args.host == "127.0.0.1"
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "ADMIN_TOKEN" in out and "environment settings" in out
 
 
 def test_a_stray_host_variable_is_not_mistaken_for_a_setting(monkeypatch) -> None:
@@ -323,8 +337,6 @@ def test_a_stray_host_variable_is_not_mistaken_for_a_setting(monkeypatch) -> Non
 
 def test_a_platform_check_gets_an_answer() -> None:
     """Render checks with HEAD, and a GET-only route answers 405 and fails the deploy."""
-    import inspect
-
     import api
 
     assert '@app.head("/"' in inspect.getsource(api.create_app)
