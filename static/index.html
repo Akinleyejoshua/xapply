@@ -749,6 +749,8 @@ dialog::backdrop{background:rgba(0,0,0,.66); backdrop-filter:blur(3px)}
                 placeholder="https://example.com/careers/data-analyst"></label>
             <label class="field"><span>Address, only if the page hides it</span>
               <input id="emailTo" spellcheck="false" placeholder="careers@example.com"></label>
+            <label class="field"><span>Company (optional)</span>
+              <input id="emailCompany" spellcheck="false" placeholder="Acme Corp"></label>
           </div>
           <div class="row" style="margin-top:4px">
             <button class="primary" id="btnEmailApply">Write the application</button>
@@ -2181,7 +2183,11 @@ $('btnEmailApply').onclick = async () => {
   if(!url) return toast('Paste the link to the posting', true);
   try{
     await call('/api/email/apply', {method:'POST',
-      body: JSON.stringify({url, to: ($('emailTo').value || '').trim() || null})});
+      body: JSON.stringify({
+        url,
+        to: ($('emailTo').value || '').trim() || null,
+        company: $('emailCompany').value !== undefined ? $('emailCompany').value : null
+      })});
     toast('Reading the posting and writing your application');
     show('dash');
   } catch(e){ toast(e.message, true); }
@@ -2278,7 +2284,7 @@ function renderLog(lines){
 const VIEW_STATE = [
   ['foundFilter', 'value'], ['appStatus', 'value'], ['appSearch', 'value'],
   ['manualUrls', 'value'], ['delFiles', 'checked'],
-  ['emailUrl', 'value'], ['emailTo', 'value'],
+  ['emailUrl', 'value'], ['emailTo', 'value'], ['emailCompany', 'value'],
 ];
 
 function saveViewState(){

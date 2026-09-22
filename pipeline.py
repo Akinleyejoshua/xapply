@@ -350,7 +350,7 @@ class Pipeline:
                     break
         return self.stats
 
-    async def email_one(self, url: str, to: Optional[str] = None) -> dict[str, Any]:
+    async def email_one(self, url: str, to: Optional[str] = None, company: Optional[str] = None) -> dict[str, Any]:
         """Apply to one posting by writing to whoever it says to write to.
 
         The whole email route in one call, so it can be run against a link you found
@@ -380,7 +380,10 @@ class Pipeline:
             job.title = job.title or "Role"
             analysis = await self.ai.analyze_job(self.profile, job)
             job.title = best_title(job.title, analysis.job_title)
-            job.company = known(job.company) or known(analysis.company_name)
+            if company is not None:
+                job.company = company.strip()
+            else:
+                job.company = known(job.company) or known(analysis.company_name)
             resume = await self.resumes.build(self.profile, analysis, job)
             cover = self._cover_letter_factory(job)
             cover.cache["analysis"] = analysis

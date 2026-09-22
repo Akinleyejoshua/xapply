@@ -195,6 +195,7 @@ class EmailApplyRequest(BaseModel):
     url: str
     #: Only when the posting hides the address, or names several and you know which.
     to: Optional[str] = None
+    company: Optional[str] = None
 
 
 class RetryRequest(BaseModel):
@@ -881,7 +882,7 @@ def create_app(settings: Settings = default_settings, db: Optional[Database] = N
         async def _go() -> None:
             note(f"applying by email to {url}", "info")
             try:
-                out = await pipeline.email_one(url, body.to)
+                out = await pipeline.email_one(url, body.to, body.company)
             except ValueError as exc:
                 note(str(exc), "warn")
                 return
