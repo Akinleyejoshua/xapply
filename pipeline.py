@@ -109,7 +109,7 @@ class Pipeline:
             self._bump(STATUS_FAILED)
             return STATUS_FAILED
 
-        if len(job.description) < 120 and self.s.email_apply:
+        if len(job.description) < 120:
             # A recruiter's post carries the whole advert in a couple of lines, and the
             # hydrated description of one is often almost empty. The page itself has the
             # words, so it is used rather than throwing the posting away unread.
