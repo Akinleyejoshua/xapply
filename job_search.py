@@ -116,6 +116,16 @@ async def extract_posting(browser: StealthBrowser, page: Page, job: JobPosting) 
     except Exception:
         pass
 
+    # Ensure the job description tab is active (e.g., Ashby defaults to "Application" sometimes)
+    try:
+        overview = page.get_by_role("tab", name=re.compile(r"overview|job description", re.I))
+        if await overview.count() and await overview.first.is_visible():
+            await browser.human_click(overview.first)
+            from asyncio import sleep
+            await sleep(0.5)
+    except Exception:
+        pass
+
     if not job.title:
         job.title = await _first_text(page, ("h1", "h2.t-24", "[class*='job-title' i]", "[class*='posting-headline' i] h2"))
         if not job.title:
