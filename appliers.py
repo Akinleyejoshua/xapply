@@ -8,6 +8,8 @@ and how a successful submission is confirmed.
   GreenhouseApplier        - single page form under the job description
   LeverApplier             - /apply page
   AshbyApplier             - /application page
+  RemoteApplier            - apply.remote.com, whose form is behind an Apply button
+  AnySiteApplier           - the fallback for a site with no driver of its own
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from models import (
     GREENHOUSE,
     LEVER,
     LINKEDIN,
+    REMOTE,
     UNKNOWN,
     ApplyResult,
     JobPosting,
@@ -710,13 +713,23 @@ class LinkedInEasyApplyApplier(BaseApplier):
 
 
 # --------------------------------------------------------------------------
-# Single-page ATS forms (Greenhouse, Lever, Ashby)
+# Single-page ATS forms (Greenhouse, Lever, Ashby, Remote, everything else)
 # --------------------------------------------------------------------------
+
+#: What a driver records when the page has no application form on it at all. Kept in
+#: one place because the pipeline reads it: a posting with no form may still give an
+#: address to write to, and that route has to stay open for it.
+NO_FORM_NOTE = "No application form found on this page"
 
 
 class SinglePageApplier(BaseApplier):
     form_selectors: tuple[str, ...] = ("form",)
     submit_re = re.compile(r"submit( application| your application)?$", re.I)
+    #: How a missing form is recorded. For a known ATS the form not being there is the
+    #: driver failing at its one job; for a site this bot merely guessed at, it is a
+    #: posting it cannot apply to, which is a skip.
+    no_form_status = STATUS_FAILED
+    no_form_note = "Application form not found"
 
     async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
         """Navigate so the application form is on screen and return its scope."""
@@ -914,7 +927,7 @@ class SinglePageApplier(BaseApplier):
             scope = await self.open_form(page, job)
             if scope is None:
                 shot = await self.b.screenshot(page, f"noform_{self.ats}_{job.job_id}")
-                return self._result(STATUS_FAILED, "Application form not found", answers, shot, url)
+                return self._result(self.no_form_status, self.no_form_note, answers, shot, url)
             ctx = ResolveContext(profile, job, analysis)
             documents = await self.attach_documents(page, scope, resume_path)
             answers.extend(documents)
@@ -1123,11 +1136,47 @@ class AshbyApplier(SinglePageApplier):
 
 
 
+class RemoteApplier(SinglePageApplier):
+    """Remote's own ATS at apply.remote.com.
+
+    The posting page carries the whole advert and no form at all: the application is a
+    dialog the page's Apply button opens. So the form is looked for immediately (a
+    posting that renders one inline is still handled) and otherwise reached by clicking
+    that button, rather than by waiting for a form that never appears on its own.
+    """
+    ats = REMOTE
+
+    async def open_form(self, page: Page, job: JobPosting) -> Optional[Locator]:
+        await self.b.goto(page, self.apply_url(job))
+        form = await self.find_in_frames_or_page(page, timeout=3000)
+        if form is None:
+            form = await self.follow_apply_trigger(page)
+        return form
+
+
+class AnySiteApplier(SinglePageApplier):
+    """The fallback driver for a careers site this bot has no driver of its own for.
+
+    It does only what the known-ATS drivers do: open the posting, follow the Apply
+    trigger, and treat whatever the site calls an application as the form. The
+    guessing is confined to `is_application_form`, which refuses a search box, a
+    newsletter signup and a sign-in, so a page offering nowhere to apply is skipped
+    instead of filled. `email_fallback` tells the pipeline that such a page may still
+    name an address to write to.
+    """
+    ats = UNKNOWN
+    email_fallback = True
+    no_form_status = STATUS_SKIPPED
+    no_form_note = NO_FORM_NOTE
+
+
 APPLIERS: dict[str, type[BaseApplier]] = {
     LINKEDIN: LinkedInEasyApplyApplier,
     GREENHOUSE: GreenhouseApplier,
     LEVER: LeverApplier,
     ASHBY: AshbyApplier,
+    REMOTE: RemoteApplier,
+    UNKNOWN: AnySiteApplier,      # a site we have never heard of is still worth a try
 }
 
 

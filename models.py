@@ -12,6 +12,10 @@ LINKEDIN = "linkedin"
 GREENHOUSE = "greenhouse"
 LEVER = "lever"
 ASHBY = "ashby"
+#: Remote's own in-house ATS (apply.remote.com), which hosts its own jobs and many
+#: other companies' too. It is not one of the embedded boards, so it needs its own
+#: driver rather than being treated as a site with no application form at all.
+REMOTE = "remote"
 UNKNOWN = "unknown"
 
 _LINKEDIN_JOB_RE = re.compile(r"linkedin\.com/jobs/view/(\d+)")
@@ -106,6 +110,10 @@ def detect_ats(url: str) -> str:
         return LEVER
     if host.endswith("ashbyhq.com"):
         return ASHBY
+    # apply.remote.com serves the form itself; remote.com/careers links to it, and the
+    # /jobs/ path is how both address a posting.
+    if host.endswith("remote.com") and (host.startswith("apply.") or "/jobs/" in path):
+        return REMOTE
     return UNKNOWN
 
 
@@ -132,7 +140,7 @@ def job_id_from_url(url: str) -> str:
         return m.group(1)
     clean = url.split("#")[0].rstrip("/")
     ats = detect_ats(url)
-    if ats in (LEVER, ASHBY, GREENHOUSE):
+    if ats in (LEVER, ASHBY, GREENHOUSE, REMOTE):
         parsed = urlparse(clean)
         found = _UUID_RE.search(parsed.path)          # Lever and Ashby use a UUID
         if found:

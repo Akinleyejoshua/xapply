@@ -221,6 +221,37 @@ def test_slugify() -> None:
     assert slugify("") == "Unknown"
 
 
+@pytest.mark.parametrize("company", [
+    "unknown", "Unknown", "unknown?", "(unknown)", "unknown,", "unknown\u200b",
+    "???", "***", "",
+])
+def test_the_filename_never_starts_with_a_word_that_says_nothing(settings, company) -> None:
+    """A company nobody could know must not become unknown_Data_Analyst.pdf.
+
+    `known` refuses only the exact spelling, so "unknown?", "(unknown)" and "unknown"
+    with an invisible character on it all reached slugify, which reduces them to
+    "unknown" and puts that at the front of a file a recruiter may one day see.
+    """
+    job = JobPosting(job_id="j", url="https://example.com/jobs/1",
+                     title="Data Analyst", company=company)
+    analysis = JobAnalysis(
+        job_title="Data Analyst", company_name=company, match_score=80,
+        match_rationale="r", missing_requirements=[], tailored_summary="s",
+        highlighted_skills=["Python"], tailored_bullets=[], answers=[])
+
+    name = ResumeBuilder(settings).output_path(job, analysis).name
+
+    assert name == "Data_Analyst.pdf"
+    assert "unknown" not in name.lower()
+
+
+def test_a_company_that_says_something_keeps_its_place(settings, analysis) -> None:
+    """The fix must not eat real names: only what says nothing is dropped."""
+    job = JobPosting(job_id="j", url="https://example.com/jobs/1",
+                     title="Data Analyst", company="Acme, Inc.")
+    assert ResumeBuilder(settings).output_path(job, analysis).name == "Acme_Inc_Data_Analyst.pdf"
+
+
 # ---- database -------------------------------------------------------------
 
 

@@ -20,7 +20,7 @@ from playwright.async_api import async_playwright
 from ai_agent import CoverLetter, JobAnalysis
 from config import Settings
 from config import settings as default_settings
-from models import JobPosting, known, ats_text
+from models import JobPosting, PLACEHOLDERS, known, ats_text
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +54,20 @@ def skill_group_label(key: str) -> str:
 def slugify(value: str, max_len: int = 48) -> str:
     value = re.sub(r"[^A-Za-z0-9]+", "_", value or "").strip("_")
     return (value or "Unknown")[:max_len].rstrip("_")
+
+
+#: What every slug built from one of these placeholders comes out as. `slugify` maps
+#: an empty value to "Unknown", and a company the model could not know often arrives
+#: punctuated ("unknown?", "(unknown)"), which `known()` lets through and `slugify()`
+#: then reduces to "unknown". Either way the file would be called unknown_Role.pdf,
+#: which tells a recruiter nothing.
+PLACEHOLDER_SLUGS = frozenset(slugify(p).lower() for p in PLACEHOLDERS)
+
+
+def name_slug(value: str) -> str:
+    """The filename piece for a company or role, or "" when it says nothing."""
+    slug = slugify(value)
+    return "" if slug.lower() in PLACEHOLDER_SLUGS else slug
 
 
 def _norm(s: str) -> str:
@@ -252,11 +266,13 @@ class ResumeBuilder:
 
         A model asked for a company it cannot know answers "Unknown", and a social post
         scraped for a role gives back the whole advert. Repeating either produces a file
-        called Unknown_Ganesh_Reddy_on_X_https_t_co_... which tells you nothing.
+        called Unknown_Ganesh_Reddy_on_X_https_t_co_... which tells you nothing. The same
+        applies to the punctuated spellings of "unknown" and to a name with no letters
+        in it at all, so every piece is checked after slugging, not only before.
         """
         company = known(job.company) or known(analysis.company_name if analysis else "")
         role = known(job.title) or known(analysis.job_title if analysis else "")
-        parts = [slugify(p) for p in (company, role) if p]
+        parts = [name_slug(p) for p in (company, role) if p]
         return "_".join(part for part in parts if part) or "application"
 
     # ---- cover letter ---------------------------------------------------

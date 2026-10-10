@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ai_agent import AIAgent, JobAnalysis
-from appliers import get_applier
+from appliers import NO_FORM_NOTE, get_applier
 from browser_bot import (AnswerResolver, BrowserRevealed, FormFiller, HumanGate,
                          StealthBrowser)
 from config import Settings
@@ -130,8 +130,11 @@ class Pipeline:
         applier = get_applier(job.ats, browser, self.filler, self.gate, self.s,
                               cover_letter=cover_letter)
         email_to = None
-        if applier is None and self.s.email_apply:
-            # No form to fill, but the posting may simply be asking to be emailed.
+        # A page that offers no form may still name an address to write to, so the
+        # fallback route is looked for whenever the driver itself says there is no
+        # form to fill, not only when there is no driver at all.
+        if self.s.email_apply and (applier is None
+                                   or getattr(applier, "email_fallback", False)):
             from email_apply import find_address
 
             page_text = await self._page_text(browser)
@@ -174,6 +177,16 @@ class Pipeline:
                 "auto": "filling and submitting"}[self.s.fill_mode]
         log.info("Match %d -> %s via %s", analysis.match_score, mode, job.ats)
         result = await applier.apply(page, job, analysis, resume_path, self.profile)
+        if getattr(applier, "email_fallback", False) and result.note == NO_FORM_NOTE:
+            # The page had nowhere to apply. If it gave an address instead, that is
+            # where the application belongs, and the documents are already built.
+            if email_to:
+                log.info("No form on %s; writing to %s instead", job.url, email_to)
+                return await self._apply_by_email(job, analysis, resume_path, trimmed,
+                                                  email_to, cover_letter, browser=browser)
+            if not self.s.email_apply:
+                result.note += (". Turn on 'Apply by email' to write to an address "
+                                "the posting gives.")
         # Record what the resume had to leave out, so a shortened CV is never a surprise.
         if trimmed not in ("nothing trimmed", "overflow"):
             result.answers.insert(0, {
