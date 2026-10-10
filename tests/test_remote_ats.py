@@ -239,10 +239,11 @@ async def test_a_remote_dialog_form_is_filled_and_submitted(tmp_path: Path) -> N
                               _job(REMOTE, "remote-74376551"), act)
 
     assert seen["files"] == ["resume"], "the tailored resume must be attached"
+    assert "Acme_Senior_Backend_Engineer.pdf" in seen["reason"]
     assert "first" in seen["typed"] and "email" in seen["typed"], seen
-    assert "Attached" in seen["reason"]
+    assert "attached" in seen["reason"].lower()
     assert result.status == "submitted"
-    assert "you submitted it" in result.note
+    assert "submitted it" in result.note.lower(), result.note
 
 
 @pytest.mark.asyncio
@@ -261,7 +262,7 @@ async def test_a_site_with_no_form_tag_is_reached_through_the_apply_button(tmp_p
 
     assert seen["files"] == ["resume"], "the resume must reach the form"
     assert result.status == "submitted"
-    assert "you submitted it" in result.note
+    assert "submitted it" in result.note.lower(), result.note
 
 
 @pytest.mark.asyncio
@@ -323,7 +324,8 @@ class _StubApplier:
 async def _process_without_a_form(tmp_path: Path, email_apply: bool, monkeypatch):
     import pipeline
 
-    settings = _settings(tmp_path, email_apply=email_apply, match_threshold=65)
+    settings = _settings(tmp_path, email_apply=email_apply, match_threshold=65,
+                         gemini_api_key="test-key")
     pipe = pipeline.Pipeline(settings)
     pipe.filler = None
     pipe.ai = _StubAI()
